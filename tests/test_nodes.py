@@ -131,9 +131,9 @@ def test_funccall_variadic_arity():
 
 
 def test_function_arities_match_the_registry():
-    # FUNCTION_ARITIES is derived from _FUNCS — every wired function carries an
-    # arity range (min, max|None): unary funcs are (1, 1), binary pow (2, 2),
-    # variadic sum (1, None).
+    # FUNCTION_ARITIES is derived from _FUNCS plus the nullary registry — every
+    # wired function carries an arity range (min, max|None): unary funcs are
+    # (1, 1), binary pow (2, 2), variadic sum (1, None), nullaries (0, 0) (29.2).
     assert FUNCTION_ARITIES == {
         "abs": (1, 1),
         "sqrt": (1, 1),
@@ -153,6 +153,8 @@ def test_function_arities_match_the_registry():
         "median": (1, None),
         "variance": (1, None),
         "stddev": (1, None),
+        "pi": (0, 0),  # nullary constant (29.2)
+        "e": (0, 0),  # nullary constant (29.2)
     }
 
 

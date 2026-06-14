@@ -83,6 +83,18 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
 }
 
+# The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
+# to _FUNCS but a different callable KIND — these are NOT operand-methods. With no
+# operand to carry the mode, a nullary takes the per-run EvalContext (29.1) and
+# returns a Value; FuncCall dispatches to it with the context instead of evaluated
+# operands. Same single-source rule as _FUNCS: a nullary is one entry here plus its
+# Value constructor. Arity is a fixed 0 (set in FUNCTION_ARITIES), NOT read off the
+# signature — the ctx parameter is engine-injected, never a user argument.
+_NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
+    "pi": Value.pi,  # 29.2 — circle constant; per-mode value 29.3
+    "e": Value.e,  # 29.2 — Euler's number; per-mode value 29.3
+}
+
 
 def _arity_of(func: Callable[..., Value]) -> tuple[int, int | None]:
     """Allowed argument count (min, max) READ OFF a method's signature (22.2).
@@ -101,8 +113,11 @@ def _arity_of(func: Callable[..., Value]) -> tuple[int, int | None]:
 
 # Arity range per function (min, max|None). The parser (22.2) and FuncCall both
 # validate a call's argument count against this without importing the methods.
+# Nullaries (29.2) join with a fixed (0, 0) — their ctx parameter is engine-
+# injected, so the count is NOT read off the signature like the operand-methods.
 FUNCTION_ARITIES: dict[str, tuple[int, int | None]] = {
-    name: _arity_of(func) for name, func in _FUNCS.items()
+    **{name: _arity_of(func) for name, func in _FUNCS.items()},
+    **{name: (0, 0) for name in _NULLARY_FUNCS},
 }
 
 
@@ -293,12 +308,14 @@ class BinOp(Node):
 
 @dataclass(frozen=True, slots=True)
 class FuncCall(Node):
-    """A function call like ``sqrt(x)`` (22.3): a NAME and its argument subtrees.
+    """A function call like ``sqrt(x)`` or the nullary ``pi()`` (22.3 / 29.2): a
+    NAME and its argument subtrees (empty for a nullary).
 
     Name and arity are validated in the parser (22.2 -> ParseError); the same
     checks here guard direct construction, mirroring UnaryOp/BinOp's op check.
-    Evaluation just forwards the argument Values to the dispatched Value method —
-    every per-mode semantic lives there (18.2), so this node is mode-agnostic.
+    Evaluation forwards to the dispatched Value callable — an operand-method fed
+    the evaluated arguments, or (for a nullary, 29.2) the run context — every
+    per-mode semantic living there (18.2), so this node is mode-agnostic.
     """
 
     name: str
@@ -307,7 +324,7 @@ class FuncCall(Node):
     value: Value | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.name not in _FUNCS:
+        if self.name not in _FUNCS and self.name not in _NULLARY_FUNCS:
             raise ValueError(f"unknown function: {self.name!r}")
         if not _arity_ok(self.name, len(self.args)):
             lo, hi = FUNCTION_ARITIES[self.name]
@@ -322,4 +339,9 @@ class FuncCall(Node):
         return self.args
 
     def _evaluate(self, ctx: EvalContext) -> Value:
+        # A nullary takes the context, not operands (29.2); every other function is
+        # an operand-method fed its evaluated arguments. Arity 0 vs the operand path
+        # is settled by which registry holds the name.
+        if self.name in _NULLARY_FUNCS:
+            return _NULLARY_FUNCS[self.name](ctx)
         return _FUNCS[self.name](*(arg._walk(ctx) for arg in self.args))

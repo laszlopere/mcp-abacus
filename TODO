@@ -1219,7 +1219,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
                nullary mode + precision below, room for more later), threaded
                down the evaluate walk rather than a module global.
-    [ ] 29.2.  DISPATCH SHAPE — nullaries are NOT operand-methods (every other
+    [x] 29.2.  DISPATCH SHAPE — nullaries are NOT operand-methods (every other
                func is a Value method with self as the first operand). With no
                operand, a nullary is a new registered-callable kind that takes
                the eval context (29.1) instead of operands.

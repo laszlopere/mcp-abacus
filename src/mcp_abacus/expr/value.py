@@ -674,6 +674,25 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
+    # --- nullary constants (29.2) ---------------------------------------
+    # Zero-argument functions like pi() and e(). UNLIKE every other function they
+    # are NOT operand-methods (no ``self`` operand carries the mode): each takes
+    # the per-run EvalContext (29.1) and builds a Value in ``ctx.mode``. They are
+    # the "registered-callable kind that takes the eval context" the nodes registry
+    # dispatches to. The per-mode value — float math.pi, rational refusing the
+    # irrational, fixed-point computed to the run's derived scale — lands in 29.3;
+    # the bodies are intentional stubs until then.
+
+    @classmethod
+    def pi(cls, ctx: "EvalContext") -> "Value":
+        """The circle constant pi in ``ctx.mode`` (29.2 dispatch shape)."""
+        raise NotImplementedError("nullary pi(): per-mode value lands in 29.3")
+
+    @classmethod
+    def e(cls, ctx: "EvalContext") -> "Value":
+        """Euler's number e in ``ctx.mode`` (29.2 dispatch shape)."""
+        raise NotImplementedError("nullary e(): per-mode value lands in 29.3")
+
     # --- binary operators (19.3.1-19.3.7) -------------------------------
     # Each requires ``other`` in the SAME mode ("No mode mixing") and returns a
     # new Value ("Immutable"). Signatures may gain mode-specific arguments later.

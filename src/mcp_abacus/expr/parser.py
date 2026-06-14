@@ -9,9 +9,10 @@ bitwise OR ``|`` < bitwise XOR ``^`` < bitwise AND ``&`` < additive ``+ -``
 < multiplicative ``* / // %`` (all left-assoc) < unary ``+ - ~`` < power ``**``
 (RIGHT-assoc and tighter than unary minus: ``-2**2 == -(2**2)``; the exponent may
 itself be unary: ``2**-3``). Atoms are numbers, parenthesized expressions, and
-function calls ``NAME '(' expr (',' expr)* ')'`` (22.2 — tightest binding, so
-``sqrt(4)**2`` is ``(sqrt(4))**2``); the call's name and arity are validated here
-against nodes.FUNCTION_ARITIES, unknown-name/wrong-arity being parse errors.
+function calls ``NAME '(' (expr (',' expr)*)? ')'`` (22.2 — tightest binding, so
+``sqrt(4)**2`` is ``(sqrt(4))**2``; the argument list may be EMPTY for a nullary
+like ``pi()``, 29.2); the call's name and arity are validated here against
+nodes.FUNCTION_ARITIES, unknown-name/wrong-arity being parse errors.
 Parens only shape the tree — no Group node. The left-assoc binary levels run on a
 Pratt binding-power table; unary/power/atom are plain descent.
 
@@ -139,10 +140,11 @@ class _Parser:
         )
 
     def _call(self, name: Token) -> Node:
-        """Parse ``NAME '(' expr (',' expr)* ')'`` after the NAME (22.2).
+        """Parse ``NAME '(' (expr (',' expr)*)? ')'`` after the NAME (22.2 / 29.2).
 
-        At least one argument — there are no zero-arg functions yet, so an empty
-        ``()`` surfaces as the atom parser's "expected a number..." error. Name and
+        The argument list may be EMPTY — ``pi()`` is a nullary call (29.2). Whether
+        zero arguments is allowed is left to the arity check below: a nullary name
+        accepts it, any other name surfaces the precise wrong-count error. Name and
         arity are checked against the registry, the call's line being the NAME's.
         """
         opening = self._advance()
@@ -151,10 +153,12 @@ class _Parser:
                 f"expected '(' after function name {name.lexeme!r}, got {_describe(opening)}",
                 name.line,
             )
-        args = [self.expression()]
-        while self._peek().kind == COMMA:
-            self._advance()
+        args: list[Node] = []
+        if self._peek().kind != RPAREN:
             args.append(self.expression())
+            while self._peek().kind == COMMA:
+                self._advance()
+                args.append(self.expression())
         closing = self._advance()
         if closing.kind != RPAREN:
             raise ParseError(f"expected ',' or ')', got {_describe(closing)}", closing.line)
