@@ -439,6 +439,79 @@ def _solve(arguments):
     return _payload(_call("solver", arguments))
 
 
+def _solve_in_one_session(cases):
+    """Invoke `solver` for each argument dict against ONE server; return its payloads.
+
+    Keeps a multi-call observability test on a single subprocess; order preserved.
+    """
+
+    async def go():
+        async with _client() as session:
+            payloads = []
+            for arguments in cases:
+                result = await session.call_tool("solver", arguments)
+                payloads.append(_payload(result))
+            return payloads
+
+    return asyncio.run(go())
+
+
+def test_solver_replies_are_observable_over_the_wire(capsys):
+    # A spread of solver calls over real stdio, PRINTED so `pytest -s`
+    # (./run-tests.sh --verbose) shows each request and its full reply. The five
+    # well-posed cases solve or optimise; the last is an honest no-solution. Each
+    # case is (arguments, human note).
+    cases = [
+        (
+            {"expression": "x**2 - 2", "variable": "x", "lower": 0, "upper": 2, "mode": "double"},
+            "solve a root -> sqrt(2), value ~ 0",
+        ),
+        (
+            {
+                "expression": "(x - 3)**2", "variable": "x", "lower": 0, "upper": 5,
+                "goal": "minimise", "mode": "double",
+            },
+            "minimise a unimodal expr -> x = 3, value 0",
+        ),
+        (
+            {
+                "expression": "5 - (x - 1)**2", "variable": "x", "lower": -2, "upper": 4,
+                "goal": "max", "mode": "double",
+            },
+            "maximise (alias 'max') -> x = 1, value 5",
+        ),
+        (
+            {
+                "expression": "r = 0.05\np = 1000\np * (1 + r)**n - 2000", "variable": "n",
+                "lower": 0, "upper": 100, "mode": "double",
+            },
+            "constants from assignment lines -> n ~ 14.21",
+        ),
+        (
+            {
+                "expression": "2*x - 3", "variable": "x", "lower": 0, "upper": 3,
+                "mode": "fixed-point", "min_fixed_point_precision": 1,
+            },
+            "fixed-point exact root -> 1.5 (value exactly 0)",
+        ),
+        (
+            {"expression": "x**2 + 1", "variable": "x", "lower": 0, "upper": 2, "mode": "double"},
+            "no solution -> the closest |expr| is reported",
+        ),
+    ]
+    payloads = _solve_in_one_session([arguments for arguments, _note in cases])
+
+    with capsys.disabled():
+        for (arguments, note), payload in zip(cases, payloads, strict=True):
+            print(f"\nINPUT  solver({arguments})  # {note}")
+            print("OUTPUT:")
+            print(json.dumps(payload, indent=2))
+
+    for (_arguments, note), payload in zip(cases[:-1], payloads[:-1], strict=True):
+        assert payload["error"] is None, f"{note}: {payload['error']}"
+    assert payloads[-1]["error"] is not None and "No solution" in payloads[-1]["error"]
+
+
 def test_solver_finds_a_root_over_the_wire():
     # x**2 - 2 == 0 over [0, 2] in floating-point -> sqrt(2); the reply carries the
     # solution, the (near-zero) expression value there, and the resolved strategy.
