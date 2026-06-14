@@ -1391,7 +1391,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 30.6.  AST eval — Assign sets the store and yields its value; Var
                gets from the store (error if unset); Sequence evaluates each
                in turn and returns the last result.
-    [ ] 30.7.  TESTS — parse + evaluate assignment, reference, unknown-name
+    [x] 30.7.  TESTS — parse + evaluate assignment, reference, unknown-name
                error, and a multi-line program; per-mode it's value passthrough
                (the store holds Values verbatim, no mode/scale of its own).
 
