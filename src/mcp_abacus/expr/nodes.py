@@ -234,6 +234,25 @@ class Node(ABC):
         """
         return max((child._max_literal_scale() for child in self._children()), default=0)
 
+    def referenced_names(self) -> frozenset[str]:
+        """Names READ as variable references (Var) anywhere in this subtree (31.4).
+
+        Folds the union over the children; ``Var`` overrides to contribute its own
+        name. An ``Assign`` target is NOT a reference — it is reported by
+        ``assigned_names`` instead — so an assignment's name appears here only if the
+        name is also read somewhere (e.g. on a right-hand side).
+        """
+        return frozenset().union(*(child.referenced_names() for child in self._children()))
+
+    def assigned_names(self) -> frozenset[str]:
+        """Names BOUND as assignment targets (Assign) anywhere in this subtree (31.4).
+
+        Folds the union over the children; ``Assign`` overrides to add its own target
+        name. Used to tell a free unknown (only read) from a computed constant (bound
+        by an assignment) when validating a solver request.
+        """
+        return frozenset().union(*(child.assigned_names() for child in self._children()))
+
     def _walk(self, ctx: EvalContext) -> Value:
         """Evaluate this node under a shared context; store and return its Value.
 
@@ -420,6 +439,12 @@ class Assign(Node):
     def _children(self) -> tuple[Node, ...]:
         return (self.expr,)
 
+    def assigned_names(self) -> frozenset[str]:
+        # The target name, plus any targets bound inside the RHS (folded via the base).
+        # Calls Node.assigned_names explicitly: zero-arg super() misbehaves under the
+        # slots=True dataclass rebuild (its __class__ cell points at the pre-slots class).
+        return Node.assigned_names(self) | {self.name}
+
     def _evaluate(self, ctx: EvalContext) -> Value:
         # Bind the name to the RHS Value in the run store (30.2) and yield it; the
         # store lookup itself is the reference node's job (Var, 30.4).
@@ -455,6 +480,9 @@ class Var(Node):
 
     def _children(self) -> tuple[Node, ...]:
         return ()
+
+    def referenced_names(self) -> frozenset[str]:
+        return frozenset({self.name})
 
     def _evaluate(self, ctx: EvalContext) -> Value:
         try:

@@ -11,11 +11,14 @@ from mcp_abacus.expr.nodes import (
     BINARY_OPS,
     FUNCTION_ARITIES,
     UNARY_OPS,
+    Assign,
     BinOp,
     FuncCall,
     Node,
     Number,
+    Sequence,
     UnaryOp,
+    Var,
 )
 
 
@@ -209,6 +212,43 @@ def test_op_sets():
     assert BINARY_OPS == frozenset({"+", "-", "*", "/", "//", "%", "**", "&", "|", "^"})
     assert isinstance(UNARY_OPS, frozenset)
     assert isinstance(BINARY_OPS, frozenset)
+
+
+def test_referenced_names_collects_every_var_read():
+    tree = BinOp("+", Var("x", line=1), Var("y", line=1), line=1)
+    assert tree.referenced_names() == frozenset({"x", "y"})
+    assert tree.assigned_names() == frozenset()
+
+
+def test_referenced_names_is_empty_without_variables():
+    assert _example_tree().referenced_names() == frozenset()
+    assert _example_tree().assigned_names() == frozenset()
+
+
+def test_assign_target_is_assigned_not_referenced():
+    tree = Assign("x", Number("5", line=1), line=1)
+    assert tree.assigned_names() == frozenset({"x"})
+    assert tree.referenced_names() == frozenset()
+
+
+def test_assign_collects_rhs_references_and_its_own_target():
+    # `x = x + 1`: the target is assigned; the right-hand `x` is also read.
+    tree = Assign("x", BinOp("+", Var("x", line=1), Number("1", line=1), line=1), line=1)
+    assert tree.assigned_names() == frozenset({"x"})
+    assert tree.referenced_names() == frozenset({"x"})
+
+
+def test_sequence_separates_assigned_constants_from_the_free_unknown():
+    # `r = 0.05` then `r + n`: r is bound (constant), r and n are read.
+    program = Sequence(
+        (
+            Assign("r", Number("0.05", line=1), line=1),
+            BinOp("+", Var("r", line=2), Var("n", line=2), line=2),
+        ),
+        line=1,
+    )
+    assert program.assigned_names() == frozenset({"r"})
+    assert program.referenced_names() == frozenset({"r", "n"})
 
 
 def test_reexports_from_expr_package():
