@@ -1485,7 +1485,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.9.  Durand-Kerner / Aberth — all polynomial roots at once.
     [ ] 33.10. Sturm sequences — real-root isolation/counting.
     [ ] 33.11. Companion-matrix eigenvalues — polynomial roots.
-    [ ] 33.12. Brent (parabolic) minimise — derivative-free optimise.
+    [x] 33.12. Brent (parabolic) minimise — derivative-free optimise.
     [ ] 33.13. Newton/BFGS — gradient optimise via symbolic deriv.
     [x] 33.14. Nelder-Mead — derivative-free, multivariate-ready.
                Maintain a simplex of n+1 vertices over the variables and walk it

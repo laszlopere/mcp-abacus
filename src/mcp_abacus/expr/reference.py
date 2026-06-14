@@ -157,6 +157,8 @@ def _solver_section() -> str:
             "",
             "algorithms:",
             "  golden-section-search  single unknown, shrinks the 1-D bracket. The default.",
+            "  brent-parabolic        single unknown, parabolic interpolation with a golden-",
+            "                         section fallback; usually faster on smooth extrema.",
             "  nelder-mead            n unknowns, walks a downhill simplex; bounds-clamped to",
             "                         each bracket. The only engine for the variables form.",
             "",

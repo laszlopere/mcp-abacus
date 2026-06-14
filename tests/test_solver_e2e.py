@@ -275,3 +275,73 @@ def test_nelder_mead_unset_constant_surfaces_as_an_eval_error():
     )
     assert payload["solution"] is None and payload["solutions"] is None
     assert "undefined variable: a" in payload["error"]
+
+
+# --- Brent parabolic: the single-variable optimise alternative (33.12) --------
+
+
+def test_brent_parabolic_finds_a_minimum():
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via Brent's parabolic minimiser\n"
+        "unimodal; expect x = 3, value 0 — the parabola pins a smooth low point fast",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="brent-parabolic",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-5)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+    assert payload["iterations"] > 0
+
+
+def test_brent_parabolic_finds_a_maximum():
+    program = _annotated(
+        "find-maximum of 5 - (x - 1)**2 over [-2, 4] via Brent (it minimises -expr)\n"
+        "expect x = 1, value 5 (the peak)",
+        "5 - (x - 1)**2",
+    )
+    payload = _solve(
+        program, variable="x", lower=-2, upper=4, objective="find-maximum", algorithm="brent"
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-maximum"
+    assert payload["algorithm"] == "brent-parabolic"  # the alias resolves to canonical
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(5.0, abs=1e-6)
+
+
+def test_brent_parabolic_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Brent (it minimises |expr|)\n"
+        "expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-parabolic")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-5)
+    assert abs(_num(payload["value"])) < 1e-6
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_brent_parabolic_rejects_the_multiple_form():
+    # Like golden-section, Brent is single-variable: the `variables` form needs
+    # Nelder-Mead, so the request is refused with a pointer to the right algorithm.
+    program = _annotated(
+        "Brent asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="brent-parabolic")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]

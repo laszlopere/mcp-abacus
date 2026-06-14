@@ -18,6 +18,7 @@ from mcp_abacus.solver import (
     Algorithm,
     SolverError,
     SolverResult,
+    brent_parabolic,
     nelder_mead,
     resolve_algorithm,
     resolve_objective,
@@ -396,9 +397,12 @@ def solver(
     `minimise`/`maximise` and their `min`/`max` and American forms are accepted too.)
 
     `algorithm` (optional) names the search engine — "golden-section-search" (the
-    default, single-variable) or "nelder-mead" (multivariate, a bounds-clamped downhill
-    simplex). Golden-section solves only the SINGLE form; the `variables` form requires
-    "nelder-mead". (`golden`, `simplex` and a few other spellings are accepted too.)
+    default, single-variable), "brent-parabolic" (single-variable too, parabolic
+    interpolation with a golden-section fallback — usually faster on smooth extrema),
+    or "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The two
+    single-variable engines solve only the SINGLE form; the `variables` form requires
+    "nelder-mead". (`golden`, `brent`, `simplex` and a few other spellings are accepted
+    too.)
 
     `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
     search runs in that numeric type, and the found value is reported in it. See
@@ -446,6 +450,10 @@ def solver(
             validate_unknown(node, name)
         if resolved_algorithm is Algorithm.NELDER_MEAD:
             result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
+        elif resolved_algorithm is Algorithm.BRENT_PARABOLIC:
+            # single-variable, like golden-section — _resolve_unknowns guaranteed one
+            name, lo, hi = unknowns[0]
+            result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
         else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
             name, lo, hi = unknowns[0]
             result = search(node, name, lo, hi, selected, floor, resolved_objective)

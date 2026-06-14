@@ -41,8 +41,9 @@ type; it calculates *using* that type.
   expression to a target over a bracket: *find-root* (`x**2 - 2` over `[0, 2]` → √2)
   or *find-minimum* / *find-maximum*, in the same numeric type and expression
   language (constants come from `name = expr` assignment lines). One unknown uses
-  *golden-section search*; pass `variables` (a name → `[lower, upper]` map) with
-  `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
+  *golden-section search* (or *Brent parabolic* via `algorithm="brent-parabolic"`,
+  usually faster on smooth extrema); pass `variables` (a name → `[lower, upper]` map)
+  with `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
 - **`help`** — the grammar and type reference, on tap for the model
 - **`info`** — server version and environment
 

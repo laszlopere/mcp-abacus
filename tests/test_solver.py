@@ -115,12 +115,15 @@ def test_algorithm_defaults_to_golden_section_when_omitted():
 
 def test_canonical_algorithms_resolve():
     assert resolve_algorithm("golden-section-search") is Algorithm.GOLDEN_SECTION
+    assert resolve_algorithm("brent-parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
 
 
 def test_algorithm_aliases_resolve():
     # Never-surfaced spellings still resolve to the canonical engine.
     assert resolve_algorithm("golden") is Algorithm.GOLDEN_SECTION
+    assert resolve_algorithm("brent") is Algorithm.BRENT_PARABOLIC
+    assert resolve_algorithm("parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("simplex") is Algorithm.NELDER_MEAD
     assert resolve_algorithm("nelder mead") is Algorithm.NELDER_MEAD
 

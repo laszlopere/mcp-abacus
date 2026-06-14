@@ -52,11 +52,15 @@ class Algorithm(Enum):
 
     Split from ``Objective`` (WHAT it looks for): the same root / extremum can be
     reached by different methods. ``GOLDEN_SECTION`` is the single-variable bracket
-    shrinker (31.7); ``NELDER_MEAD`` is the multivariate downhill simplex (33.14).
-    The enum value is the string reported in the reply's ``algorithm`` field (32.3).
+    shrinker (31.7); ``BRENT_PARABOLIC`` is the single-variable parabolic minimiser
+    (33.12), a faster sibling that fits a parabola through the best three points and
+    falls back to a golden-section step; ``NELDER_MEAD`` is the multivariate downhill
+    simplex (33.14). The enum value is the string reported in the reply's
+    ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
+    BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -102,6 +106,8 @@ def resolve_objective(objective: str | None) -> Objective:
 _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "golden-section": Algorithm.GOLDEN_SECTION,
     "golden": Algorithm.GOLDEN_SECTION,
+    "brent": Algorithm.BRENT_PARABOLIC,
+    "parabolic": Algorithm.BRENT_PARABOLIC,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -189,6 +195,8 @@ def validate_unknown(node: Node, variable: str) -> None:
 # reply names which ran (Algorithm, 32.3/33.14) so the two are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
+_GOLDEN = (3 - 5**0.5) / 2  # 0.382..., the complementary golden fraction — Brent's
+# fallback step takes this share of the larger sub-bracket when the parabola is rejected
 _MAX_ITERATIONS = 200  # cap: ~60 steps already shrink a unit bracket below 1e-12
 _TIME_LIMIT_SECONDS = 2.0  # hard wall-clock cap: a pathological program can make a
 # single candidate evaluation slow, so the iteration cap alone is not enough to bound
@@ -377,6 +385,166 @@ def search(
         variable,
         objective,
         Algorithm.GOLDEN_SECTION.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Brent's parabolic minimiser (33.12) --------------------------------------
+# The single-variable peer of golden-section, usually faster: instead of always
+# trisecting the bracket by the golden ratio it fits a parabola through the best
+# three points seen and leaps near its vertex, dropping back to a golden step only
+# when the parabola is unhelpful (vertex outside the bracket, or too large a move).
+# Everything around the core — candidate materialisation, best-tracking, grid polish,
+# the time / iteration caps, and the error paths — is the same as golden-section, so
+# the two engines differ only in how they pick the next point to evaluate.
+
+
+def brent_parabolic(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Brent's parabolic minimiser for the unknown over ``[lower, upper]`` (33.12).
+
+    A faster-converging sibling of :func:`search`: it minimises the SAME folded
+    objective (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an
+    extremum — and shares :func:`search`'s machinery exactly (candidate eval in the
+    active mode, best-across-all tracking, grid polish, the 2-second wall-clock and
+    iteration caps, and the no-evaluation / no-solution error paths). The two differ
+    only in HOW the next point is chosen: Brent fits a parabola through the best three
+    points and jumps near its vertex, so on a smooth extremum it converges in far fewer
+    evaluations than golden-section's fixed trisection.
+
+    The loop is the textbook bounded Brent (Numerical Recipes ``brent`` / SciPy
+    ``fminbound``), kept inside ``[a, b]``: the parabolic step is accepted only when
+    its vertex lands inside the current bracket and the move is below half the
+    step-before-last (the ``e`` bookkeeping); otherwise a golden-section step
+    (``_GOLDEN`` of the larger sub-bracket) is taken. A non-smooth objective — the
+    kinked ``|expr|`` of a find-root — simply triggers the golden fallback more often,
+    so it still converges. Returns the best candidate as a SolverResult; raises
+    SolverError on the same conditions as :func:`search`.
+    """
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float) -> float:
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return math.inf  # a domain error at THIS candidate — steer the search away
+        obj = fold_objective(raw, objective).to_float()
+        if obj < best_obj:
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return obj
+
+    # x is the best point so far, w the second best, v the previous w; the parabola is
+    # fitted through the three. d is the last step, e the step before it (the parabola
+    # is only trusted when it asks for less than half of e). Seed all three at one
+    # interior point, a golden fraction in from the lower end.
+    a, b = lower, upper
+    x = w = v = a + _GOLDEN * (b - a)
+    fx = fw = fv = evaluate_objective(x)
+    d = e = 0.0
+    iterations = 0
+    timed_out = False
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        midpoint = (a + b) / 2
+        # Brent's own convergence test: stop once the best point x sits centred within
+        # a bracket narrower than the tolerance. Tied to the x_tol minimal step below
+        # (sample no closer than x_tol to x), so the search settles instead of taking
+        # ever-tinier steps near a smooth minimum the way a bare bracket-width test would.
+        if abs(x - midpoint) <= 2 * x_tol - 0.5 * (b - a):
+            break
+        use_parabola = False
+        if abs(e) > x_tol:
+            # Fit the parabola through (x, fx), (w, fw), (v, fv); p/q is the step from
+            # x to its vertex. Trust it only inside (a, b) and below half the prior e.
+            r = (x - w) * (fx - fv)
+            q = (x - v) * (fx - fw)
+            p = (x - v) * q - (x - w) * r
+            q = 2.0 * (q - r)
+            if q > 0:
+                p = -p
+            q = abs(q)
+            prev_e, e = e, d
+            if abs(p) < abs(0.5 * q * prev_e) and a - x < p / q < b - x:
+                d = p / q
+                use_parabola = True
+        if not use_parabola:  # golden-section fallback into the larger sub-bracket
+            e = (b - x) if x < midpoint else (a - x)
+            d = _GOLDEN * e
+        # Never sample closer than x_tol to x (a zero-width step stalls the search).
+        if abs(d) < x_tol:
+            d = x_tol if d > 0 else -x_tol
+        u = min(max(x + d, a), b)
+        fu = evaluate_objective(u)
+        if fu <= fx:  # new best — it brackets one side; x slides to u
+            if u < x:
+                b = x
+            else:
+                a = x
+            v, w, x = w, x, u
+            fv, fw, fx = fw, fx, fu
+        else:  # u is worse than the best — it tightens the bracket toward x
+            if u < x:
+                a = u
+            else:
+                b = u
+            if fu <= fw or w == x:
+                v, w = w, u
+                fv, fw = fw, fu
+            elif fu <= fv or v == x or v == w:
+                v, fv = u, fu
+        iterations += 1
+
+    # Grid polish (fixed-point / rational), identical to golden-section's: re-test the
+    # grid neighbours of the best point so a root sitting exactly on the grid is found
+    # (residual 0) rather than missed by a quantised hair. Skipped on float and timeout.
+    if best_solution is not None and mode is not Mode.FLOATING_POINT and not timed_out:
+        step = 10.0**-scale
+        centre = best_solution.to_float()
+        for k in (-2, -1, 1, 2):
+            evaluate_objective(centre + k * step)
+
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
+        )
+    if objective is Objective.FIND_ROOT and best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
+        )
+        raise SolverError(
+            f"No solution: the expression does not reach zero for {variable!r} in "
+            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
+            f"at {variable} = {best_solution.to_string()}.{limit}"
+        )
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.BRENT_PARABOLIC.value,
         best_solution,
         best_value,
         iterations,
