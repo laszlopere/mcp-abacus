@@ -296,14 +296,15 @@ def _verbose_trace(request, monkeypatch):
             tracer.depth -= 1
 
     @functools.wraps(original_evaluate)
-    def traced_evaluate(self, mode):
+    def traced_evaluate(self, mode, min_fixed_point_precision=0):
         if tracer.in_evaluate:
-            return original_evaluate(self, mode)  # only the outermost call narrates
+            # only the outermost call narrates
+            return original_evaluate(self, mode, min_fixed_point_precision)
         tracer.emit(f"evaluate(mode={mode!r})")
         tracer.in_evaluate = True
         tracer.depth += 1
         try:
-            result = original_evaluate(self, mode)
+            result = original_evaluate(self, mode, min_fixed_point_precision)
             tracer.emit(self.pretty())  # per-node "= value" annotations (18.6)
             tracer.emit(f"value: {_render_value(result)}")
             return result
