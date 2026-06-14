@@ -280,6 +280,45 @@ def _compact_functions_trace(request, monkeypatch):
             print(f"{label.ljust(width)}  = {shown}")
 
 
+def _compact_variables_trace(request, monkeypatch):
+    """For test_variables_e2e.py under -v: print each multi-line program + result.
+
+    Variable programs span several source lines, so the single-line "expression =
+    value" table the other tool tests use would mangle them. Instead each
+    `calculate` invocation is recorded at the FastMCP seam (mcp.call_tool) and, at
+    teardown, printed as an INPUT block (the program's own lines, indented) under
+    its mode, followed by the OUTPUT line — the annotated value, or the line-tagged
+    message when the program refused.
+    """
+    from mcp_abacus.server import mcp
+
+    rows: list[tuple[str, str, str]] = []  # (program source, mode label, shown result)
+    original_call_tool = mcp.call_tool
+
+    @functools.wraps(original_call_tool)
+    async def traced_call_tool(name, arguments=None, *args, **kwargs):
+        result = await original_call_tool(name, arguments, *args, **kwargs)
+        if name == "calculate":
+            blocks = result[0] if isinstance(result, tuple) else result
+            payload = json.loads(blocks[0].text)
+            arguments = arguments or {}
+            mode = arguments.get("mode", "fixed-point (default)")
+            shown = payload["value"] if payload["error"] is None else f"error: {payload['error']}"
+            rows.append((arguments["expression"], mode, shown))
+        return result
+
+    monkeypatch.setattr(mcp, "call_tool", traced_call_tool)
+    yield
+
+    if rows:
+        print()  # step off pytest's "test-id" progress line
+        for program, mode, shown in rows:
+            print(f"\nINPUT [{mode}]:")
+            for line in program.splitlines():
+                print(f"    {line}")
+            print(f"OUTPUT: {shown}")
+
+
 @pytest.fixture(autouse=True)
 def _verbose_trace(request, monkeypatch):
     """Under pytest -v, narrate expressions, tokens, trees and values live."""
@@ -302,6 +341,12 @@ def _verbose_trace(request, monkeypatch):
         # test_functions.py gets the compact "expression [mode] = value" view,
         # sourced from the in-process `calculate` tool seam.
         yield from _compact_functions_trace(request, monkeypatch)
+        return
+
+    if request.module.__name__ == "test_variables_e2e":
+        # test_variables_e2e.py gets a multi-line "program -> result" view: the
+        # expressions span several lines, so a side-by-side table won't do.
+        yield from _compact_variables_trace(request, monkeypatch)
         return
 
     tracer = _Tracer()
