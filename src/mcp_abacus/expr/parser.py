@@ -8,13 +8,16 @@ rungs and ~ follow C/Python, 24.3.2):
 bitwise OR ``|`` < bitwise XOR ``^`` < bitwise AND ``&`` < additive ``+ -``
 < multiplicative ``* / // %`` (all left-assoc) < unary ``+ - ~`` < power ``**``
 (RIGHT-assoc and tighter than unary minus: ``-2**2 == -(2**2)``; the exponent may
-itself be unary: ``2**-3``). Atoms are numbers, parenthesized expressions, and
+itself be unary: ``2**-3``). Atoms are numbers, parenthesized expressions,
 function calls ``NAME '(' (expr (',' expr)*)? ')'`` (22.2 — tightest binding, so
 ``sqrt(4)**2`` is ``(sqrt(4))**2``; the argument list may be EMPTY for a nullary
-like ``pi()``, 29.2); the call's name and arity are validated here against
-nodes.FUNCTION_ARITIES, unknown-name/wrong-arity being parse errors.
-Parens only shape the tree — no Group node. The left-assoc binary levels run on a
-Pratt binding-power table; unary/power/atom are plain descent.
+like ``pi()``, 29.2; the call's name and arity are validated here against
+nodes.FUNCTION_ARITIES, unknown-name/wrong-arity being parse errors), and bare
+NAME variable references (30.4 — a NAME NOT followed by ``(``, distinct from a
+call). Parens only shape the tree — no Group node. Above the whole chain sits the
+loosest-precedence assignment ``NAME '=' expr`` (30.3), recognised only at
+statement level. The left-assoc binary levels run on a Pratt binding-power table;
+assignment/unary/power/atom are plain descent.
 
 ``^`` is bitwise XOR, NOT power (power is ``**``, freed up in 24.3.1).
 """
@@ -28,6 +31,7 @@ from mcp_abacus.expr.nodes import (
     Node,
     Number,
     UnaryOp,
+    Var,
     _arity_ok,
     _describe_arity,
 )
@@ -155,7 +159,11 @@ class _Parser:
         if token.kind == NUMBER:
             return Number(token.lexeme, line=token.line)
         if token.kind == NAME:
-            return self._call(token)
+            # A NAME followed by '(' is a call / nullary (22.2 / 29.2); a bare NAME
+            # is a variable reference (30.4). The two forms are kept distinct here.
+            if self._peek().kind == LPAREN:
+                return self._call(token)
+            return Var(token.lexeme, line=token.line)
         if token.kind == LPAREN:
             node = self.expression()
             closing = self._advance()
@@ -163,7 +171,7 @@ class _Parser:
                 raise ParseError(f"expected ')', got {_describe(closing)}", closing.line)
             return node  # parens only shape the tree — no Group node (20.2.2)
         raise ParseError(
-            f"expected a number, function name, or '(', got {_describe(token)}", token.line
+            f"expected a number, name, or '(', got {_describe(token)}", token.line
         )
 
     def _call(self, name: Token) -> Node:

@@ -15,7 +15,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from mcp_abacus.expr.value import EvalContext, Mode, Value, _lexeme_scale
+from mcp_abacus.expr.value import (
+    EvalContext,
+    Mode,
+    UndefinedVariableError,
+    Value,
+    _lexeme_scale,
+)
 
 UNARY_OPS: frozenset[str] = frozenset({"+", "-", "~"})  # ~ is bitwise NOT (24.3.2)
 # ** is POWER; ^ & | are bitwise (24.3.2 — ^ is XOR, not power).
@@ -416,7 +422,44 @@ class Assign(Node):
 
     def _evaluate(self, ctx: EvalContext) -> Value:
         # Bind the name to the RHS Value in the run store (30.2) and yield it; the
-        # store lookup itself is a future reference node's job (30.4).
+        # store lookup itself is the reference node's job (Var, 30.4).
         result = self.expr._walk(ctx)
         ctx.variables.set(self.name, result)
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class Var(Node):
+    """A variable reference — a bare NAME read back from the run's store (30.4).
+
+    The counterpart to Assign (30.3): where Assign binds ``name = expr``, Var reads
+    ``name``. The parser builds a Var only for a NAME NOT followed by ``(`` — a
+    call or nullary keeps its FuncCall (22.2 / 29.2), so the two NAME forms stay
+    distinct. Evaluation looks the name up in the run's VariableStore (30.2); an
+    unset name raises UndefinedVariableError, which carries no position, so this
+    node re-raises it as an EvalError tagged with its own source line (30.1).
+    """
+
+    name: str
+    line: int = field(kw_only=True, compare=False)
+    value: Value | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("Var name must not be empty")
+        _validate_line(self.line)
+
+    def _label(self) -> str:
+        # 26.8: VAR with the name quoted, paralleling LITERAL / CALL / ASSIGN.
+        return f'VAR "{self.name}"'
+
+    def _children(self) -> tuple[Node, ...]:
+        return ()
+
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        try:
+            return ctx.variables.get(self.name)
+        except UndefinedVariableError as exc:
+            # The store error has no line; position it here (30.1) so the run
+            # surfaces an EvalError like every other evaluation failure.
+            raise EvalError(str(exc), line=self.line) from exc

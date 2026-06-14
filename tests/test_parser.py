@@ -149,8 +149,8 @@ def test_node_lines_come_from_defining_tokens():
         ("foo(1)", 1),  # unknown function name (22.2)
         ("sqrt(1, 2)", 1),  # wrong arity
         ("sqrt()", 1),  # missing argument -> the atom parser fires
-        ("sqrt", 1),  # bare name, no call parens
-        ("sqrt 4", 1),  # name not followed by '('
+        # ("sqrt", 1) is NO LONGER an error: a bare NAME is a variable reference (30.4)
+        ("sqrt 4", 1),  # bare-name ref (30.4) then trailing '4' -> garbage after the expression
         ("sqrt(4", 1),  # unclosed call
         ("1 +\nfoo(2)", 2),  # unknown name's line is the NAME's, not the call's first arg
         ("1 +\nsqrt(2, 3)", 2),  # arity error carries the NAME's line

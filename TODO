@@ -1383,7 +1383,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                lives for the whole run and threads down the evaluate walk.
     [x] 30.3.  Parser — assignment `NAME '=' expr`, lowest precedence; the
                AST Assign node holds the name lexeme + the value subtree.
-    [ ] 30.4.  Parser — a bare NAME atom is a variable reference (an AST
+    [x] 30.4.  Parser — a bare NAME atom is a variable reference (an AST
                Var node holding the lexeme); keep it distinct from the
                NAME '(' ... ')' call / nullary forms.
     [ ] 30.5.  Parser — instruction list: statements separated by newlines,

@@ -14,6 +14,7 @@ from mcp_abacus.expr.nodes import (
     Node,
     Number,
     UnaryOp,
+    Var,
 )
 from mcp_abacus.expr.parser import ParseError, parse
 from mcp_abacus.expr.value import (
@@ -43,6 +44,7 @@ __all__ = [
     "UnaryOp",
     "UndefinedVariableError",
     "Value",
+    "Var",
     "VariableStore",
     "parse",
     "tokenize",
