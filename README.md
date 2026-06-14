@@ -1,6 +1,9 @@
 # mcp-abacus
 
 [![CI](https://github.com/laszlopere/mcp-abacus/actions/workflows/ci.yml/badge.svg)](https://github.com/laszlopere/mcp-abacus/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mcp-abacus.svg)](https://pypi.org/project/mcp-abacus/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2.svg)](https://github.com/sponsors/laszlopere)
 
 **A calculator for the artificial minds — because we know their needs are
