@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from mcp_abacus.expr.value import EvalContext, Mode, Value
+from mcp_abacus.expr.value import EvalContext, Mode, Value, _lexeme_scale
 
 UNARY_OPS: frozenset[str] = frozenset({"+", "-", "~"})  # ~ is bitwise NOT (24.3.2)
 # ** is POWER; ^ & | are bitwise (24.3.2 — ^ is XOR, not power).
@@ -188,12 +188,32 @@ class Node(ABC):
         scale propagates through the calculation. Defaults to 0 (no floor); it is
         a no-op outside fixed-point mode, which has no decimal scale.
 
-        This is the public entry: it bundles the two into the per-run EvalContext
-        (29.1) and walks the tree threading that one object down, rather than
-        passing the pair to every node or reaching for a module global.
+        This is the public entry: it bundles the run state into the per-run
+        EvalContext (29.1) and walks the tree threading that one object down,
+        rather than passing the state to every node or reaching for a module global.
+        In FIXED_POINT it first PRE-WALKS the tree once to derive the nullary scale
+        (29.3) — the floor raised to the widest literal scale — so a nullary like
+        ``pi()``, which has no operand to carry a scale, is computed to match the
+        precision of the literals it shares the expression with.
         """
-        ctx = EvalContext(mode=mode, min_fixed_point_precision=min_fixed_point_precision)
+        nullary_precision = min_fixed_point_precision
+        if mode is Mode.FIXED_POINT:
+            nullary_precision = max(min_fixed_point_precision, self._max_literal_scale())
+        ctx = EvalContext(
+            mode=mode,
+            min_fixed_point_precision=min_fixed_point_precision,
+            nullary_precision=nullary_precision,
+        )
         return self._walk(ctx)
+
+    def _max_literal_scale(self) -> int:
+        """Largest written decimal scale among the literals in this subtree (29.3).
+
+        The pre-walk behind ``nullary_precision``: every node folds the max over its
+        children, ``Number`` overriding with its own lexeme scale. 0 for a subtree
+        with no literal (e.g. a bare ``pi()``), leaving the nullary scale at the floor.
+        """
+        return max((child._max_literal_scale() for child in self._children()), default=0)
 
     def _walk(self, ctx: EvalContext) -> Value:
         """Evaluate this node under a shared context; store and return its Value.
@@ -245,6 +265,10 @@ class Number(Node):
 
     def _children(self) -> tuple[Node, ...]:
         return ()
+
+    def _max_literal_scale(self) -> int:
+        # The one node that carries a scale: read it off the verbatim lexeme (29.3).
+        return _lexeme_scale(self.lexeme)
 
     def _evaluate(self, ctx: EvalContext) -> Value:
         # The mode only ever lands here, on the literals (18.3) — and so does the

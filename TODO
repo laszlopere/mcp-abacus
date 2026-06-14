@@ -1223,7 +1223,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                func is a Value method with self as the first operand). With no
                operand, a nullary is a new registered-callable kind that takes
                the eval context (29.1) instead of operands.
-    [ ] 29.3.  MODE & PRECISION — nullaries have no operand to carry them.
+    [x] 29.3.  MODE & PRECISION — nullaries have no operand to carry them.
                Mode = the request mode (already known). Fixed-point precision:
                start from the default floor (0 or min_fixed_point_precision,
                already implemented), then PRE-WALK the AST once before

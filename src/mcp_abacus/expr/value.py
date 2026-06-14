@@ -163,14 +163,21 @@ class EvalContext:
 
     ONE instance is built at the top of a single ``Node.evaluate`` run and passed
     to every node as it is walked, so the per-run state lives in an argument
-    rather than a module global. It carries the ``mode`` the run evaluates in and
-    the ``min_fixed_point_precision`` floor (25.2.1) — the two quantities the walk
-    threaded as loose parameters before. Later items hang more state here without
-    re-touching every node signature (the nullary fixed-point precision, 29.3).
+    rather than a module global. It carries the ``mode`` the run evaluates in, the
+    ``min_fixed_point_precision`` floor (25.2.1), and the ``nullary_precision``
+    below.
+
+    ``nullary_precision`` (29.3) is the fixed-point scale a nullary like ``pi()``
+    produces — a constant has no operand to carry a scale, so the run hands it one:
+    the floor raised to the largest decimal scale of any literal in the expression,
+    derived by a single pre-walk before evaluation (FIXED_POINT only — float uses
+    its native constant, rational refuses the irrational, neither has a scale). It
+    is unused outside fixed-point and defaults to 0.
     """
 
     mode: Mode
     min_fixed_point_precision: int = 0
+    nullary_precision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +307,23 @@ def _pi_scaled(decimals: int) -> int:
     unity = 10 ** (decimals + _PI_GUARD)
     pi_guarded = 16 * _arctan_inv(5, unity) - 4 * _arctan_inv(239, unity)
     return pi_guarded // 10**_PI_GUARD
+
+
+_E_GUARD = 12  # as _PI_GUARD: extra digits so the returned scale's last place is right
+
+
+def _e_scaled(decimals: int) -> int:
+    """``floor(e * 10**decimals)``, correct to the last place (29.3).
+
+    ``e == exp(1) == sum 1/k!``, summed by the shared exp series at ``decimals +
+    _E_GUARD`` guard digits then truncated back — the constant counterpart of
+    ``_pi_scaled`` for the nullary ``e()``. Here ``z == unity`` (the argument 1.0),
+    the one spot exp is summed without the callers' ln(2) range reduction; at z = 1
+    the all-plus series still converges in a couple dozen terms and the guard
+    absorbs their per-term truncation, the same way it does for pi.
+    """
+    unity = 10 ** (decimals + _E_GUARD)
+    return _fp_exp_series(unity, unity) // 10**_E_GUARD  # exp(1) * unity, truncated back
 
 
 def _fp_reduce_mod_2pi(fp: FixedPoint) -> tuple[int, int]:
@@ -552,6 +576,25 @@ def _fp_align(a: FixedPoint, b: FixedPoint) -> tuple[int, int, int]:
     return a.mantissa * 10 ** (scale - a.decimals), b.mantissa * 10 ** (scale - b.decimals), scale
 
 
+def _lexeme_scale(lexeme: str) -> int:
+    """The written decimal scale of a numeric literal, from its verbatim text (29.3).
+
+    The fractional-digit count the lexeme spells out: ``D`` for an M@D literal,
+    the digits after the point for a decimal/scientific form (0 once a positive
+    exponent absorbs them), 0 for a plain or base-prefixed integer. IDENTICAL to
+    the ``decimals`` ``from_lexeme`` assigns a FIXED_POINT value before the floor —
+    read straight off the source so the nullary-precision pre-walk (29.3) need not
+    evaluate the tree. Mirrors from_lexeme's three literal cases.
+    """
+    if "@" in lexeme:  # M@D (20.5): the scale is the explicit '@<decimals>' tail
+        return int(lexeme.partition("@")[2])
+    if lexeme[:2].lower() in {"0x", "0b", "0o"}:  # base-prefixed integers (20.4)
+        return 0
+    exponent = Decimal(lexeme).as_tuple()[2]  # exact, unrounded — as from_lexeme
+    assert isinstance(exponent, int)  # only 'n'/'F' for nan/inf, never lexed
+    return -exponent if exponent < 0 else 0  # positive exponent is an integer, scale 0
+
+
 @dataclass(frozen=True, slots=True)
 class Value:
     """A number in ONE mode's own representation, plus an exactness flag.
@@ -674,24 +717,52 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
-    # --- nullary constants (29.2) ---------------------------------------
+    # --- nullary constants (29.2 / 29.3) --------------------------------
     # Zero-argument functions like pi() and e(). UNLIKE every other function they
     # are NOT operand-methods (no ``self`` operand carries the mode): each takes
     # the per-run EvalContext (29.1) and builds a Value in ``ctx.mode``. They are
     # the "registered-callable kind that takes the eval context" the nodes registry
-    # dispatches to. The per-mode value — float math.pi, rational refusing the
-    # irrational, fixed-point computed to the run's derived scale — lands in 29.3;
-    # the bodies are intentional stubs until then.
+    # dispatches to. Both constants are irrational, so EVERY mode is inexact-or-
+    # refuse: float rounds its native double, fixed-point truncates to the run's
+    # derived scale (ctx.nullary_precision, 29.3), and rational has no finite scale
+    # to round to so it refuses — the same exact-or-refuse stance as sqrt/sin.
 
     @classmethod
     def pi(cls, ctx: "EvalContext") -> "Value":
-        """The circle constant pi in ``ctx.mode`` (29.2 dispatch shape)."""
-        raise NotImplementedError("nullary pi(): per-mode value lands in 29.3")
+        """The circle constant pi in ``ctx.mode`` (29.3).
+
+        float: math.pi (the nearest double, inexact). fixed-point: pi truncated to
+        ``ctx.nullary_precision`` decimals via the engine's Machin-formula helper,
+        inexact (irrational). rational: refuses — pi is irrational with no scale.
+        """
+        match ctx.mode:
+            case Mode.FLOATING_POINT:
+                return cls(Mode.FLOATING_POINT, math.pi, exact=False)
+            case Mode.FIXED_POINT:
+                scale = ctx.nullary_precision
+                return cls(Mode.FIXED_POINT, FixedPoint(_pi_scaled(scale), scale), exact=False)
+            case Mode.RATIONAL:
+                raise NotRepresentableError("pi is irrational; no rational value")
+            case _:
+                raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
     @classmethod
     def e(cls, ctx: "EvalContext") -> "Value":
-        """Euler's number e in ``ctx.mode`` (29.2 dispatch shape)."""
-        raise NotImplementedError("nullary e(): per-mode value lands in 29.3")
+        """Euler's number e in ``ctx.mode`` (29.3) — mirror of ``pi``.
+
+        float: math.e. fixed-point: e truncated to ``ctx.nullary_precision``
+        decimals via the exp-series helper, inexact. rational: refuses (irrational).
+        """
+        match ctx.mode:
+            case Mode.FLOATING_POINT:
+                return cls(Mode.FLOATING_POINT, math.e, exact=False)
+            case Mode.FIXED_POINT:
+                scale = ctx.nullary_precision
+                return cls(Mode.FIXED_POINT, FixedPoint(_e_scaled(scale), scale), exact=False)
+            case Mode.RATIONAL:
+                raise NotRepresentableError("e is irrational; no rational value")
+            case _:
+                raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
     # --- binary operators (19.3.1-19.3.7) -------------------------------
     # Each requires ``other`` in the SAME mode ("No mode mixing") and returns a
