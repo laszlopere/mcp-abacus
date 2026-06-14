@@ -1582,126 +1582,58 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                temperature (affine — offset + scale, not a bare factor), data
                (KiB/KB binary-vs-decimal — a known LLM trap), angle. Store factors
                as exact rationals so the conversion is exact where the definition is.
-    [ ] 36.3.  Carry the exact/inexact verdict per conversion (a defined factor is
-               exact in rational; an irrational or rounded factor is flagged) and
-               reuse the active numeric type so converted values compose with the
-               rest of the engine.
+    [ ] 36.3.  Convert via the base unit: store each unit as an exact rational
+               ratio to a per-category base (inch = 25.4 mm, metre = 1000 mm, ...)
+               and compute as ONE composed rational op (value * from_ratio /
+               to_ratio), not round-to-base-then-round-to-target — two rounded
+               steps can lose exactness even when the true result is exact.
+               Temperature is affine (scale*x + offset, e.g. F = C*9/5 + 32), still
+               exact-rational. Reuse the active numeric type so results compose with
+               the rest of the engine.
+    [ ] 36.3a.  Exact/inexact verdict + printing. A rational p/q (lowest terms) has
+               a finite decimal iff q factors into only 2s and 5s. Three cases:
+               (a) terminates -> print all digits, verdict "exact" (5 in -> 12.7 cm;
+               1 lb -> 0.45359237 kg). (b) non-terminating rational -> exact as a
+               fraction but infinite as decimal; print rounded decimal with "≈",
+               verdict "inexact", and expose the exact fraction on request
+               (10 cm -> 500/127 in). (c) irrational -> always inexact decimal; only
+               angle (deg<->rad via π) hits this in the seeded set. For (b)/(c)
+               default precision reuses the engine's display-precision setting,
+               don't invent a conversion-specific knob.
     [ ] 36.4.  HELP section listing categories + units; README bullet; fixtures.
-    [ ] 36.5.  Distance units
-               [ ] 36.5.1.  Centimeters -> Inches (cm, centimeter, in, inch)
-               [ ] 36.5.2.  Inches -> Centimeters (in, inch, cm, centimeter)
-               [ ] 36.5.3.  Miles -> Kilometers (mi, mile, km, kilometre)
-               [ ] 36.5.4.  Kilometers -> Miles (km, kilometre, mi, mile)
-               [ ] 36.5.5.  Feet -> Meters (ft, foot, m, metre)
-               [ ] 36.5.6.  Meters -> Feet (m, metre, ft, foot)
-               [ ] 36.5.7.  Millimeters -> Inches (mm, millimeter, in, inch)
-               [ ] 36.5.8.  Inches -> Millimeters (in, inch, mm, millimeter)
-               [ ] 36.5.9.  Centimeters -> Feet (cm, centimeter, ft, foot)
-               [ ] 36.5.10.  Meters -> Yards (m, metre, yd, yard)
-               [ ] 36.5.11.  Yards -> Meters (yd, yard, m, metre)
-               [ ] 36.5.12.  Miles -> Meters (mi, mile, m, metre)
-    [ ] 36.6.  Temperature units
-               [ ] 36.6.1.  Celsius -> Fahrenheit (°C, C, °F, F)
-               [ ] 36.6.2.  Fahrenheit -> Celsius (°F, F, °C, C)
-    [ ] 36.7.  Speed units
-               [ ] 36.7.1.  Kilometers per hour -> Miles per hour (km/h, kph, mph)
-               [ ] 36.7.2.  Miles per hour -> Kilometers per hour (mph, km/h, kph)
-               [ ] 36.7.3.  Meters per second -> Kilometers per hour (m/s, mps, km/h, kph)
-               [ ] 36.7.4.  Meters per second -> Miles per hour (m/s, mps, mph)
-               [ ] 36.7.5.  Knots -> Miles per hour (kn, knot, mph)
-               [ ] 36.7.6.  Knots -> Kilometers per hour (kn, knot, km/h, kph)
-    [ ] 36.8.  Area units
-               [ ] 36.8.1.  Square Feet -> Square Meters (sq ft, ft², sq m, m²)
-               [ ] 36.8.2.  Square Meters -> Square Feet (sq m, m², sq ft, ft²)
-               [ ] 36.8.3.  Acres -> Square Feet (ac, acre, sq ft, ft²)
-               [ ] 36.8.4.  Hectares -> Acres (ha, hectare, ac, acre)
-               [ ] 36.8.5.  Acres -> Hectares (ac, acre, ha, hectare)
-               [ ] 36.8.6.  Square Miles -> Acres (sq mi, mi², ac, acre)
-               [ ] 36.8.7.  Square Kilometers -> Square Miles (sq km, km², sq mi, mi²)
-    [ ] 36.9.  Mass units
-               [ ] 36.9.1.  Kilograms -> Pounds (kg, kilogram, lb, lbs, pound)
-               [ ] 36.9.2.  Pounds -> Kilograms (lb, lbs, pound, kg, kilogram)
-               [ ] 36.9.3.  Grams -> Ounces (g, gram, oz, ounce)
-               [ ] 36.9.4.  Ounces -> Grams (oz, ounce, g, gram)
-               [ ] 36.9.5.  Grams -> Pounds (g, gram, lb, lbs, pound)
-               [ ] 36.9.6.  Pounds -> Grams (lb, lbs, pound, g, gram)
-               [ ] 36.9.7.  Ounces -> Pounds (oz, ounce, lb, lbs, pound)
-               [ ] 36.9.8.  Pounds -> Ounces (lb, lbs, pound, oz, ounce)
-               [ ] 36.9.9.  Stones -> Pounds (st, stone, lb, lbs, pound)
-               [ ] 36.9.10.  Pounds -> Stones (lb, lbs, pound, st, stone)
-               [ ] 36.9.11.  Kilograms -> Grams (kg, kilogram, g, gram)
-    [ ] 36.10.  Volume units
-               [ ] 36.10.1.  Cups -> Milliliters (cup, ml, millilitre)
-               [ ] 36.10.2.  Milliliters -> Cups (ml, millilitre, cup)
-               [ ] 36.10.3.  Cups -> Grams (cup, g, gram)
-               [ ] 36.10.4.  Tablespoons -> Teaspoons (tbsp, tablespoon, tsp, teaspoon)
-               [ ] 36.10.5.  Teaspoons -> Milliliters (tsp, teaspoon, ml, millilitre)
-               [ ] 36.10.6.  Tablespoons -> Milliliters (tbsp, tablespoon, ml, millilitre)
-               [ ] 36.10.7.  Cups -> Tablespoons (cup, tbsp, tablespoon)
-               [ ] 36.10.8.  Liters -> Gallons (l, litre, gal, gallon)
-               [ ] 36.10.9.  Gallons -> Liters (gal, gallon, l, litre)
-               [ ] 36.10.10.  Liters -> Milliliters (l, litre, ml, millilitre)
-               [ ] 36.10.11.  Milliliters -> Liters (ml, millilitre, l, litre)
-               [ ] 36.10.12.  Fluid Ounces -> Milliliters (fl oz, floz, ml, millilitre)
-               [ ] 36.10.13.  Milliliters -> Fluid Ounces (ml, millilitre, fl oz, floz)
-               [ ] 36.10.14.  Quarts -> Liters (qt, quart, l, litre)
-    [ ] 36.11.  Time units
-               [ ] 36.11.1.  Minutes -> Seconds (min, minute, s, sec, second)
-               [ ] 36.11.2.  Hours -> Minutes (h, hr, hour, min, minute)
-               [ ] 36.11.3.  Days -> Hours (d, day, h, hr, hour)
-               [ ] 36.11.4.  Hours -> Seconds (h, hr, hour, s, sec, second)
-    [ ] 36.12.  Energy units
-               [ ] 36.12.1.  Kilojoules -> Calories (kJ, kilojoule, cal, calorie)
-               [ ] 36.12.2.  Kilojoules -> Kilocalories (kJ, kilojoule, kcal, kilocalorie)
-               [ ] 36.12.3.  Calories -> Joules (cal, calorie, J, joule)
-               [ ] 36.12.4.  Joules -> Calories (J, joule, cal, calorie)
-               [ ] 36.12.5.  Kilowatt-hours -> Joules (kWh, kilowatt-hour, J, joule)
-               [ ] 36.12.6.  Kilojoules -> BTU (kJ, kilojoule, btu, british thermal unit)
-    [ ] 36.13.  Power units
-               [ ] 36.13.1.  Horsepower -> Watts (hp, W, watt)
-               [ ] 36.13.2.  Horsepower -> Kilowatts (hp, kW, kilowatt)
-               [ ] 36.13.3.  Kilowatts -> Horsepower (kW, kilowatt, hp)
-               [ ] 36.13.4.  Watts -> Horsepower (W, watt, hp)
-    [ ] 36.14.  Pressure units
-               [ ] 36.14.1.  PSI -> Bar (psi, bar)
-               [ ] 36.14.2.  Bar -> PSI (bar, psi)
-               [ ] 36.14.3.  PSI -> kPa (psi, kilopascal)
-               [ ] 36.14.4.  Atmospheres -> PSI (atm, atmosphere, psi)
-               [ ] 36.14.5.  Pascals -> PSI (Pa, pascal, psi)
-               [ ] 36.14.6.  Bar -> kPa (bar, kilopascal)
-    [ ] 36.15.  Force units
-               [ ] 36.15.1.  Newtons -> Pounds-force (N, newton, lbf)
-               [ ] 36.15.2.  Pounds-force -> Newtons (lbf, N, newton)
-               [ ] 36.15.3.  Kilograms-force -> Newtons (kgf, kilogram-force, N, newton)
-               [ ] 36.15.4.  Newtons -> Kilograms-force (N, newton, kgf, kilogram-force)
-    [ ] 36.16.  Data units
-               [ ] 36.16.1.  Megabytes -> Gigabytes (MB, megabyte, GB, gigabyte)
-               [ ] 36.16.2.  Gigabytes -> Megabytes (GB, gigabyte, MB, megabyte)
-               [ ] 36.16.3.  Kilobytes -> Megabytes (KB, kilobyte, MB, megabyte)
-               [ ] 36.16.4.  Megabytes -> Kilobytes (MB, megabyte, KB, kilobyte)
-               [ ] 36.16.5.  Gigabytes -> Terabytes (GB, gigabyte, TB, terabyte)
-               [ ] 36.16.6.  Bytes -> Kilobytes (B, byte, KB, kilobyte)
-               [ ] 36.16.7.  Kilobytes -> Bytes (KB, kilobyte, B, byte)
-               [ ] 36.16.8.  Terabytes -> Gigabytes (TB, terabyte, GB, gigabyte)
-               [ ] 36.16.9.  Megabytes -> Bytes (MB, megabyte, B, byte)
-               [ ] 36.16.10.  Bits -> Bytes (bit, B, byte)
-               [ ] 36.16.11.  Bytes -> Bits (B, byte, bit)
-    [ ] 36.17.  Fuel economy units
-               [ ] 36.17.1.  MPG (US) -> L/100km (mpg, miles per gallon, l/100km, liters per 100 km)
-               [ ] 36.17.2.  L/100km -> MPG (US) (l/100km, liters per 100 km, mpg, miles per gallon)
-               [ ] 36.17.3.  km/L -> MPG (km/l, kilometers per liter, mpg, miles per gallon)
-               [ ] 36.17.4.  MPG (Imperial) -> L/100km (mpg imp, miles per gallon (imperial), l/100km, liters per 100 km)
-               [ ] 36.17.5.  MPG (US) -> km/L (mpg, miles per gallon, km/l, kilometers per liter)
-    [ ] 36.18.  Angle units
-               [ ] 36.18.1.  Degrees -> Radians (deg, °, degree, rad, radian)
-               [ ] 36.18.2.  Radians -> Degrees (rad, radian, deg, °, degree)
-    [ ] 36.19.  Frequency units
-               [ ] 36.19.1.  MHz -> Hz (megahertz, hertz)
-               [ ] 36.19.2.  Hz -> MHz (hertz, megahertz)
-               [ ] 36.19.3.  MHz -> GHz (megahertz, gigahertz)
-               [ ] 36.19.4.  GHz -> MHz (gigahertz, megahertz)
-               [ ] 36.19.5.  kHz -> Hz (kilohertz, hertz)
-               [ ] 36.19.6.  Hz -> kHz (hertz, kilohertz)
+    [ ] 36.5.  Distance units: millimeter (mm), centimeter (cm), metre (m),
+               kilometre (km), inch (in), foot (ft), yard (yd), mile (mi)
+    [ ] 36.6.  Temperature units: Celsius (°C, C), Fahrenheit (°F, F),
+               Kelvin (K, kelvin)
+    [ ] 36.7.  Speed units: metres per second (m/s, mps), kilometres per hour
+               (km/h, kph), miles per hour (mph), knots (kn, knot)
+    [ ] 36.8.  Area units: square metre (sq m, m²), square kilometre (sq km, km²),
+               square foot (sq ft, ft²), square mile (sq mi, mi²), acre (ac, acre),
+               hectare (ha, hectare)
+    [ ] 36.9.  Mass units: gram (g, gram), kilogram (kg, kilogram), ounce (oz, ounce),
+               pound (lb, lbs, pound), stone (st, stone)
+    [ ] 36.10.  Volume units: millilitre (ml, millilitre), litre (l, litre),
+               teaspoon (tsp, teaspoon), tablespoon (tbsp, tablespoon), cup (cup),
+               fluid ounce (fl oz, floz), quart (qt, quart), gallon (gal, gallon)
+    [ ] 36.11.  Time units: second (s, sec, second), minute (min, minute),
+               hour (h, hr, hour), day (d, day)
+    [ ] 36.12.  Energy units: joule (J, joule), kilojoule (kJ, kilojoule),
+               calorie (cal, calorie), kilocalorie (kcal, kilocalorie),
+               kilowatt-hour (kWh, kilowatt-hour), BTU (btu, british thermal unit)
+    [ ] 36.13.  Power units: watt (W, watt), kilowatt (kW, kilowatt),
+               horsepower (hp, horsepower)
+    [ ] 36.14.  Pressure units: pascal (Pa, pascal), kilopascal (kPa, kilopascal),
+               bar (bar), PSI (psi), atmosphere (atm, atmosphere)
+    [ ] 36.15.  Force units: newton (N, newton), pound-force (lbf),
+               kilogram-force (kgf, kilogram-force)
+    [ ] 36.16.  Data units: bit (bit), byte (B, byte), kilobyte (KB, kilobyte),
+               megabyte (MB, megabyte), gigabyte (GB, gigabyte), terabyte (TB, terabyte)
+    [ ] 36.17.  Fuel economy units: MPG US (mpg, miles per gallon),
+               MPG Imperial (mpg imp, miles per gallon (imperial)),
+               L/100km (l/100km, liters per 100 km), km/L (km/l, kilometers per liter)
+    [ ] 36.18.  Angle units: degree (deg, °, degree), radian (rad, radian)
+    [ ] 36.19.  Frequency units: hertz (Hz, hertz), kilohertz (kHz, kilohertz),
+               megahertz (MHz, megahertz), gigahertz (GHz, gigahertz)
 
 
 [ ] 37.  HUMAN-SCALE NUMBER INGESTION  (web research 2026-06-14: the input side of
