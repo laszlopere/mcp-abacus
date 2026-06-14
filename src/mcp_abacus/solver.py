@@ -8,6 +8,7 @@ Built up item by item (TODO 31). Today it resolves the solver STRATEGY from the
 """
 
 import math
+import time
 from dataclasses import dataclass
 from enum import Enum
 
@@ -164,6 +165,9 @@ def validate_unknown(node: Node, variable: str) -> None:
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _MAX_ITERATIONS = 200  # cap: ~60 steps already shrink a unit bracket below 1e-12
+_TIME_LIMIT_SECONDS = 2.0  # hard wall-clock cap: a pathological program can make a
+# single candidate evaluation slow, so the iteration cap alone is not enough to bound
+# the search — stop after this long and report the best candidate reached so far.
 _FLOAT_X_TOL = 1e-12  # float bracket-width stop — a double resolves no finer near 1
 _FLOAT_RESIDUAL_TOL = 1e-6  # float solve acceptance: |expr| this small counts as a root
 _RATIONAL_SEARCH_DECIMALS = 12  # rational has no scale of its own; search at this one
@@ -255,12 +259,19 @@ def search(
     constant the program never sets — propagates as an EvalError (it fails at every
     point, and is the user's to fix, not a region to avoid).
 
+    The search is also bounded by a hard wall-clock limit of ``_TIME_LIMIT_SECONDS``
+    (2s): the iteration cap bounds the NUMBER of evaluations, but a single pathological
+    candidate can be slow, so the elapsed time is checked each step and the search
+    stops once the limit is passed, reporting the best candidate reached so far.
+
     Returns the best candidate found as a SolverResult. Raises SolverError when the
     expression evaluates nowhere in the bracket, or when a solve cannot drive |expr|
-    within ``residual_tol`` of zero (reporting the closest it reached).
+    within ``residual_tol`` of zero (reporting the closest it reached) — including
+    when the time limit cut the search short before it could.
     """
     scale = _search_scale(node, mode, floor)
     x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
     # The smallest objective seen and the candidate/value that produced it. Tracking
     # the best across ALL evaluations (not just the final midpoint) keeps the answer
     # honest even if quantisation makes the very last point a hair worse.
@@ -290,7 +301,11 @@ def search(
     fc = evaluate_objective(c)
     fd = evaluate_objective(d)
     iterations = 0
+    timed_out = False
     while (b - a) > x_tol and iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
         if fc <= fd:
             b, d, fd = d, c, fc  # minimum is left of d; reuse c as the new d
             c = b - _INV_PHI * (b - a)
@@ -300,28 +315,38 @@ def search(
             d = a + _INV_PHI * (b - a)
             fd = evaluate_objective(d)
         iterations += 1
-    evaluate_objective((a + b) / 2)  # the converged midpoint, folded into the best
+    if not timed_out:
+        evaluate_objective((a + b) / 2)  # the converged midpoint, folded into the best
 
     # Grid polish (fixed-point / rational): the continuous search stops within a
     # bracket narrower than one grid step, so the best candidate may sit one step
     # off an EXACTLY representable root (the float midpoint quantised to the wrong
     # side). Re-test the grid neighbours of the best point so a root on the grid is
     # found exactly (residual 0) rather than rejected as a hair-too-large miss.
-    if best_solution is not None and mode is not Mode.FLOATING_POINT:
+    # Skipped on timeout — the hard cap is already spent, no budget for extra probes.
+    if best_solution is not None and mode is not Mode.FLOATING_POINT and not timed_out:
         step = 10.0**-scale
         centre = best_solution.to_float()
         for k in (-2, -1, 1, 2):
             evaluate_objective(centre + k * step)
 
     if best_solution is None or best_value is None:
+        limit = (
+            f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        )
         raise SolverError(
-            f"The expression could not be evaluated anywhere in [{lower}, {upper}] "
-            f"(every candidate for {variable!r} raised a domain error)."
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
         )
     if type_ is SolverType.SOLVE and best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit."
+            if timed_out
+            else ""
+        )
         raise SolverError(
             f"No solution: the expression does not reach zero for {variable!r} in "
             f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
-            f"at {variable} = {best_solution.to_string()}."
+            f"at {variable} = {best_solution.to_string()}.{limit}"
         )
     return SolverResult(variable, type_, goal, best_solution, best_value, iterations)

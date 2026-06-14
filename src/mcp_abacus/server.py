@@ -392,6 +392,10 @@ def solver(
     search runs in that numeric type, and the found value is reported in it. See
     `calculate` and `help` for the shared grammar, modes, and precision rules.
 
+    The search is bounded by a hard 2-second time limit. If it has not converged by
+    then it stops and reports the best value reached so far (a solve that has not got
+    close enough to zero in that time is reported as no-solution, naming the limit).
+
     Returns a dict: `solution` is the found value of `variable`, rendered as a
     string and marked "(approximate)" — the search locates it to a tolerance, never
     exactly — with `solution_hex_dump` its bit-backed hex (as `calculate`'s
