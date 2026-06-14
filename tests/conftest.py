@@ -101,15 +101,15 @@ def _compact_parser_trace(request, monkeypatch):
         return node
 
     @functools.wraps(original_evaluate)
-    def traced_evaluate(self, mode, min_fixed_point_precision=0):
+    def traced_evaluate(self, mode, *args, **kwargs):
         nonlocal in_evaluate
         if in_evaluate:
             # only the outermost call records a row
-            return original_evaluate(self, mode, min_fixed_point_precision)
+            return original_evaluate(self, mode, *args, **kwargs)
         in_evaluate = True
         expr = sources.get(id(self), repr(self))
         try:
-            result = original_evaluate(self, mode, min_fixed_point_precision)
+            result = original_evaluate(self, mode, *args, **kwargs)
             rows.append((expr, _render_value(result)))
             return result
         except Exception as exc:
@@ -200,38 +200,84 @@ def _compact_e2e_trace(request, monkeypatch):
 def _compact_functions_trace(request, monkeypatch):
     """For test_functions.py under -v: print each call as "expression [mode] = value".
 
-    The function tests drive the in-process `calculate` tool, so we record each
-    invocation at the FastMCP seam (mcp.call_tool) and, at teardown, print the
-    tool's annotated result value (e.g. "16 (exact)") beside its expression — or
-    the line-tagged message when the call refused. Modes are shown only when set.
+    Most function tests drive the in-process `calculate` tool, so we record each
+    invocation at the FastMCP seam (mcp.call_tool) and print the tool's annotated
+    result value (e.g. "16 (exact)") beside its expression — or the line-tagged
+    message when the call refused. A few tests (the time() epoch-injection ones,
+    28.1.2) cannot go through the tool because they pass a fixed now_ns, so they
+    call parse()+evaluate() directly; those are recorded at the evaluate seam
+    instead, showing the rendered value the same compact way. The in_tool guard
+    keeps a tool call's internal evaluate() from also recording a duplicate row.
+    Modes are shown only when set (the tool) or always (direct evaluate).
     """
     from mcp_abacus.server import mcp
 
-    rows: list[tuple[dict, dict]] = []
+    rows: list[tuple[str, str]] = []
+    sources: dict[int, str] = {}  # id(root node) -> the source text it was parsed from
+    in_tool = False
+    in_evaluate = False
+
     original_call_tool = mcp.call_tool
+    original_parse = parser_module.parse
+    original_evaluate = Node.evaluate
 
     @functools.wraps(original_call_tool)
     async def traced_call_tool(name, arguments=None, *args, **kwargs):
-        result = await original_call_tool(name, arguments, *args, **kwargs)
+        nonlocal in_tool
+        in_tool = True
+        try:
+            result = await original_call_tool(name, arguments, *args, **kwargs)
+        finally:
+            in_tool = False
         if name == "calculate":
             blocks = result[0] if isinstance(result, tuple) else result
-            rows.append((arguments or {}, json.loads(blocks[0].text)))
+            payload = json.loads(blocks[0].text)
+            arguments = arguments or {}
+            mode = arguments.get("mode")
+            label = arguments["expression"] + (f"  [{mode}]" if mode else "")
+            shown = payload["value"] if payload["error"] is None else f"error: {payload['error']}"
+            rows.append((label, shown))
         return result
 
+    @functools.wraps(original_parse)
+    def traced_parse(text):
+        node = original_parse(text)
+        sources[id(node)] = text
+        return node
+
+    @functools.wraps(original_evaluate)
+    def traced_evaluate(self, mode, *args, **kwargs):
+        nonlocal in_evaluate
+        if in_tool or in_evaluate:
+            # a tool call records at its own seam; nested evaluate()s don't recurse a row
+            return original_evaluate(self, mode, *args, **kwargs)
+        in_evaluate = True
+        label = f"{sources.get(id(self), repr(self))}  [{mode.value}]"
+        try:
+            result = original_evaluate(self, mode, *args, **kwargs)
+            verdict = "exact" if result.exact else "inexact"
+            rows.append((label, f"{result.to_string()} ({verdict})"))
+            return result
+        except Exception as exc:
+            line = getattr(exc, "line", None)
+            where = f" (line {line})" if line is not None else ""
+            rows.append((label, f"error: {type(exc).__name__}: {exc}{where}"))
+            raise
+        finally:
+            in_evaluate = False
+
     monkeypatch.setattr(mcp, "call_tool", traced_call_tool)
+    monkeypatch.setattr(Node, "evaluate", traced_evaluate)
+    for module in (parser_module, expr_package, request.module):
+        if getattr(module, "parse", None) is original_parse:
+            monkeypatch.setattr(module, "parse", traced_parse)
     yield
 
     if rows:
-
-        def _label(arguments):
-            mode = arguments.get("mode")
-            return arguments["expression"] + (f"  [{mode}]" if mode else "")
-
-        width = max(len(_label(arguments)) for arguments, _ in rows)
+        width = max(len(label) for label, _ in rows)
         print()  # step off pytest's "test-id" progress line
-        for arguments, payload in rows:
-            shown = payload["value"] if payload["error"] is None else f"error: {payload['error']}"
-            print(f"{_label(arguments).ljust(width)}  = {shown}")
+        for label, shown in rows:
+            print(f"{label.ljust(width)}  = {shown}")
 
 
 @pytest.fixture(autouse=True)
@@ -297,15 +343,15 @@ def _verbose_trace(request, monkeypatch):
             tracer.depth -= 1
 
     @functools.wraps(original_evaluate)
-    def traced_evaluate(self, mode, min_fixed_point_precision=0):
+    def traced_evaluate(self, mode, *args, **kwargs):
         if tracer.in_evaluate:
             # only the outermost call narrates
-            return original_evaluate(self, mode, min_fixed_point_precision)
+            return original_evaluate(self, mode, *args, **kwargs)
         tracer.emit(f"evaluate(mode={mode!r})")
         tracer.in_evaluate = True
         tracer.depth += 1
         try:
-            result = original_evaluate(self, mode, min_fixed_point_precision)
+            result = original_evaluate(self, mode, *args, **kwargs)
             tracer.emit(self.pretty())  # per-node "= value" annotations (18.6)
             tracer.emit(f"value: {_render_value(result)}")
             return result
