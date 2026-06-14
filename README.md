@@ -40,40 +40,6 @@ inexact fixed-point result even previews what a few more decimals would reveal,
 so the caller is steered toward more precision rather than toward a misleading
 float.
 
-## Example — one expression, three numeric realities
-
-$10,000 compounded at 5% for 30 years: `(1 + 5 / 100) ** 30 * 10000`.
-
-**Fixed-point**, asking for 20 decimal places of precision:
-
-```jsonc
-calculate(
-  expression="(1 + 5 / 100) ** 30 * 10000",
-  min_fixed_point_precision=20
-)
-// → "43219.42375150662009160000 (inexact, rounded to 20 decimals
-//                                — pass min_fixed_point_precision for more)"
-```
-
-**Rational** — the same expression, held exactly, no rounding anywhere:
-
-```jsonc
-calculate(expression="(1 + 5 / 100) ** 30 * 10000", mode="rational")
-// → "4640650289117164100520051333566036654601
-//      /107374182400000000000000000000000000 (exact)"
-```
-
-**Floating-point** — what a naive `double` calculation would have told you:
-
-```jsonc
-calculate(expression="(1 + 5 / 100) ** 30 * 10000", mode="floating-point")
-// → "43219.42375150668 (inexact)"
-```
-
-Look at the last digits: the double drifts to `…150668`, while the true value
-(see the fixed-point and rational results) is `…1506620…`. Same expression,
-three different answers — and mcp-abacus tells you which one to trust, and why.
-
 ## Install and register for Claude Code
 
 Install the server as a [uv](https://docs.astral.sh/uv/) tool from this
@@ -112,6 +78,19 @@ claude mcp list
 uv sync
 uv run pytest
 ```
+
+## Sponsoring
+
+mcp-abacus is free, open-source software developed in my spare time.
+Sponsorships are what keep the project alive and actively maintained — they fund
+new numeric modes, bug fixes, and ongoing support, and they're a direct signal
+that the work is worth continuing.
+
+If the project is useful to you, please consider sponsoring it through
+**[GitHub Sponsors](https://github.com/sponsors/laszlopere)**. Click the
+**Sponsor** button at the top of the repository, or visit the link directly, and
+pick a one-time or recurring tier. Every contribution, large or small, is hugely
+appreciated and goes straight back into keeping mcp-abacus healthy.
 
 ## License
 
