@@ -1290,6 +1290,32 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     exception floating-point with ndigits > 0 (a non-representable decimal). They
     differ ONLY in tie/sign handling: floor -> -inf, ceil -> +inf, trunc -> 0,
     round -> nearest (half-even, 28.25).
+    [ ] 28.27.  exp(x) — the exponential e**x, the INVERSE of log/ln (28.17). UNARY
+                operand-method (the shape of sqrt/sin/log), so NO new call machinery —
+                the two-step add — transcendental math inside. Building it ALSO yields
+                the exp series the still-to-plan fractional pow needs (the 28.20 note +
+                28.20.1 Path B's exp(y*ln(x))), so landing exp() supplies that shared
+                piece. (exp(1) is e, the 29.2 nullary constant, here recomputed via the
+                series rather than read from _e_scaled.)
+                floating-point: math.exp; transcendental -> unconditionally inexact.
+                fixed-point: SUPPORTED via the all-plus Taylor series 1 + x + x**2/2! +
+                  x**3/3! + ... summed at the operand's scale + guard digits, after
+                  RANGE-REDUCING so it converges fast. Reduce by ln(2) (reuse
+                  _ln2_scaled, 28.17.2): write x = k*ln2 + r with k = round(x/ln2) and
+                  |r| <= ln2/2 ~ 0.35, then exp(x) = 2**k * exp(r) — the 2**k an EXACT
+                  mantissa scaling, only exp(r) summed. Negative x is fine (k < 0).
+                  Transcendental -> exact=False, EXCEPT the trivial exp(0) = 1, exact.
+                rational: exp of a rational is transcendental except the trivial
+                  exp(0) = 1 (Lindemann-Weierstrass: e**r is irrational for rational
+                  r != 0); otherwise NotRepresentableError, the same exact-or-refuse
+                  stance as log/sqrt.
+        [ ] 28.27.1.  INTERNAL fixed-point exp series helper — sums 1 + x + x**2/2! +
+                  ... for a small reduced |x| on scaled ints, the all-plus Taylor
+                  sibling of _fp_sin_series (28.10) and the inverse of the atanh/ln
+                  series (28.17.1). REUSED by exp() AND by the fractional-pow Path B
+                  exp(y*ln(x)) (28.20.1) — ONE series primitive, the way the atanh
+                  helper (28.17.1) covers both ln and the ln constants. Pure-stdlib
+                  integer arithmetic, no dependency.
     NAMING (28.17-28.19): canonical spellings are log (== natural, ln alias), log10,
     log2 — the math.log/log10/log2 family. DECIDED that bare `log` is the NATURAL log
     (not base-10) over the calculator convention, for consistency with the programming
