@@ -1587,6 +1587,107 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                reuse the active numeric type so converted values compose with the
                rest of the engine.
     [ ] 36.4.  HELP section listing categories + units; README bullet; fixtures.
+    [ ] 36.5.  The 100 most-used conversions to seed (web research 2026-06-14):
+               [ ] 36.5.1.  Centimeters -> Inches
+               [ ] 36.5.2.  Inches -> Centimeters
+               [ ] 36.5.3.  Miles -> Kilometers
+               [ ] 36.5.4.  Kilometers -> Miles
+               [ ] 36.5.5.  Feet -> Meters
+               [ ] 36.5.6.  Meters -> Feet
+               [ ] 36.5.7.  Millimeters -> Inches
+               [ ] 36.5.8.  Inches -> Millimeters
+               [ ] 36.5.9.  Centimeters -> Feet
+               [ ] 36.5.10.  Meters -> Yards
+               [ ] 36.5.11.  Yards -> Meters
+               [ ] 36.5.12.  Miles -> Meters
+               [ ] 36.5.13.  Kilometers per hour -> Miles per hour
+               [ ] 36.5.14.  Miles per hour -> Kilometers per hour
+               [ ] 36.5.15.  Meters per second -> Kilometers per hour
+               [ ] 36.5.16.  Meters per second -> Miles per hour
+               [ ] 36.5.17.  Knots -> Miles per hour
+               [ ] 36.5.18.  Knots -> Kilometers per hour
+               [ ] 36.5.19.  Square Feet -> Square Meters
+               [ ] 36.5.20.  Square Meters -> Square Feet
+               [ ] 36.5.21.  Acres -> Square Feet
+               [ ] 36.5.22.  Hectares -> Acres
+               [ ] 36.5.23.  Acres -> Hectares
+               [ ] 36.5.24.  Square Miles -> Acres
+               [ ] 36.5.25.  Square Kilometers -> Square Miles
+               [ ] 36.5.26.  Celsius -> Fahrenheit
+               [ ] 36.5.27.  Fahrenheit -> Celsius
+               [ ] 36.5.28.  Kilograms -> Pounds
+               [ ] 36.5.29.  Pounds -> Kilograms
+               [ ] 36.5.30.  Grams -> Ounces
+               [ ] 36.5.31.  Ounces -> Grams
+               [ ] 36.5.32.  Grams -> Pounds
+               [ ] 36.5.33.  Pounds -> Grams
+               [ ] 36.5.34.  Ounces -> Pounds
+               [ ] 36.5.35.  Pounds -> Ounces
+               [ ] 36.5.36.  Cups -> Milliliters
+               [ ] 36.5.37.  Milliliters -> Cups
+               [ ] 36.5.38.  Cups -> Grams
+               [ ] 36.5.39.  Tablespoons -> Teaspoons
+               [ ] 36.5.40.  Teaspoons -> Milliliters
+               [ ] 36.5.41.  Tablespoons -> Milliliters
+               [ ] 36.5.42.  Cups -> Tablespoons
+               [ ] 36.5.43.  Liters -> Gallons
+               [ ] 36.5.44.  Gallons -> Liters
+               [ ] 36.5.45.  Liters -> Milliliters
+               [ ] 36.5.46.  Milliliters -> Liters
+               [ ] 36.5.47.  Fluid Ounces -> Milliliters
+               [ ] 36.5.48.  Milliliters -> Fluid Ounces
+               [ ] 36.5.49.  Stones -> Pounds
+               [ ] 36.5.50.  Pounds -> Stones
+               [ ] 36.5.51.  Kilograms -> Grams
+               [ ] 36.5.52.  Quarts -> Liters
+               [ ] 36.5.53.  Horsepower -> Watts
+               [ ] 36.5.54.  PSI -> Bar
+               [ ] 36.5.55.  Horsepower -> Kilowatts
+               [ ] 36.5.56.  Kilowatts -> Horsepower
+               [ ] 36.5.57.  Bar -> PSI
+               [ ] 36.5.58.  Minutes -> Seconds
+               [ ] 36.5.59.  Hours -> Minutes
+               [ ] 36.5.60.  Kilojoules -> Calories
+               [ ] 36.5.61.  Kilojoules -> Kilocalories
+               [ ] 36.5.62.  Days -> Hours
+               [ ] 36.5.63.  Calories -> Joules
+               [ ] 36.5.64.  Joules -> Calories
+               [ ] 36.5.65.  PSI -> kPa
+               [ ] 36.5.66.  Newtons -> Pounds-force
+               [ ] 36.5.67.  Atmospheres -> PSI
+               [ ] 36.5.68.  Watts -> Horsepower
+               [ ] 36.5.69.  Kilowatt-hours -> Joules
+               [ ] 36.5.70.  Pounds-force -> Newtons
+               [ ] 36.5.71.  Pascals -> PSI
+               [ ] 36.5.72.  Bar -> kPa
+               [ ] 36.5.73.  Kilojoules -> BTU
+               [ ] 36.5.74.  Hours -> Seconds
+               [ ] 36.5.75.  Kilograms-force -> Newtons
+               [ ] 36.5.76.  Newtons -> Kilograms-force
+               [ ] 36.5.77.  Megabytes -> Gigabytes
+               [ ] 36.5.78.  Gigabytes -> Megabytes
+               [ ] 36.5.79.  Kilobytes -> Megabytes
+               [ ] 36.5.80.  Megabytes -> Kilobytes
+               [ ] 36.5.81.  Gigabytes -> Terabytes
+               [ ] 36.5.82.  Bytes -> Kilobytes
+               [ ] 36.5.83.  Kilobytes -> Bytes
+               [ ] 36.5.84.  Terabytes -> Gigabytes
+               [ ] 36.5.85.  Megabytes -> Bytes
+               [ ] 36.5.86.  Bits -> Bytes
+               [ ] 36.5.87.  Bytes -> Bits
+               [ ] 36.5.88.  MPG (US) -> L/100km
+               [ ] 36.5.89.  L/100km -> MPG (US)
+               [ ] 36.5.90.  Degrees -> Radians
+               [ ] 36.5.91.  Radians -> Degrees
+               [ ] 36.5.92.  MHz -> Hz
+               [ ] 36.5.93.  Hz -> MHz
+               [ ] 36.5.94.  MHz -> GHz
+               [ ] 36.5.95.  GHz -> MHz
+               [ ] 36.5.96.  kHz -> Hz
+               [ ] 36.5.97.  Hz -> kHz
+               [ ] 36.5.98.  km/L -> MPG
+               [ ] 36.5.99.  MPG (Imperial) -> L/100km
+               [ ] 36.5.100.  MPG (US) -> km/L
 
 
 [ ] 37.  HUMAN-SCALE NUMBER INGESTION  (web research 2026-06-14: the input side of
