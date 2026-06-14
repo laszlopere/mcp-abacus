@@ -1396,7 +1396,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (the store holds Values verbatim, no mode/scale of its own).
 
 
-[ ] 31.  SOLVER TOOL  (a new MCP tool that finds the value of one variable that
+[x] 31.  SOLVER TOOL  (a new MCP tool that finds the value of one variable that
          drives a calculate-language expression to zero (solve) or to an extremum
          (optimise), over a required bracket, reusing the parser/evaluator).
          Single-variable first; multivariate is a later item.
@@ -1422,7 +1422,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 31.6.  `variable` (single name) with required `lower`, `upper` defining the
                bracket; require lower < upper and that the variable occurs in the
                expression.
-    [ ] 31.7.  Engine — golden-section search on [lower, upper], one minimizer for
+    [x] 31.7.  Engine — golden-section search on [lower, upper], one minimizer for
                all cases. Each candidate x is materialised as a Value in the active
                mode (quantised to precision) and bound into a seeded VariableStore;
                the program is evaluated and its Value reduced to a float to drive the
@@ -1430,19 +1430,19 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                steers away. Stop when interval width < tolerance or at a
                max-iteration cap; tolerance defaults from the mode (fixed-point:
                10^-precision; float: small epsilon).
-    [ ] 31.8.  Reply shape — {variable, solution (+ solution_hex_dump), value (the
+    [x] 31.8.  Reply shape — {variable, solution (+ solution_hex_dump), value (the
                expression's value at the solution, + value_hex_dump), mode, exact,
                precision, goal, type, iterations, error}, annotated like calculate
                (solutions marked approximate / within-tolerance, honest about
                inexactness). Error path sets the value fields to null with an `error`
                string; "no solution" when solve cannot reach zero in the bracket
                (report the closest |expr|).
-    [ ] 31.9.  TESTS — per type/mode: a solvable root case (e.g. x**2 - 2 over [0,2]
+    [x] 31.9.  TESTS — per type/mode: a solvable root case (e.g. x**2 - 2 over [0,2]
                -> sqrt 2), an optimise case (min/max of a unimodal expr), a
                constants-via-assignment case, and the error cases (variable not in
                expression, lower >= upper, unknown mode, min_fixed_point_precision
                misuse, no-solution). In-process (test_solver.py) + over-the-wire.
-    [ ] 31.10. DOCS — solver tool docstring; a `solver` help section (reference.py
+    [x] 31.10. DOCS — solver tool docstring; a `solver` help section (reference.py
                _SECTIONS); README "What it gives you" bullet.
 
 
