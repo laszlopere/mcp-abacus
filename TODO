@@ -1506,6 +1506,13 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.19. Conjugate gradient — large-scale gradient optimise.
     [ ] 33.20. L-BFGS(-B) — limited-memory quasi-Newton, bounds.
     [ ] 33.21. Gauss-Newton / Levenberg-Marquardt — nonlinear least squares.
+               DEFERRED: least squares fits m residuals over a dataset (minimise
+               Σ rᵢ², stepping with the m×n Jacobian, (JᵀJ + λI)·Δ = −Jᵀr), but
+               the solver drives ONE scalar expression — a single residual, no
+               sum to minimise. Implement only if/when the expression language
+               can express a VECTOR of residuals over supplied observations (a
+               data-fitting harness) — a larger prerequisite than the
+               multi-equation support 33.16/33.17 need.
     [ ] 33.22. Trust-region (dogleg / Newton-CG) — robust step control.
     [ ] 33.23. SLSQP / interior-point — constrained optimise.
     [ ] 33.24. CMA-ES / particle swarm — global, derivative-free.
