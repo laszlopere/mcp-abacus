@@ -1388,7 +1388,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                NAME '(' ... ')' call / nullary forms.
     [x] 30.5.  Parser — instruction list: statements separated by newlines,
                an AST Sequence node wrapping them in order.
-    [ ] 30.6.  AST eval — Assign sets the store and yields its value; Var
+    [x] 30.6.  AST eval — Assign sets the store and yields its value; Var
                gets from the store (error if unset); Sequence evaluates each
                in turn and returns the last result.
     [ ] 30.7.  TESTS — parse + evaluate assignment, reference, unknown-name
