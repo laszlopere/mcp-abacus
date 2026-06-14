@@ -64,12 +64,34 @@ def test_functions_section_marks_variadic_functions():
             assert f"{name}(" in text and "…" in text
 
 
+def test_solver_section_lists_every_live_strategy_and_goal():
+    # Sourced from the solver's own enums/aliases, so the help cannot drift from
+    # what the tool accepts — every strategy, goal, and goal alias must appear.
+    from mcp_abacus.solver import _GOAL_ALIASES, Goal, SolverType
+
+    text = reference.render("solver")
+    for strategy in SolverType:
+        assert strategy.value in text
+    for goal in Goal:
+        assert goal.value in text
+    for alias in _GOAL_ALIASES:
+        assert alias in text
+
+
+def test_solver_section_states_the_bracket_and_unknown_rules():
+    text = reference.render("solver")
+    assert "bracket" in text
+    assert "lower must be below upper" in text
+    assert "must NOT" in text and "assigned" in text  # the unknown is free, not assigned
+
+
 def test_unknown_section_lists_the_valid_sections_instead_of_erroring():
     text = reference.render("bogus")
     assert "bogus" in text
     assert "types" in text
     assert "language" in text
     assert "functions" in text
+    assert "solver" in text
 
 
 def test_every_mode_has_a_help_line():

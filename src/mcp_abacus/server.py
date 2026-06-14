@@ -44,8 +44,9 @@ def help_(section: str) -> str:
     """Return mcp-abacus reference text for one section, to drive the evaluator.
 
     Sections: 'types' (the numeric types this build supports), 'language' (the
-    expression grammar — operators, precedence, literal forms), and 'functions'
-    (the callable functions and their argument counts). An unknown section returns
+    expression grammar — operators, precedence, literal forms), 'functions' (the
+    callable functions and their argument counts), and 'solver' (the solver tool —
+    solving / optimising one variable over a bracket). An unknown section returns
     the list of valid section names instead of erroring.
     """
     return reference.render(section)
