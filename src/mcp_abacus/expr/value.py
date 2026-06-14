@@ -173,11 +173,19 @@ class EvalContext:
     derived by a single pre-walk before evaluation (FIXED_POINT only — float uses
     its native constant, rational refuses the irrational, neither has a scale). It
     is unused outside fixed-point and defaults to 0.
+
+    ``now_ns`` (28.1.2) is the single REALTIME clock reading the run was sampled
+    at — integer nanoseconds since the Unix epoch — shared by every ``time()`` in
+    the expression so a run sees ONE instant (``time() - time() == 0`` exactly).
+    ``evaluate`` samples it once from the real clock; tests inject a fixed epoch.
+    ``None`` when the run never needs it (no ``time()`` call); the only nullary
+    that reads the context for anything beyond mode/scale.
     """
 
     mode: Mode
     min_fixed_point_precision: int = 0
     nullary_precision: int = 0
+    now_ns: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -717,15 +725,17 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
-    # --- nullary constants (29.2 / 29.3) --------------------------------
-    # Zero-argument functions like pi() and e(). UNLIKE every other function they
-    # are NOT operand-methods (no ``self`` operand carries the mode): each takes
+    # --- nullary functions (29.2 / 29.3 / 28.1) -------------------------
+    # Zero-argument functions like pi(), e() and time(). UNLIKE every other function
+    # they are NOT operand-methods (no ``self`` operand carries the mode): each takes
     # the per-run EvalContext (29.1) and builds a Value in ``ctx.mode``. They are
     # the "registered-callable kind that takes the eval context" the nodes registry
-    # dispatches to. Both constants are irrational, so EVERY mode is inexact-or-
-    # refuse: float rounds its native double, fixed-point truncates to the run's
+    # dispatches to. The irrational CONSTANTS (pi/e) are inexact-or-refuse in every
+    # mode: float rounds its native double, fixed-point truncates to the run's
     # derived scale (ctx.nullary_precision, 29.3), and rational has no finite scale
-    # to round to so it refuses — the same exact-or-refuse stance as sqrt/sin.
+    # to round to so it refuses — the same exact-or-refuse stance as sqrt/sin. The
+    # CLOCK nullary time() (28.1) breaks that pattern: a tick is exactly rational, so
+    # it refuses in no mode and is inexact only in float (see its own docstring).
 
     @classmethod
     def pi(cls, ctx: "EvalContext") -> "Value":
@@ -761,6 +771,46 @@ class Value:
                 return cls(Mode.FIXED_POINT, FixedPoint(_e_scaled(scale), scale), exact=False)
             case Mode.RATIONAL:
                 raise NotRepresentableError("e is irrational; no rational value")
+            case _:
+                raise ValueError(f"unsupported mode: {ctx.mode!r}")
+
+    @classmethod
+    def time(cls, ctx: "EvalContext") -> "Value":
+        """The current Unix epoch (UTC) in ``ctx.mode`` — the first clock nullary (28.1).
+
+        Reads the ONE instant the run was sampled at (``ctx.now_ns``, integer
+        nanoseconds since the epoch, 28.1.2), then renders it per mode through the
+        ``_from_scaled_int`` chokepoint (28.1.1). UNLIKE pi/e a clock tick is
+        EXACTLY rational, so this refuses in no mode and is inexact only where the
+        type rounds:
+
+        - fixed-point: at the run's derived scale s (``nullary_precision``, 29.3).
+          s == 0 (the default, no literal) -> whole seconds, the C library
+          ``time()``; 1..9 -> seconds + ``tv_nsec`` TRUNCATED to s decimals; >= 9
+          -> the full ns reading (further decimals are true zeros — the clock has
+          no finer grain). Exact: the rendered decimal IS the sampled value, the
+          scale is a resolution choice, not a rounding.
+        - float: the full ns as a native double (~sub-microsecond at epoch
+          magnitude) -> the only mode that rounds, so inexact.
+        - rational: the full ns as ``Fraction(now_ns, 10**9)`` -> exact, no refuse.
+        """
+        now_ns = ctx.now_ns
+        if now_ns is None:  # defensive: evaluate() always samples before a time() run
+            raise ValueError("time() needs a sampled clock reading (ctx.now_ns)")
+        match ctx.mode:
+            case Mode.FIXED_POINT:
+                scale = ctx.nullary_precision
+                # Truncate the ns reading to `scale` fractional digits (>= 9 pads
+                # true zeros); the rendered decimal is exactly the sampled value.
+                if scale <= 9:
+                    mantissa = now_ns // 10 ** (9 - scale)
+                else:
+                    mantissa = now_ns * 10 ** (scale - 9)
+                return cls._from_scaled_int(mantissa, scale, Mode.FIXED_POINT)
+            case Mode.FLOATING_POINT | Mode.RATIONAL:
+                # The full ns at scale 9; the chokepoint sets exactness per mode
+                # (float rounds the double, rational stays exact).
+                return cls._from_scaled_int(now_ns, 9, ctx.mode)
             case _:
                 raise ValueError(f"unsupported mode: {ctx.mode!r}")
 

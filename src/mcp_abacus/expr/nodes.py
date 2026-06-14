@@ -10,6 +10,7 @@ the lexer's contract, not validated here.
 """
 
 import inspect
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -93,6 +94,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
 _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
     "pi": Value.pi,  # 29.2 — circle constant; per-mode value 29.3
     "e": Value.e,  # 29.2 — Euler's number; per-mode value 29.3
+    "time": Value.time,  # 28.1 — Unix epoch; reads ctx.now_ns, exact in all but float
 }
 
 
@@ -176,7 +178,12 @@ class Node(ABC):
         tree; ``ctx`` carries the mode and the fixed-point precision floor (29.1).
         """
 
-    def evaluate(self, mode: Mode, min_fixed_point_precision: int = 0) -> Value:
+    def evaluate(
+        self,
+        mode: Mode,
+        min_fixed_point_precision: int = 0,
+        now_ns: int | None = None,
+    ) -> Value:
         """Evaluate the subtree in ONE mode; store and return this node's Value.
 
         Re-evaluating under another mode OVERWRITES the stored values (18.5).
@@ -187,6 +194,11 @@ class Node(ABC):
         it raises each fixed-point operand to at least that many decimals so the
         scale propagates through the calculation. Defaults to 0 (no floor); it is
         a no-op outside fixed-point mode, which has no decimal scale.
+
+        ``now_ns`` (28.1.2) is the single realtime clock reading ``time()`` renders;
+        sampled ONCE here so every ``time()`` in the run sees one instant. Defaults
+        to the real clock (``time.time_ns()``); tests pass a fixed epoch to assert
+        exact per-mode/scale renders.
 
         This is the public entry: it bundles the run state into the per-run
         EvalContext (29.1) and walks the tree threading that one object down,
@@ -203,6 +215,7 @@ class Node(ABC):
             mode=mode,
             min_fixed_point_precision=min_fixed_point_precision,
             nullary_precision=nullary_precision,
+            now_ns=time.time_ns() if now_ns is None else now_ns,
         )
         return self._walk(ctx)
 

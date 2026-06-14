@@ -959,7 +959,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          machinery itself is section 22. Each entry is normally the two-step
          add — one _FUNCS entry + its per-mode Value method — UNLESS it needs a
          call shape we have not built yet, flagged per entry.)
-    [ ] 28.1.  time() — current Unix epoch in UTC, read once per run from the
+    [x] 28.1.  time() — current Unix epoch in UTC, read once per run from the
                REALTIME clock (time.time_ns -> integer nanoseconds since epoch).
                NULLARY: rides the zero-arg call path built in 29 — one
                _NULLARY_FUNCS entry + a Value classmethod taking the EvalContext
@@ -970,7 +970,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (pi/e/tau/phi, 29.5) a clock reading is EXACTLY rational, so time()
                does NOT refuse in rational and is inexact only where the type
                rounds — the first nullary that is representable in every mode.
-        [ ] 28.1.1.  PER-MODE RENDER — feed the single ns reading through
+        [x] 28.1.1.  PER-MODE RENDER — feed the single ns reading through
                      _from_scaled_int (the per-mode chokepoint stays in Value):
                      - fixed-point: render at the derived scale s (29.3). s = 0
                        (default, no literal/floor) -> whole seconds; 1..9 ->
@@ -981,7 +981,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      - float: float(ns / 1e9) — native double, ~sub-microsecond at
                        epoch magnitude, so inexact (the only mode that rounds).
                      - rational: Fraction(ns, 10**9) — full ns, exact, no refuse.
-        [ ] 28.1.2.  IMPURITY + ONE INSTANT PER RUN — first clock-dependent
+        [x] 28.1.2.  IMPURITY + ONE INSTANT PER RUN — first clock-dependent
                      function. Sample the clock ONCE and hold it on the EvalContext
                      (29.1) as now_ns, shared by every time() in the expression, so
                      a run sees a single instant (time() - time() == 0 exactly).
