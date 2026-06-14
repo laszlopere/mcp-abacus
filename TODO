@@ -1518,6 +1518,106 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.24. CMA-ES / particle swarm — global, derivative-free.
 
 
+[ ] 34.  ROUNDING MODES  (web research 2026-06-14: explicit rounding is a named
+         top-3 financial-error class for LLM callers — "never round intermediates,
+         round only at display, by a system-defined rule". Today fixed-point/float
+         round implicitly by ONE policy; expose the policy so the caller can match
+         the rule the production code actually uses, and so the precision verdict
+         can name WHICH rounding produced an inexact result. Fits the type-faithful
+         thesis: don't just round, round the way the target system rounds.)
+    [ ] 34.1.  Enumerate the modes: half-up, half-even (banker's), half-down,
+               toward-zero (truncate), away-from-zero, floor, ceil — the IEEE-754 /
+               decimal.ROUND_* set. Name them in one place; reuse decimal's where
+               the engine already leans on it.
+    [ ] 34.2.  Surface as an optional `rounding` argument on `calculate` (and
+               wherever fixed-point quantisation happens), defaulting to today's
+               behaviour so nothing breaks. Banker's-rounding (half-even) is the
+               financial default worth recommending in the docstring.
+    [ ] 34.3.  Thread the chosen mode through the per-mode quantisation chokepoint
+               (the _from_scaled_int / `/` path, cf. 28.4) so EVERY rounding op in
+               the expression obeys it, and name the mode in the `precision` verdict
+               ("inexact, rounded half-even to N decimals") so the answer stays
+               self-describing.
+    [ ] 34.4.  HELP + README: add a `rounding` note to the relevant help section
+               and the calculate reply enrichment (27); a fixtures pass like 32.4.
+
+
+[ ] 35.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
+         partially served by fixed-point already, but the NAMED error classes are
+         basis-point confusion (25 bps read as 25%) and rate-period confusion (an
+         annual rate applied monthly). A handful of named functions kill those
+         classes directly and lean on the money-safe fixed-point story. Each is the
+         two-step function add of 28 unless flagged; all COMPUTE, so they follow
+         the active mode's `/` rule and rounding mode (34).)
+    [ ] 35.1.  pct(x, p) / pct_change(old, new) — p percent of x, and the signed
+               relative change (new-old)/old. The everyday percentage op LLMs get
+               wrong; explicit so the caller never hand-rolls /100.
+    [ ] 35.2.  bps(x, b) — b basis points of x (b/10000 * x). Exists SOLELY to make
+               the bps-vs-percent distinction un-confusable at the call site.
+    [ ] 35.3.  compound(principal, rate, periods) and the rate-period helpers —
+               make the period explicit so an annual rate can't silently act
+               monthly; document that `rate` is per-period and `periods` counts the
+               same unit.
+    [ ] 35.4.  pmt / fv / pv (amortisation: payment, future value, present value)
+               — the standard time-value-of-money trio, each a closed-form formula
+               over the operand evaluator; the amortisation case named in the
+               research. May need an internal pow over the active type (have it).
+    [ ] 35.5.  These are dollar-and-cents operations: recommend fixed-point in the
+               docstrings, honour rounding mode (34), and keep the exact/inexact
+               verdict so a rounded interest figure is never silently presented as
+               exact.
+
+
+[ ] 36.  UNIT CONVERSION  (web research 2026-06-14: comprehensive competitors lead
+         with "158 conversions / 15 categories" as a headline, and LLMs show error
+         rates up to ~20% on large units. We have NONE. Add it the type-faithful
+         way — a conversion is exact-rational where the factor is rational
+         (in/cm, lb/kg defined factors) and inexact only where it isn't, so the
+         verdict still tells the truth, unlike a bare float table.)
+    [ ] 36.1.  Decide the surface: a `convert` tool (value, from-unit, to-unit) vs
+               a convert(x, "from", "to") function in the language. Lean tool — the
+               unit names are strings, not numeric literals, and a tool keeps the
+               grammar clean.
+    [ ] 36.2.  Seed the high-value categories first: length, mass, time, volume,
+               temperature (affine — offset + scale, not a bare factor), data
+               (KiB/KB binary-vs-decimal — a known LLM trap), angle. Store factors
+               as exact rationals so the conversion is exact where the definition is.
+    [ ] 36.3.  Carry the exact/inexact verdict per conversion (a defined factor is
+               exact in rational; an irrational or rounded factor is flagged) and
+               reuse the active numeric type so converted values compose with the
+               rest of the engine.
+    [ ] 36.4.  HELP section listing categories + units; README bullet; fixtures.
+
+
+[ ] 37.  HUMAN-SCALE NUMBER INGESTION  (web research 2026-06-14: the input side of
+         the same failures — "3.2 billion", "25 bps", US-vs-EU decimal (12.345 as
+         decimal vs thousands), and date tokens (Q3 2024 vs 2024-09-15) are named
+         error classes because the model mis-tokenises them BEFORE any math. Let
+         the caller hand us the messy human string and get back a trustworthy
+         typed value, rather than pre-parsing it wrong itself. Scope carefully —
+         our strict grammar (LANGUAGE help) is a feature; this is a deliberate,
+         opt-in lenient front door, NOT a loosening of the core literal rules.)
+    [ ] 37.1.  Magnitude words: parse a trailing k/M/B/bn/billion/trillion suffix
+               into the exact scaled value (3.2 billion -> 3200000000), in the
+               active type. The single highest-value item — the ~20% large-unit
+               error class.
+    [ ] 37.2.  Locale-aware decimal/grouping: an explicit US vs EU mode (or a
+               grouping/decimal-separator pair) so "12.345" and "12,345" are never
+               guessed. Default to today's strict US form; this is an opt-in arg,
+               never silent auto-detection (auto-detect is the bug, not the fix).
+    [ ] 37.3.  Percent / bps literal sugar on input ("25%", "25 bps") resolving to
+               the same values as 35.1/35.2 — input-side mirror of the financial
+               helpers.
+    [ ] 37.4.  DATE/TIME ARITHMETIC (we have only time(), 28.1) — parse common date
+               forms to an epoch/ordinal so date differences and offsets are
+               computable; normalise Q3 2024 / Sept 2024 / 2024-09-15 to one
+               representation. Larger than 37.1-37.3; may warrant its own section
+               once scoped. Keep exact (a date is exactly rational, cf. 28.1).
+    [ ] 37.5.  KEEP IT OPT-IN: every lenient parse is a named mode/argument, the
+               result still carries its exact/inexact verdict, and the strict
+               grammar stays the default so existing callers are unaffected.
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
