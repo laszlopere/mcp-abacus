@@ -15,9 +15,12 @@ prints every "expression [mode] = value" pair it sees on the tool seam.
 
 import asyncio
 import json
+from fractions import Fraction
 
 import pytest
 
+from mcp_abacus.expr.parser import parse
+from mcp_abacus.expr.value import FixedPoint, Mode
 from mcp_abacus.server import mcp
 
 
@@ -880,3 +883,94 @@ def test_nullary_fixed_point_precision_derivation(expression, floor, value):
     # fixed-point is the default mode (mode omitted), so this also exercises the
     # mode-without-operand dispatch (29.2): the run mode reaches the nullary.
     assert _value(expression, floor=floor) == value
+
+
+# --- nullary clock reading time() (28.1) ------------------------------------
+# The first clock-DEPENDENT nullary. UNLIKE the irrational constants pi()/e() a
+# tick is exactly rational, so it refuses in NO mode and is inexact only in float.
+# The tool path samples the LIVE realtime clock (asserted only for type/range);
+# the exact per-mode and per-scale renders are pinned by injecting a fixed epoch
+# through evaluate()'s now_ns hook (28.1.2).
+
+_EPOCH_NS = 1_700_000_000_123_456_789  # a fixed instant, 1700000000.123456789 s
+
+
+def _time_value(expression, mode, floor=0):
+    """Evaluate `expression` at the fixed test epoch, returning the Value (28.1.2)."""
+    return parse(expression).evaluate(mode, min_fixed_point_precision=floor, now_ns=_EPOCH_NS)
+
+
+@pytest.mark.parametrize(
+    ("floor", "mantissa", "decimals"),
+    [
+        # Derived scale s == the floor here (no literal). The ns reading is TRUNCATED
+        # to s decimals — a resolution choice, so the render is EXACT (28.1.1).
+        (0, 1_700_000_000, 0),  # whole seconds, the C library time()
+        (3, 1_700_000_000_123, 3),  # tv_nsec truncated to milliseconds
+        (9, 1_700_000_000_123_456_789, 9),  # the full ns reading, no truncation
+        (12, 1_700_000_000_123_456_789_000, 12),  # past 9: true zeros, the clock has no finer grain
+    ],
+)
+def test_time_fixed_point_truncates_to_the_derived_scale(floor, mantissa, decimals):
+    value = _time_value("time()", Mode.FIXED_POINT, floor=floor)
+    assert value.mode is Mode.FIXED_POINT
+    assert value.payload == FixedPoint(mantissa, decimals)
+    assert value.exact is True  # the rendered decimal IS the sampled value
+
+
+@pytest.mark.parametrize(
+    ("floor", "rendered"),
+    [
+        # The headline behaviour: the precision floor IS the clock resolution, and
+        # the rendered fixed-point decimal carries it verbatim (28.1.1). _EPOCH_NS is
+        # 1700000000.123456789 s, so each scale is that epoch cut at that resolution.
+        (0, "1700000000"),  # whole seconds
+        (3, "1700000000.123"),  # milliseconds
+        (6, "1700000000.123456"),  # microseconds — TRUNCATED (rounding would give ...457)
+        (9, "1700000000.123456789"),  # nanoseconds — the clock's full grain
+        (12, "1700000000.123456789000"),  # beyond ns: true trailing zeros, no finer grain
+    ],
+)
+def test_time_fixed_point_renders_epoch_at_the_requested_resolution(floor, rendered):
+    # The fixed-point string a caller actually sees: epoch.<fraction> at the scale
+    # set by min_fixed_point_precision (3 -> ms, 6 -> us, 9 -> ns).
+    assert _time_value("time()", Mode.FIXED_POINT, floor=floor).to_string() == rendered
+
+
+def test_time_floating_point_is_the_full_ns_as_an_inexact_double():
+    value = _time_value("time()", Mode.FLOATING_POINT)
+    assert value.mode is Mode.FLOATING_POINT
+    assert value.payload == float(Fraction(_EPOCH_NS, 10**9))
+    assert value.exact is False  # the only mode that rounds
+
+
+def test_time_rational_is_the_full_ns_exact_and_does_not_refuse():
+    # Where pi()/e() raise in rational, time() returns the exact fraction (28.1).
+    value = _time_value("time()", Mode.RATIONAL)
+    assert value.mode is Mode.RATIONAL
+    assert value.payload == Fraction(_EPOCH_NS, 10**9)
+    assert value.exact is True
+
+
+def test_time_is_one_instant_per_run():
+    # Every time() in an expression shares the single sampled reading (28.1.2),
+    # so a self-difference is exactly zero — even off the LIVE clock (now_ns
+    # defaulted), since the whole run samples once.
+    value = parse("time() - time()").evaluate(Mode.RATIONAL)
+    assert value.payload == Fraction(0)
+
+
+def test_time_live_clock_through_the_tool_is_a_recent_epoch():
+    # The functional path samples the real clock; fixed-point default scale 0 gives
+    # whole seconds, exact. Assert only a sane range (this test is time-dependent).
+    rendered = _value("time()")  # e.g. "1765432100 (exact)"
+    seconds, annotation = rendered.split(" ", 1)
+    assert annotation == "(exact)"
+    assert int(seconds) > 1_700_000_000  # after 2023-11-14
+
+
+def test_time_rational_through_the_tool_does_not_refuse():
+    # Contrast with test_nullary_rational_refuses: a clock tick has a rational value.
+    payload = _calc("time()", "rational")
+    assert payload["error"] is None
+    assert payload["value"] is not None

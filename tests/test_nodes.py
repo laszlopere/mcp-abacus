@@ -155,6 +155,7 @@ def test_function_arities_match_the_registry():
         "stddev": (1, None),
         "pi": (0, 0),  # nullary constant (29.2)
         "e": (0, 0),  # nullary constant (29.2)
+        "time": (0, 0),  # nullary clock reading (28.1)
     }
 
 
