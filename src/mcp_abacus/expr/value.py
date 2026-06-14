@@ -79,7 +79,7 @@ import math
 import operator
 import struct
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, localcontext
 from enum import Enum
 from fractions import Fraction
@@ -157,37 +157,6 @@ def resolve_mode(name: str) -> Mode:
         raise
 
 
-@dataclass(frozen=True, slots=True)
-class EvalContext:
-    """Per-run evaluation state, threaded down the evaluate walk (29.1).
-
-    ONE instance is built at the top of a single ``Node.evaluate`` run and passed
-    to every node as it is walked, so the per-run state lives in an argument
-    rather than a module global. It carries the ``mode`` the run evaluates in, the
-    ``min_fixed_point_precision`` floor (25.2.1), and the ``nullary_precision``
-    below.
-
-    ``nullary_precision`` (29.3) is the fixed-point scale a nullary like ``pi()``
-    produces — a constant has no operand to carry a scale, so the run hands it one:
-    the floor raised to the largest decimal scale of any literal in the expression,
-    derived by a single pre-walk before evaluation (FIXED_POINT only — float uses
-    its native constant, rational refuses the irrational, neither has a scale). It
-    is unused outside fixed-point and defaults to 0.
-
-    ``now_ns`` (28.1.2) is the single REALTIME clock reading the run was sampled
-    at — integer nanoseconds since the Unix epoch — shared by every ``time()`` in
-    the expression so a run sees ONE instant (``time() - time() == 0`` exactly).
-    ``evaluate`` samples it once from the real clock; tests inject a fixed epoch.
-    ``None`` when the run never needs it (no ``time()`` call); the only nullary
-    that reads the context for anything beyond mode/scale.
-    """
-
-    mode: Mode
-    min_fixed_point_precision: int = 0
-    nullary_precision: int = 0
-    now_ns: int | None = None
-
-
 class UndefinedVariableError(LookupError):
     """A variable was read before any assignment bound it (30.1).
 
@@ -232,6 +201,44 @@ class VariableStore:
             return self._values[name]
         except KeyError:
             raise UndefinedVariableError(name) from None
+
+
+@dataclass(frozen=True, slots=True)
+class EvalContext:
+    """Per-run evaluation state, threaded down the evaluate walk (29.1).
+
+    ONE instance is built at the top of a single ``Node.evaluate`` run and passed
+    to every node as it is walked, so the per-run state lives in an argument
+    rather than a module global. It carries the ``mode`` the run evaluates in, the
+    ``min_fixed_point_precision`` floor (25.2.1), and the ``nullary_precision``
+    below.
+
+    ``nullary_precision`` (29.3) is the fixed-point scale a nullary like ``pi()``
+    produces — a constant has no operand to carry a scale, so the run hands it one:
+    the floor raised to the largest decimal scale of any literal in the expression,
+    derived by a single pre-walk before evaluation (FIXED_POINT only — float uses
+    its native constant, rational refuses the irrational, neither has a scale). It
+    is unused outside fixed-point and defaults to 0.
+
+    ``now_ns`` (28.1.2) is the single REALTIME clock reading the run was sampled
+    at — integer nanoseconds since the Unix epoch — shared by every ``time()`` in
+    the expression so a run sees ONE instant (``time() - time() == 0`` exactly).
+    ``evaluate`` samples it once from the real clock; tests inject a fixed epoch.
+    ``None`` when the run never needs it (no ``time()`` call); the only nullary
+    that reads the context for anything beyond mode/scale.
+
+    ``variables`` (30.2) is the run's VariableStore — the named-value scope an
+    assignment (``x = expr``) writes and a later reference reads. A fresh, empty
+    store per run by default (assignments do not leak across ``evaluate`` calls);
+    being mutable it is the one field whose contents change during the walk, the
+    frozen context holding it by reference.
+    """
+
+    mode: Mode
+    min_fixed_point_precision: int = 0
+    nullary_precision: int = 0
+    now_ns: int | None = None
+    variables: VariableStore = field(default_factory=VariableStore)
 
 
 @dataclass(frozen=True, slots=True)
