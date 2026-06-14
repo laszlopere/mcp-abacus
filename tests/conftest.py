@@ -105,11 +105,38 @@ def _human_readable_trace(request, monkeypatch):
             _record(arguments, json.loads(result.content[0].text))
         return result
 
-    # Engine seam: parse() records each node's source; search() looks it up and
+    # Engine seam: parse() records each node's source; the engine looks it up and
     # frames its outcome the same way the tool reply does (solution + "(approximate)",
-    # or the failure message — re-raised so pytest.raises tests still see it).
+    # or the failure message — re-raised so pytest.raises tests still see it). Both
+    # engines are traced: search() (golden-section) and nelder_mead() (multivariate).
     original_parse = parser_module.parse
     original_search = solver_module.search
+    original_nelder_mead = solver_module.nelder_mead
+
+    def _result_line(result):
+        # One unknown -> just the value (the 1-D output, unchanged); several ->
+        # "name = value, …" so each found unknown is shown.
+        if len(result.solutions) == 1:
+            return f"{result.solutions[0][1].to_string()} (approximate)"
+        pairs = ", ".join(f"{name} = {value.to_string()}" for name, value in result.solutions)
+        return f"{pairs} (approximate)"
+
+    def _trace_engine(original):
+        @functools.wraps(original)
+        def traced(node, *args, **kwargs):
+            expression = sources.get(id(node), "")
+            try:
+                result = original(node, *args, **kwargs)
+                _append(expression, _result_line(result))
+                return result
+            except SolverError as exc:
+                _append(expression, exc.message)
+                raise
+            except Exception as exc:  # EvalError (unset constant) etc. — still worth showing
+                _append(expression, getattr(exc, "message", str(exc)))
+                raise
+
+        return traced
 
     @functools.wraps(original_parse)
     def traced_parse(text):
@@ -117,32 +144,23 @@ def _human_readable_trace(request, monkeypatch):
         sources[id(node)] = text
         return node
 
-    @functools.wraps(original_search)
-    def traced_search(node, *args, **kwargs):
-        expression = sources.get(id(node), "")
-        try:
-            result = original_search(node, *args, **kwargs)
-            _append(expression, f"{result.solution.to_string()} (approximate)")
-            return result
-        except SolverError as exc:
-            _append(expression, exc.message)
-            raise
-        except Exception as exc:  # EvalError (unset constant) etc. — still worth showing
-            _append(expression, getattr(exc, "message", str(exc)))
-            raise
+    traced_search = _trace_engine(original_search)
+    traced_nelder_mead = _trace_engine(original_nelder_mead)
 
     monkeypatch.setattr(mcp, "call_tool", traced_mcp_call)
     monkeypatch.setattr(ClientSession, "call_tool", traced_client_call)
-    # Patch parse/search in every namespace holding the original (the source module,
-    # the expr package re-export, and the test module's own from-import), so the
-    # call the test makes is the one intercepted. The server keeps its OWN bound
-    # `search`, so an in-process tool call records once, at the tool seam — not twice.
+    # Patch parse/search/nelder_mead in every namespace holding the original (the
+    # source module, the expr package re-export, and the test module's own
+    # from-import), so the call the test makes is the one intercepted. The server keeps
+    # its OWN bound engines, so an in-process tool call records once, at the tool seam.
     for module in (parser_module, expr_package, request.module):
         if getattr(module, "parse", None) is original_parse:
             monkeypatch.setattr(module, "parse", traced_parse)
     for module in (solver_module, request.module):
         if getattr(module, "search", None) is original_search:
             monkeypatch.setattr(module, "search", traced_search)
+        if getattr(module, "nelder_mead", None) is original_nelder_mead:
+            monkeypatch.setattr(module, "nelder_mead", traced_nelder_mead)
 
     # Mute the e2e subprocess's stderr request-logging so only the blocks print
     # (the same redirect the verbose e2e trace uses); skipped for in-process modules.
@@ -370,6 +388,21 @@ def _compact_solver_trace(request, monkeypatch):
 
     original_parse = parser_module.parse
     original_search = solver_module.search
+    original_nelder_mead = solver_module.nelder_mead
+
+    def _record(request, mode, floor, call):
+        # Run the engine, recording the SAME request/reply JSON the tool produces —
+        # the reply via the shared _solver_reply / _solver_error builders.
+        try:
+            result = call()
+            rows.append((request, _solver_reply(result, mode, floor or None)))
+            return result
+        except SolverError as exc:
+            rows.append((request, _solver_error(exc.message)))
+            raise
+        except EvalError as exc:  # a constant the program never set (structural, 31.7)
+            rows.append((request, _solver_error(f"error (line {exc.line}): {exc.message}")))
+            raise
 
     @functools.wraps(original_parse)
     def traced_parse(text):
@@ -390,23 +423,33 @@ def _compact_solver_trace(request, monkeypatch):
             "min_fixed_point_precision": floor or None,
             "objective": objective.value,
         }
-        try:
-            result = original_search(node, variable, lower, upper, mode, floor, objective)
-            rows.append((request, _solver_reply(result, mode, floor or None)))
-            return result
-        except SolverError as exc:
-            rows.append((request, _solver_error(exc.message)))
-            raise
-        except EvalError as exc:  # a constant the program never set (structural, 31.7)
-            rows.append((request, _solver_error(f"error (line {exc.line}): {exc.message}")))
-            raise
+        run = functools.partial(
+            original_search, node, variable, lower, upper, mode, floor, objective
+        )
+        return _record(request, mode, floor, run)
+
+    @functools.wraps(original_nelder_mead)
+    def traced_nelder_mead(node, unknowns, mode, floor, objective):
+        request = {
+            "expression": sources.get(id(node), ""),
+            "variables": {name: [lo, hi] for name, lo, hi in unknowns},
+            "mode": mode.value,
+            "min_fixed_point_precision": floor or None,
+            "objective": objective.value,
+            "algorithm": "nelder-mead",
+        }
+        run = functools.partial(original_nelder_mead, node, unknowns, mode, floor, objective)
+        return _record(request, mode, floor, run)
 
     monkeypatch.setattr(solver_module, "search", traced_search)
+    monkeypatch.setattr(solver_module, "nelder_mead", traced_nelder_mead)
     for module in (parser_module, expr_package, request.module):
         if getattr(module, "parse", None) is original_parse:
             monkeypatch.setattr(module, "parse", traced_parse)
     if getattr(request.module, "search", None) is original_search:
         monkeypatch.setattr(request.module, "search", traced_search)
+    if getattr(request.module, "nelder_mead", None) is original_nelder_mead:
+        monkeypatch.setattr(request.module, "nelder_mead", traced_nelder_mead)
 
     yield
 

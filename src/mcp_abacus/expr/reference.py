@@ -117,26 +117,32 @@ def _solver_section() -> str:
     # sibling that depends on this expr subpackage, so a module-level import here would
     # invert the layering (and risk a load-time cycle) — deferring it to call time
     # keeps expr free of an edge back to solver.
-    from mcp_abacus.solver import _ALGORITHM, _OBJECTIVE_ALIASES, Objective
+    from mcp_abacus.solver import _OBJECTIVE_ALIASES, Algorithm, Objective
 
     objectives = " | ".join(o.value for o in Objective)
     aliases = ", ".join(f"{name}={o.value}" for name, o in _OBJECTIVE_ALIASES.items())
+    algorithms = " | ".join(a.value for a in Algorithm)
     return "\n".join(
         [
-            "solver tool — find the value of ONE variable that drives an expression to",
-            "a target over a required bracket. SAME expression language as calculate",
-            "(operators, functions, literals, multi-line `name = expr` programs — see the",
-            "language section); it SEARCHES for an unknown rather than evaluating.",
+            "solver tool — find the value(s) of one or more variables that drive an",
+            "expression to a target over required bracket(s). SAME expression language as",
+            "calculate (operators, functions, literals, multi-line `name = expr` programs —",
+            "see the language section); it SEARCHES for the unknown(s) rather than evaluating.",
             "",
             "arguments:",
             "  expression  the program to drive; calculate's grammar.",
-            "  variable    the single unknown. Must OCCUR in the expression and must NOT",
-            "              be assigned by it; every OTHER name is a constant the program",
-            "              sets via an assignment line.",
+            "  variable    the single unknown (SINGLE form). Must OCCUR in the expression",
+            "              and must NOT be assigned by it; every OTHER name is a constant",
+            "              the program sets via an assignment line.",
             "  lower upper the search bracket [lower, upper]; lower must be below upper.",
+            "  variables   the MULTIPLE form: a dict name -> [lower, upper], e.g.",
+            "              {\"x\": [0, 5], \"y\": [-4, 2]}. Needs algorithm nelder-mead.",
+            "              Give EXACTLY ONE of (variable+lower+upper) or variables.",
             f"  objective   what to search for: {objectives}.",
             "              Omitted -> find-root.",
             f"              (aliases: {aliases})",
+            f"  algorithm   the search engine: {algorithms}.",
+            "              Omitted -> golden-section-search (single variable only).",
             "  mode        numeric type the search runs in (see types); default fixed-point.",
             "  min_fixed_point_precision  fixed-point decimal floor, exactly as in calculate.",
             "",
@@ -144,14 +150,21 @@ def _solver_section() -> str:
             "  find-root     find where the expression equals zero — a root. Write an",
             "                equation f = g as the expression f - g. 'No solution' when zero",
             "                is not reached in the bracket (the closest |expr| is reported).",
-            "  find-minimum  find where the expression is smallest within the bracket.",
-            "  find-maximum  find where the expression is largest within the bracket.",
+            "  find-minimum  find where the expression is smallest within the bracket(s).",
+            "  find-maximum  find where the expression is largest within the bracket(s).",
             "",
-            "reply: solution (the found value, marked approximate) + solution_hex_dump;",
-            "value (the expression AT the solution — near zero for find-root, the extremum",
-            "otherwise) + value_hex_dump; mode, exact, precision (describing value, as in",
-            f"calculate); objective, algorithm ({_ALGORITHM}), iterations; error. On failure",
-            "every data field is null and error carries the message.",
+            "algorithms:",
+            "  golden-section-search  single unknown, shrinks the 1-D bracket. The default.",
+            "  nelder-mead            n unknowns, walks a downhill simplex; bounds-clamped to",
+            "                         each bracket. The only engine for the variables form.",
+            "",
+            "reply: solutions (a list of {variable, solution, solution_hex_dump}, one per",
+            "unknown, each marked approximate); for the SINGLE form the scalar variable /",
+            "solution / solution_hex_dump are also set. value (the expression AT the",
+            "solution — near zero for find-root, the extremum otherwise) + value_hex_dump;",
+            "mode, exact, precision (describing value, as in calculate); objective,",
+            "algorithm, iterations; error. On failure every data field is null and error",
+            "carries the message.",
         ]
     )
 

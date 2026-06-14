@@ -4,8 +4,11 @@
 """The solver tool's engine: pick an objective, then search for the variable's value.
 
 Built up item by item (TODO 31); the strategy vocabulary reworked in TODO 32. The
-`objective` argument (find-root / find-minimum / find-maximum) names what the search
-looks for; the golden-section engine drives the unknown to it over a bracket.
+`objective` argument (find-root / find-minimum / find-maximum) names WHAT the search
+looks for; the `algorithm` argument names HOW it searches. Two engines today (TODO
+33): golden-section search drives ONE unknown over a bracket, and Nelder-Mead
+(33.14) walks a simplex over n unknowns — multivariate, bounds-clamped to each
+bracket. Both minimise the same folded objective, so every objective works on either.
 """
 
 import math
@@ -44,6 +47,19 @@ class Objective(Enum):
     FIND_MAXIMUM = "find-maximum"  # where the expression is largest
 
 
+class Algorithm(Enum):
+    """HOW the search drives the unknown(s) — the engine used (TODO 33).
+
+    Split from ``Objective`` (WHAT it looks for): the same root / extremum can be
+    reached by different methods. ``GOLDEN_SECTION`` is the single-variable bracket
+    shrinker (31.7); ``NELDER_MEAD`` is the multivariate downhill simplex (33.14).
+    The enum value is the string reported in the reply's ``algorithm`` field (32.3).
+    """
+
+    GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
+    NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
+
+
 # Never-surfaced spellings accepted alongside the canonical find-* names (32.2): the
 # pre-32 ``solve`` and the ``minimise`` / ``maximise`` direction words, with their
 # short and American -ize forms, all resolve to one Objective. Bare ``optimise`` is
@@ -80,6 +96,38 @@ def resolve_objective(objective: str | None) -> Objective:
         valid = ", ".join(o.value for o in Objective)
         raise SolverError(
             f"Unknown objective: {objective!r}. Valid objectives: {valid}."
+        ) from None
+
+
+# Never-surfaced spellings for the `algorithm` argument (the 23.6 alias rule): a short
+# / spaced form per engine resolving to one Algorithm. Mirrors _OBJECTIVE_ALIASES.
+_ALGORITHM_ALIASES: dict[str, Algorithm] = {
+    "golden-section": Algorithm.GOLDEN_SECTION,
+    "golden": Algorithm.GOLDEN_SECTION,
+    "nelder mead": Algorithm.NELDER_MEAD,
+    "simplex": Algorithm.NELDER_MEAD,
+    "downhill-simplex": Algorithm.NELDER_MEAD,
+}
+
+
+def resolve_algorithm(algorithm: str | None) -> Algorithm:
+    """Resolve the search engine from the `algorithm` argument (33.14).
+
+    ``None`` means ``golden-section-search`` — the default single-variable engine, so
+    every pre-33 call is unchanged. A given value must name an engine: the canonical
+    ``golden-section-search`` / ``nelder-mead``, or a never-surfaced alias (``golden``,
+    ``simplex``, …). Anything else is a SolverError listing the canonical names.
+    """
+    if algorithm is None:
+        return Algorithm.GOLDEN_SECTION
+    try:
+        return Algorithm(algorithm)
+    except ValueError:
+        if algorithm in _ALGORITHM_ALIASES:
+            return _ALGORITHM_ALIASES[algorithm]
+        valid = ", ".join(a.value for a in Algorithm)
+        raise SolverError(
+            f"Unknown algorithm: {algorithm!r}. Valid algorithms: {valid}."
         ) from None
 
 
@@ -135,17 +183,15 @@ def validate_unknown(node: Node, variable: str) -> None:
         )
 
 
-# --- the search engine (31.7) -------------------------------------------------
-# ONE minimizer drives every case: the objective folds find-root/find-maximum into a
-# quantity whose LEAST is the answer (fold_objective(), 32.1), so the engine only ever
-# minimises. Golden-section search needs no derivative — it brackets the minimum
-# and shrinks the interval by the golden ratio each step, evaluating the program
-# once per new point. A real (float) search drives the abacus engine, which works
-# in the active mode: each candidate is materialised as a mode-faithful Value, the
-# program evaluated, and its Value reduced back to a float to compare.
+# --- the search engines (31.7 golden-section, 33.14 Nelder-Mead) --------------
+# Each engine MINIMISES: the objective folds find-root/find-maximum into a quantity
+# whose LEAST is the answer (fold_objective(), 32.1), so neither engine needs to know
+# the objective beyond that fold. Both are derivative-free and drive the abacus engine
+# in the active mode — each candidate is materialised as a mode-faithful Value, the
+# program evaluated, and its Value reduced back to a float to compare. Golden-section
+# shrinks a 1-D bracket; Nelder-Mead walks an n-vertex simplex over n unknowns. The
+# reply names which ran (Algorithm, 32.3/33.14) so the two are distinguishable.
 
-_ALGORITHM = "golden-section-search"  # the one search method today (32.3); the reply
-# reports it so a future second algorithm is distinguishable without a shape change.
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _MAX_ITERATIONS = 200  # cap: ~60 steps already shrink a unit bracket below 1e-12
 _TIME_LIMIT_SECONDS = 2.0  # hard wall-clock cap: a pathological program can make a
@@ -158,15 +204,18 @@ _RATIONAL_SEARCH_DECIMALS = 12  # rational has no scale of its own; search at th
 
 @dataclass(frozen=True, slots=True)
 class SolverResult:
-    """The outcome of a successful search — the found unknown and the value there (31.8).
+    """The outcome of a successful search — the found unknown(s) and the value there (31.8).
 
-    ``solution`` is the unknown's found value as a mode-faithful Value (the search
-    is approximate, so it is the best estimate within tolerance); ``value`` is the
-    EXPRESSION's Value evaluated at that solution (for find-root, near zero; for an
-    extremum, the extremum). ``objective`` echoes the resolved objective (32.1),
-    ``algorithm`` names the search method used (32.3), and ``iterations`` is how many
-    interval-shrink steps the search took. The server turns this into the reply dict;
-    a failure (bad request, no solution) is a SolverError instead, never a SolverResult.
+    ``solutions`` is the ordered ``(name, found Value)`` for every unknown the search
+    drove — one entry for golden-section, n for Nelder-Mead (33.14); each found Value
+    is a mode-faithful best estimate within tolerance. ``variable`` / ``solution`` echo
+    the FIRST (or only) unknown, a convenience for the single-variable case so the 1-D
+    reply and the engine tests need not unpack the list. ``value`` is the EXPRESSION's
+    Value evaluated at that solution (for find-root, near zero; for an extremum, the
+    extremum). ``objective`` echoes the resolved objective (32.1), ``algorithm`` names
+    the engine used (32.3/33.14), and ``iterations`` is how many search steps it took.
+    The server turns this into the reply dict; a failure (bad request, no solution) is
+    a SolverError instead, never a SolverResult.
     """
 
     variable: str
@@ -175,6 +224,7 @@ class SolverResult:
     solution: Value
     value: Value
     iterations: int
+    solutions: tuple[tuple[str, Value], ...]
 
 
 def _search_scale(node: Node, mode: Mode, floor: int) -> int:
@@ -331,4 +381,190 @@ def search(
             f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
             f"at {variable} = {best_solution.to_string()}.{limit}"
         )
-    return SolverResult(variable, objective, _ALGORITHM, best_solution, best_value, iterations)
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.GOLDEN_SECTION.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Nelder-Mead downhill simplex (33.14) -------------------------------------
+# The multivariate peer of golden-section: instead of shrinking a 1-D bracket it walks
+# a simplex of n+1 vertices over n unknowns, reflecting the worst vertex through the
+# centroid of the rest and expanding / contracting / shrinking from there. No
+# derivative, one program evaluation per trial point — the same evaluate-fold-compare
+# loop, just with a VECTOR bound into the store. Every trial point is clamped to the
+# per-axis brackets, so the search stays inside the box the caller gave.
+
+_NM_REFLECT = 1.0  # α — reflect the worst vertex through the centroid
+_NM_EXPAND = 2.0  # γ — push further when reflection found a new best
+_NM_CONTRACT = 0.5  # ρ — pull back toward the centroid when reflection was poor
+_NM_SHRINK = 0.5  # σ — shrink every vertex toward the best when contraction failed
+_NM_INIT_STEP = 0.4  # initial per-axis vertex offset, as a fraction of bracket width:
+# from the midpoint this lands at lower+0.9·width — a wide, in-box starting simplex.
+
+
+def nelder_mead(
+    node: Node,
+    unknowns: list[tuple[str, float, float]],
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Nelder-Mead simplex search for n unknowns over their brackets (33.14).
+
+    ``unknowns`` is the ordered ``(name, lower, upper)`` for each free variable; the
+    simplex starts at the per-axis midpoints (plus one vertex offset along each axis)
+    and walks downhill on the folded objective (fold_objective(), 32.1) — ``|expr|``
+    for find-root, ``±expr`` for an extremum — exactly the quantity golden-section
+    minimises, so every objective works here too. Each trial point binds all n names
+    into a fresh store, evaluates the program, and reduces the result to a float; a
+    point that raises a DOMAIN error is penalised with +inf so the simplex steers
+    away, while a STRUCTURAL failure (a constant the program never set) propagates as
+    an EvalError. Every trial point is clamped to its ``[lower, upper]``.
+
+    Bounded, like golden-section, by ``_MAX_ITERATIONS`` and the hard 2-second
+    wall-clock (``_TIME_LIMIT_SECONDS``); on timeout it stops with the best vertex
+    reached so far. Returns a SolverResult whose ``solutions`` lists every unknown's
+    found value. Raises SolverError when the program evaluates nowhere in the box, or
+    when a find-root cannot drive |expr| within ``residual_tol`` of zero (reporting the
+    closest point reached) — including when the time limit cut the search short.
+    """
+    names = [name for name, _, _ in unknowns]
+    lowers = [float(lo) for _, lo, _ in unknowns]
+    uppers = [float(hi) for _, _, hi in unknowns]
+    n = len(unknowns)
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+
+    best_obj = math.inf
+    best_point: list[float] | None = None
+    best_solution: tuple[Value, ...] | None = None
+    best_value: Value | None = None
+
+    def clamp(point: list[float]) -> list[float]:
+        return [min(max(point[i], lowers[i]), uppers[i]) for i in range(n)]
+
+    def evaluate_objective(point: list[float]) -> float:
+        nonlocal best_obj, best_point, best_solution, best_value
+        candidates = tuple(Value.from_real(point[i], mode, scale) for i in range(n))
+        store = VariableStore()
+        for name, candidate in zip(names, candidates, strict=True):
+            store.set(name, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return math.inf  # a domain error at THIS point — steer the simplex away
+        obj = fold_objective(raw, objective).to_float()
+        if obj < best_obj:
+            best_obj = obj
+            best_point, best_solution, best_value = list(point), candidates, raw
+        return obj
+
+    def along(centroid: list[float], coeff: float, target: list[float]) -> list[float]:
+        # The point `coeff` of the way from the centroid toward `target`, clamped to
+        # the box. Reflection/expansion/contraction are all this move at different
+        # coefficients (reflection toward the worst with a negative coeff).
+        return clamp([centroid[i] + coeff * (target[i] - centroid[i]) for i in range(n)])
+
+    # Initial simplex: the midpoints, plus one vertex per axis offset along that axis.
+    midpoint = [(lowers[i] + uppers[i]) / 2 for i in range(n)]
+    simplex = [list(midpoint)]
+    for i in range(n):
+        vertex = list(midpoint)
+        vertex[i] = midpoint[i] + _NM_INIT_STEP * (uppers[i] - lowers[i])
+        simplex.append(vertex)
+    fvals = [evaluate_objective(v) for v in simplex]
+
+    iterations = 0
+    timed_out = False
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        order = sorted(range(n + 1), key=lambda k: fvals[k])  # best (least) first
+        simplex = [simplex[k] for k in order]
+        fvals = [fvals[k] for k in order]
+        size = max(
+            max(v[i] for v in simplex) - min(v[i] for v in simplex) for i in range(n)
+        )
+        if size <= x_tol:  # the simplex has collapsed below what the mode resolves
+            break
+        centroid = [sum(simplex[k][i] for k in range(n)) / n for i in range(n)]
+        worst = simplex[n]
+        reflected = along(centroid, -_NM_REFLECT, worst)  # away from the worst vertex
+        fr = evaluate_objective(reflected)
+        if fvals[0] <= fr < fvals[n - 1]:
+            simplex[n], fvals[n] = reflected, fr  # a middling reflection: take it
+        elif fr < fvals[0]:  # a new best — try stepping further out
+            expanded = along(centroid, _NM_EXPAND, reflected)
+            fe = evaluate_objective(expanded)
+            if fe < fr:
+                simplex[n], fvals[n] = expanded, fe
+            else:
+                simplex[n], fvals[n] = reflected, fr
+        else:  # reflection no better than the second-worst — contract
+            if fr < fvals[n]:  # outside contraction (reflection beat the old worst)
+                contracted = along(centroid, _NM_CONTRACT, reflected)
+            else:  # inside contraction (toward the worst)
+                contracted = along(centroid, _NM_CONTRACT, worst)
+            fc = evaluate_objective(contracted)
+            if fc < fvals[n]:
+                simplex[n], fvals[n] = contracted, fc
+            else:  # contraction failed too — shrink the whole simplex toward the best
+                best_vertex = simplex[0]
+                for k in range(1, n + 1):
+                    simplex[k] = along(best_vertex, _NM_SHRINK, simplex[k])
+                    fvals[k] = evaluate_objective(simplex[k])
+        iterations += 1
+
+    # Grid polish (fixed-point / rational), per axis: the simplex stops within a box
+    # narrower than one grid step, so the best vertex may sit one step off an EXACTLY
+    # representable root. Probe each axis's grid neighbours of the best point — 4·n
+    # probes, not the 3^n of a full neighbourhood — so a root on the grid is found
+    # exactly. Skipped on float (no grid) and on timeout (the hard cap is spent).
+    if best_point is not None and mode is not Mode.FLOATING_POINT and not timed_out:
+        step = 10.0**-scale
+        centre = list(best_point)
+        for i in range(n):
+            for k in (-2, -1, 1, 2):
+                probe = list(centre)
+                probe[i] = centre[i] + k * step
+                evaluate_objective(clamp(probe))
+
+    box = ", ".join(f"{names[i]} in [{lowers[i]}, {uppers[i]}]" for i in range(n))
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in the search box "
+            f"({box}){limit} (every candidate raised a domain error)."
+        )
+    solutions = tuple(zip(names, best_solution, strict=True))
+    if objective is Objective.FIND_ROOT and best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit."
+            if timed_out
+            else ""
+        )
+        point = ", ".join(f"{name} = {value.to_string()}" for name, value in solutions)
+        raise SolverError(
+            f"No solution: the expression does not reach zero in the search box "
+            f"({box}). The closest is |expr| = {best_obj:.6g} at {point}.{limit}"
+        )
+    first_name, first_value = solutions[0]
+    return SolverResult(
+        first_name,
+        objective,
+        Algorithm.NELDER_MEAD.value,
+        first_value,
+        best_value,
+        iterations,
+        solutions,
+    )

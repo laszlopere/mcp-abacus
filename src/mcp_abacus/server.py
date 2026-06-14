@@ -15,8 +15,11 @@ from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.parser import ParseError
 from mcp_abacus.expr.value import FixedPoint, Mode, Value, resolve_mode
 from mcp_abacus.solver import (
+    Algorithm,
     SolverError,
     SolverResult,
+    nelder_mead,
+    resolve_algorithm,
     resolve_objective,
     search,
     validate_bracket,
@@ -356,36 +359,46 @@ def analyze(
 @mcp.tool()
 def solver(
     expression: str,
-    variable: str,
-    lower: float,
-    upper: float,
+    variable: str | None = None,
+    lower: float | None = None,
+    upper: float | None = None,
+    variables: dict[str, list[float]] | None = None,
     objective: str | None = None,
+    algorithm: str | None = None,
     mode: str = "fixed-point",
     min_fixed_point_precision: int | None = None,
 ) -> dict:
-    """Find the value of one variable that drives an expression to a root or extremum.
+    """Find the value(s) of one or more variables that drive an expression to a root or extremum.
 
     `solver` takes the SAME expression language as `calculate` — every operator,
     function, literal form, and (crucially) multi-line programs with `name = expr`
     assignments — but instead of evaluating the expression it SEARCHES for the value
-    of one named `variable` that drives the expression to the chosen `objective`:
+    of the unknown(s) that drive the expression to the chosen `objective`:
       - "find-root" (default): find where the expression equals zero. Write an
         equation `f = g` as the expression `f - g` and find its root.
       - "find-minimum" / "find-maximum": find where the expression reaches its
-        smallest / largest value within the bracket.
+        smallest / largest value within the bracket(s).
 
-    `variable` is the single unknown the search drives; it must occur in the
-    expression and must NOT be assigned by it. Every OTHER name in the expression is
-    a constant, set by an assignment line in the program (e.g.
-    `"r = 0.05\\np = 1000\\np * (1 + r)**n - 2000"` solving for `n` with `r`, `p`
-    fixed); a name that is neither the unknown nor assigned is an error.
-
-    `lower` and `upper` give the required search bracket `[lower, upper]` the unknown
-    is searched within; `lower` must be below `upper`.
+    There are two input forms for the unknowns:
+      - SINGLE: `variable` + `lower` + `upper` — one unknown searched over the bracket
+        `[lower, upper]` (`lower` must be below `upper`). This is the default
+        golden-section engine.
+      - MULTIPLE: `variables` — a dict mapping each unknown name to its `[lower, upper]`
+        bracket, e.g. `{"x": [0, 5], "y": [-4, 2]}`. This needs the Nelder-Mead engine
+        (`algorithm="nelder-mead"`), which searches all the unknowns jointly.
+    Give exactly one of the two forms. Each unknown must OCCUR in the expression and
+    must NOT be assigned by it; every OTHER name is a constant the program sets via an
+    assignment line (e.g. `"r = 0.05\\np = 1000\\np * (1 + r)**n - 2000"` solving for
+    `n` with `r`, `p` fixed). A name that is neither an unknown nor assigned is an error.
 
     `objective` (optional) names what to search for — "find-root", "find-minimum", or
     "find-maximum"; omitted, it defaults to "find-root". (The older spellings `solve`,
     `minimise`/`maximise` and their `min`/`max` and American forms are accepted too.)
+
+    `algorithm` (optional) names the search engine — "golden-section-search" (the
+    default, single-variable) or "nelder-mead" (multivariate, a bounds-clamped downhill
+    simplex). Golden-section solves only the SINGLE form; the `variables` form requires
+    "nelder-mead". (`golden`, `simplex` and a few other spellings are accepted too.)
 
     `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
     search runs in that numeric type, and the found value is reported in it. See
@@ -395,19 +408,22 @@ def solver(
     then it stops and reports the best value reached so far (a find-root that has not
     got close enough to zero in that time is reported as no-solution, naming the limit).
 
-    Returns a dict: `solution` is the found value of `variable`, rendered as a
-    string and marked "(approximate)" — the search locates it to a tolerance, never
-    exactly — with `solution_hex_dump` its bit-backed hex (as `calculate`'s
-    value_hex_dump). `value` is the EXPRESSION evaluated at that solution, annotated
+    Returns a dict: `solutions` is a list of `{variable, solution, solution_hex_dump}`,
+    one per unknown in input order — each `solution` rendered and marked "(approximate)"
+    (the search locates it to a tolerance, never exactly), with its bit-backed hex. For
+    the SINGLE form the scalar `variable` / `solution` / `solution_hex_dump` are also
+    set (the one unknown); for the MULTIPLE form those scalars are null and `solutions`
+    carries every value. `value` is the EXPRESSION evaluated at that solution, annotated
     with its own precision verdict (near zero for find-root, the extremum otherwise),
     and `value_hex_dump` its hex. `mode` is the resolved numeric type; `exact` and
     `precision` describe `value` exactly as in `calculate`. `objective` echoes the
-    resolved objective, `algorithm` names the search method used ("golden-section
-    search"), and `iterations` is how many search steps it took. On any failure — a
-    bad mode/precision, a malformed expression, an invalid request (empty bracket,
-    unknown not in the expression, unknown objective), or no solution in the bracket —
-    every data field is null and `error` carries the message (a no-solution error
-    reports the closest |expr| it reached); on success `error` is null.
+    resolved objective, `algorithm` names the engine used, and `iterations` is how many
+    search steps it took. On any failure — a bad mode/precision, a malformed expression,
+    an invalid request (no/both input forms, empty bracket, unknown not in the
+    expression, golden-section asked for multiple unknowns, unknown objective or
+    algorithm), or no solution in the bracket — every data field is null and `error`
+    carries the message (a no-solution error reports the closest |expr| it reached); on
+    success `error` is null.
     """
     selected, mode_error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
     if mode_error is not None:
@@ -415,19 +431,24 @@ def solver(
     assert selected is not None  # mode_error is None means a mode resolved
     try:
         resolved_objective = resolve_objective(objective)
+        resolved_algorithm = resolve_algorithm(algorithm)
+        unknowns = _resolve_unknowns(variable, lower, upper, variables, resolved_algorithm)
     except SolverError as exc:
         return _solver_error(exc.message)
     try:
         node = parser.parse(expression)
     except (LexError, ParseError) as exc:
         return _solver_error(f"error (line {exc.line}): {exc.message}")
+    floor = min_fixed_point_precision or 0
     try:
-        validate_bracket(lower, upper)
-        validate_unknown(node, variable)
-        result = search(
-            node, variable, lower, upper, selected, min_fixed_point_precision or 0,
-            resolved_objective,
-        )
+        for name, lo, hi in unknowns:
+            validate_bracket(lo, hi)
+            validate_unknown(node, name)
+        if resolved_algorithm is Algorithm.NELDER_MEAD:
+            result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
+        else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
+            name, lo, hi = unknowns[0]
+            result = search(node, name, lo, hi, selected, floor, resolved_objective)
     except SolverError as exc:
         return _solver_error(exc.message)
     except EvalError as exc:  # a constant the program never set (structural, 31.7)
@@ -435,20 +456,82 @@ def solver(
     return _solver_reply(result, selected, min_fixed_point_precision)
 
 
+def _resolve_unknowns(
+    variable: str | None,
+    lower: float | None,
+    upper: float | None,
+    variables: dict[str, list[float]] | None,
+    algorithm: Algorithm,
+) -> list[tuple[str, float, float]]:
+    """Normalise the two input forms into the ordered `(name, lower, upper)` list (33.14).
+
+    Exactly one form must be given: the scalar `variable` + `lower` + `upper` trio, or
+    the `variables` dict of `name -> [lower, upper]`. The `variables` form is
+    multivariate and so requires the Nelder-Mead engine — golden-section drives a
+    single unknown only. Raises SolverError on a missing/double form, a malformed
+    `variables` entry, or golden-section asked for multiple unknowns. (Whether each
+    bracket has width, and whether each name occurs in the program, is checked later
+    by validate_bracket / validate_unknown.)
+    """
+    has_single = variable is not None or lower is not None or upper is not None
+    has_multi = variables is not None
+    if has_single and has_multi:
+        raise SolverError(
+            "Give exactly one unknown form: variable + lower + upper (single), or "
+            "variables (multiple); not both."
+        )
+    if has_multi:
+        if algorithm is not Algorithm.NELDER_MEAD:
+            raise SolverError(
+                f"The {algorithm.value!r} algorithm solves a single variable; pass "
+                f"algorithm='nelder-mead' to solve for multiple unknowns."
+            )
+        if not variables:
+            raise SolverError("No unknowns given: 'variables' is empty.")
+        unknowns: list[tuple[str, float, float]] = []
+        for name, bracket in variables.items():
+            if len(bracket) != 2:
+                raise SolverError(
+                    f"Bracket for {name!r} must be a [lower, upper] pair, got {bracket!r}."
+                )
+            unknowns.append((name, float(bracket[0]), float(bracket[1])))
+        return unknowns
+    if variable is None or lower is None or upper is None:
+        raise SolverError(
+            "No unknown given: pass variable + lower + upper (single), or variables "
+            "(multiple)."
+        )
+    return [(variable, float(lower), float(upper))]
+
+
 def _solver_reply(result: SolverResult, mode: Mode, min_fixed_point_precision: int | None) -> dict:
-    """Render a successful search into the solver tool's reply dict (31.8).
+    """Render a successful search into the solver tool's reply dict (31.8 / 33.14).
 
     Factored from `solver` so the same success shape has ONE builder: the tool
     returns it over the wire, and the verbose test trace renders it for an
-    engine-level `search()` call. `solution` is marked approximate; `value` (the
-    expression at the solution) is annotated with its precision verdict exactly as
-    `calculate`; `exact` / `precision` describe that value.
+    engine-level `search()` / `nelder_mead()` call. `solutions` lists every unknown's
+    found value (one entry for golden-section, n for Nelder-Mead), each marked
+    approximate with its bit-backed hex. The scalar `variable` / `solution` /
+    `solution_hex_dump` echo that list ONLY when there is a single unknown (so the 1-D
+    reply is unchanged); for multiple unknowns they are null and `solutions` carries
+    them all. `value` (the expression at the solution) is annotated with its precision
+    verdict exactly as `calculate`; `exact` / `precision` describe that value.
     """
     value = result.value
+    solutions = [
+        {
+            "variable": name,
+            "solution": f"{found.to_string()} (approximate)",
+            "solution_hex_dump": found.hex_dump(),
+        }
+        for name, found in result.solutions
+    ]
+    single = solutions[0] if len(solutions) == 1 else None
     return {
-        "variable": result.variable,
-        "solution": f"{result.solution.to_string()} (approximate)",
-        "solution_hex_dump": result.solution.hex_dump(),
+        "variable": single["variable"] if single else None,
+        "solution": single["solution"] if single else None,
+        "solution_hex_dump": single["solution_hex_dump"] if single else None,
+        "solutions": solutions,
         "value": _annotate(
             value.to_string(), value.exact, value.precision(), None, min_fixed_point_precision
         ),
@@ -467,13 +550,14 @@ def _solver_error(message: str) -> dict:
     """A solver reply carrying only an error — every data field null (31.8).
 
     Mirrors `_error` for calculate: the same key set as the success reply so the
-    shape never varies, with solution / value / mode / objective / algorithm /
-    iterations all null and the message in `error`.
+    shape never varies, with solution / solutions / value / mode / objective /
+    algorithm / iterations all null and the message in `error`.
     """
     return {
         "variable": None,
         "solution": None,
         "solution_hex_dump": None,
+        "solutions": None,
         "value": None,
         "value_hex_dump": None,
         "mode": None,

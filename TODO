@@ -1487,7 +1487,12 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.11. Companion-matrix eigenvalues — polynomial roots.
     [ ] 33.12. Brent (parabolic) minimise — derivative-free optimise.
     [ ] 33.13. Newton/BFGS — gradient optimise via symbolic deriv.
-    [ ] 33.14. Nelder-Mead — derivative-free, multivariate-ready.
+    [x] 33.14. Nelder-Mead — derivative-free, multivariate-ready.
+               Maintain a simplex of n+1 vertices over the variables and walk it
+               downhill with reflect / expand / contract / shrink moves on the bare
+               expression evaluator — no gradient needed. Seed the simplex from the
+               initial guess (per-axis steps), and reuse the 2-second wall-clock and
+               tolerance machinery already wrapping golden-section.
     [ ] 33.15. Differential evolution / annealing — global, non-unimodal.
     [ ] 33.16. Newton (systems) — multivariate root via Jacobian.
     [ ] 33.17. Broyden's — multivariate root, quasi-Newton, no Jacobian.

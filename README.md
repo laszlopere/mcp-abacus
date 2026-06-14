@@ -37,10 +37,12 @@ type; it calculates *using* that type.
   node annotated with the value it computed, so you can see *where* a surprising
   answer rounded or overflowed (e.g. `(1 + 1/2) * 3` is `3` in fixed-point — the
   tree shows the `1/2 = 0` leaf that explains it)
-- **`solver`** — find the value of one variable that drives an expression to a
-  target over a bracket: *find-root* (`x**2 - 2` over `[0, 2]` → √2) or
-  *find-minimum* / *find-maximum*, in the same numeric type and expression
-  language (constants come from `name = expr` assignment lines)
+- **`solver`** — find the value(s) of one or more variables that drive an
+  expression to a target over a bracket: *find-root* (`x**2 - 2` over `[0, 2]` → √2)
+  or *find-minimum* / *find-maximum*, in the same numeric type and expression
+  language (constants come from `name = expr` assignment lines). One unknown uses
+  *golden-section search*; pass `variables` (a name → `[lower, upper]` map) with
+  `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
 - **`help`** — the grammar and type reference, on tap for the model
 - **`info`** — server version and environment
 

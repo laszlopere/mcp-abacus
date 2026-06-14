@@ -614,3 +614,40 @@ def test_solver_rejects_an_unknown_objective():
     )
     assert payload["solution"] is None
     assert "Unknown objective" in payload["error"]
+
+
+def test_solver_finds_a_multivariate_minimum_over_the_wire():
+    # The Nelder-Mead engine drives TWO unknowns jointly: (x-3)**2 + (y+1)**2 has its
+    # minimum at (3, -1), value 0. The `variables` form and the `solutions` list both
+    # travel intact across the wire.
+    payload = _solve(
+        {
+            "expression": "(x - 3)**2 + (y + 1)**2",
+            "variables": {"x": [0, 5], "y": [-4, 2]},
+            "objective": "find-minimum",
+            "algorithm": "nelder-mead",
+            "mode": "double",
+        }
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "nelder-mead"
+    # Multivariate: the scalar solution is null; every unknown is in `solutions`.
+    assert payload["solution"] is None
+    found = {
+        entry["variable"]: float(entry["solution"].split(" (")[0])
+        for entry in payload["solutions"]
+    }
+    assert found["x"] == pytest.approx(3.0, abs=1e-3)
+    assert found["y"] == pytest.approx(-1.0, abs=1e-3)
+    assert float(payload["value"].split(" (")[0]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_solver_rejects_multiple_unknowns_for_golden_section():
+    # The `variables` form needs Nelder-Mead; golden-section (the default) is single-
+    # variable, so the request is refused with a pointer to the right algorithm.
+    payload = _solve(
+        {"expression": "x + y", "variables": {"x": [0, 1], "y": [0, 1]}}
+    )
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]

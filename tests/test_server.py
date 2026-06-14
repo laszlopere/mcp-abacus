@@ -118,14 +118,18 @@ def test_shared_front_end_reports_unknown_mode_and_bad_precision():
     assert mode is None and "non-negative integer" in error
 
 
-def test_solver_tool_signature_requires_expression_variable_and_bracket():
+def test_solver_tool_signature_exposes_both_unknown_forms():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     schema = tools["solver"].inputSchema
     properties = schema["properties"]
-    for name in ("expression", "variable", "lower", "upper", "objective"):
+    for name in (
+        "expression", "variable", "lower", "upper", "variables", "objective", "algorithm",
+    ):
         assert name in properties
-    # The unknown and its search bracket are required; objective/mode are optional.
-    assert sorted(schema["required"]) == ["expression", "lower", "upper", "variable"]
+    # Only `expression` is required: the unknown is given EITHER as variable+lower+upper
+    # OR as the variables map, a choice validated at call time, so neither form's fields
+    # are schema-required (33.14). objective/algorithm/mode stay optional.
+    assert sorted(schema["required"]) == ["expression"]
     assert properties["mode"]["default"] == "fixed-point"
 
 
