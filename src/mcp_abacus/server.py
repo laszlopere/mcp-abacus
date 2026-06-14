@@ -185,7 +185,7 @@ def _evaluate_request(
 def calculate(
     expression: str, mode: str = "fixed-point", min_fixed_point_precision: int | None = None
 ) -> dict:
-    """Evaluate ONE expression in a single numeric type; return value + precision.
+    """Evaluate an expression (or short program) in one numeric type; return value + precision.
 
     `mode` is the numeric type the WHOLE calculation runs in — every intermediate
     result behaves exactly as that type would, so float rounding, fixed-point
@@ -208,6 +208,17 @@ def calculate(
     base-prefixed (0x/0o/0b) — a DECIMAL mantissa is INVALID: both `123@2` and
     `123.45@2` error; write a decimal value as its digits (e.g. 123.45), never
     with `@`. (`0x59682F00@9` = 1.5, `0xDE0B6B3A7640000@18` = 1 ETH.)
+
+    Variables & multi-line programs. Assign with `name = expr` (name is an
+    identifier `[A-Za-z_][A-Za-z0-9_]*`); a bare `name` reads it back, and reading
+    a name that was never assigned is an error. An assignment is itself an
+    expression — its value is the right-hand side — so `x = 2 + 3` returns 5 and
+    also binds `x`. Pass SEVERAL statements as one `expression` by separating them
+    with NEWLINES (`\n`): they run top to bottom sharing one variable scope, so a
+    later line sees earlier bindings, and the call's returned `value` is the LAST
+    statement's (earlier lines run for their bindings). E.g.
+    `"x = 10\ny = x * 2\ny + 1"` returns 21. Scope lasts for the one call only —
+    bindings do not carry over to the next `calculate`.
 
     Returns a dict: `value` is the result rendered as a string and ANNOTATED with
     its precision verdict — "(exact)" when the result is the true value, else

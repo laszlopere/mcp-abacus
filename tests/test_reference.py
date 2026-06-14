@@ -41,6 +41,16 @@ def test_language_section_states_power_bitwise_and_fixed_point_notation():
     assert "@" in text  # the M@D fixed-point literal
 
 
+def test_language_section_documents_variables_and_statements():
+    # The variable/multi-statement grammar (TODO 30) is offered to the caller:
+    # assignment, bare-name reference, and the newline-separated statement list.
+    text = reference.render("language")
+    assert "name = expr" in text  # assignment form
+    assert "reads a" in text and "variable" in text  # a bare name is a reference
+    assert "newlines" in text  # statements are newline-separated
+    assert "LAST statement" in text  # the program's value is the last statement's
+
+
 def test_functions_section_mentions_every_function():
     text = reference.render("functions")
     for name in FUNCTION_ARITIES:

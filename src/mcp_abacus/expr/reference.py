@@ -63,6 +63,17 @@ def _language_section() -> str:
             "                both error; write a decimal value as its digits (123.45), never @.",
             "                e.g. 0x59682F00@9 = 1.5; 0xDE0B6B3A7640000@18 = 1 ETH",
             "  grouping      ( )",
+            "",
+            "variables & statements:",
+            "  name          identifier [A-Za-z_][A-Za-z0-9_]*; a bare name reads a",
+            "                variable (error if never assigned). name(...) is a call, not a read.",
+            "  assignment    name = expr  binds name to expr's value; loosest precedence,",
+            "                statement-level only (no nesting). The assignment's OWN value is",
+            "                expr's, so `x = 2 + 3` yields 5 and also binds x.",
+            "  statements    one per line, separated by newlines; run in order, sharing one",
+            "                variable scope, so a later line sees earlier bindings. A program's",
+            "                value is the LAST statement's (earlier lines run for their bindings).",
+            "                Scope is per call — bindings do not persist across calls.",
         ]
     )
 
