@@ -237,6 +237,58 @@ def test_multiline_input_line_numbers():
     ]
 
 
+def test_comment_runs_to_end_of_line_and_is_skipped():
+    # A shell-style '#' comment is skipped like whitespace; the terminating '\n' still
+    # becomes a NEWLINE statement separator (30.5), so the next line lexes normally.
+    tokens = tokenize("1 + 2 # add them\n3 * 4 # multiply")
+    assert [(token.kind, token.lexeme, token.line) for token in tokens] == [
+        (NUMBER, "1", 1),
+        (OP, "+", 1),
+        (NUMBER, "2", 1),
+        (NEWLINE, "\n", 1),
+        (NUMBER, "3", 2),
+        (OP, "*", 2),
+        (NUMBER, "4", 2),
+        (EOF, "", 2),
+    ]
+
+
+def test_comment_on_last_line_runs_to_eof():
+    # With no trailing newline the comment consumes the rest of the input; no NEWLINE.
+    assert _kinds_and_lexemes(tokenize("5 + 6 # trailing")) == [
+        (NUMBER, "5"),
+        (OP, "+"),
+        (NUMBER, "6"),
+        (EOF, ""),
+    ]
+
+
+def test_comment_only_line_yields_just_eof():
+    assert _kinds_and_lexemes(tokenize("# just a comment")) == [(EOF, "")]
+
+
+def test_blank_and_comment_only_lines_keep_their_newlines():
+    # A comment hides everything but the '\n'; a blank line in between still emits its
+    # own NEWLINE, so line numbers advance across comment-only lines.
+    tokens = tokenize("# header\n\n7 # the answer-ish")
+    assert [(token.kind, token.lexeme, token.line) for token in tokens] == [
+        (NEWLINE, "\n", 1),
+        (NEWLINE, "\n", 2),
+        (NUMBER, "7", 3),
+        (EOF, "", 3),
+    ]
+
+
+def test_hash_inside_an_expression_comments_out_the_rest():
+    # '#' is not an operator: once seen, the remainder of the line is gone, including
+    # any '+' that follows it.
+    assert _kinds_and_lexemes(tokenize("1 + # 2 + 3")) == [
+        (NUMBER, "1"),
+        (OP, "+"),
+        (EOF, ""),
+    ]
+
+
 def test_empty_and_whitespace_only_input():
     assert _kinds_and_lexemes(tokenize("")) == [(EOF, "")]
     # A '\n' is emitted even amid blank whitespace (30.5); spaces/tabs are still skipped.

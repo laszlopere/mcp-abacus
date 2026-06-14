@@ -74,6 +74,8 @@ def _language_section() -> str:
             "                variable scope, so a later line sees earlier bindings. A program's",
             "                value is the LAST statement's (earlier lines run for their bindings).",
             "                Scope is per call — bindings do not persist across calls.",
+            "  comment       # to end of line is ignored (the newline still separates",
+            "                statements); a whole line may be just a comment.",
         ]
     )
 
@@ -136,7 +138,7 @@ def _solver_section() -> str:
             "              the program sets via an assignment line.",
             "  lower upper the search bracket [lower, upper]; lower must be below upper.",
             "  variables   the MULTIPLE form: a dict name -> [lower, upper], e.g.",
-            "              {\"x\": [0, 5], \"y\": [-4, 2]}. Needs algorithm nelder-mead.",
+            '              {"x": [0, 5], "y": [-4, 2]}. Needs algorithm nelder-mead.',
             "              Give EXACTLY ONE of (variable+lower+upper) or variables.",
             f"  objective   what to search for: {objectives}.",
             "              Omitted -> find-root.",

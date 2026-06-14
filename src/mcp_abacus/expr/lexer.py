@@ -4,8 +4,10 @@
 r"""Tokenizer for the expression language: source text -> tokens (TODO 20.1).
 
 NUMBER lexemes are kept as RAW SOURCE text (17.2.2) and are UNSIGNED — sign is
-parsed as a unary operator. Spaces/tabs are skipped; a '\n' is emitted as a
-NEWLINE token AND increments the line counter. NEWLINE is a STATEMENT SEPARATOR
+parsed as a unary operator. Spaces/tabs are skipped; a shell-style '#' comment
+runs to (but not through) the end of its line and is skipped the same way; a '\n'
+is emitted as a NEWLINE token AND increments the line counter. NEWLINE is a
+STATEMENT SEPARATOR
 (30.5): the parser ends a statement at one, so an expression spans lines only
 inside parentheses (where the parser treats NEWLINE as insignificant). Every
 token carries the 1-based line it started on — this is what feeds node.line
@@ -95,6 +97,12 @@ def tokenize(text: str) -> list[Token]:
             tokens.append(Token(NEWLINE, "\n", line))  # statement separator (30.5)
             line += 1
             i += 1
+        elif char == "#":
+            # Shell-style comment: '#' to end of line is skipped like whitespace. The
+            # terminating '\n' is left for the next iteration so it still becomes a
+            # NEWLINE statement separator (30.5); a '#' on the last line runs to EOF.
+            newline = text.find("\n", i)
+            i = len(text) if newline == -1 else newline
         elif char.isspace():
             i += 1
         elif char in _DIGITS or (char == "." and text[i + 1 : i + 2] in _DIGITS):
