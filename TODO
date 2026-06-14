@@ -1396,6 +1396,31 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (the store holds Values verbatim, no mode/scale of its own).
 
 
+[ ] 31.  SOLVER TOOL  (a new MCP tool that searches for values of chosen
+         variables satisfying or optimising an expression, reusing the evaluator).
+         SCRATCH — flesh out when picked up.
+    [ ] 31.1.  New MCP tool `solver` taking: solver type (optional), mode
+               (default fixed-point), min precision (optional), the expression,
+               a minimise/maximise goal (optional), and the variables to vary.
+    [ ] 31.2.  `type` (optional) picks the solving strategy (e.g. root-find,
+               optimise, equation-solve); inferred from the other args when omitted.
+    [ ] 31.3.  Reuse calculate's front-end for `mode` and `min_fixed_point_precision`
+               — same resolution, validation, and per-mode evaluation.
+    [ ] 31.4.  Parse the expression once; the listed variables are the unknowns the
+               solver drives, every other name a constant (unset name -> error).
+    [ ] 31.5.  `goal` (optional) is minimise or maximise: present -> optimise the
+               expression; absent -> solve it (e.g. expression == 0).
+    [ ] 31.6.  `variables` is the list of names the solver may manipulate; at least
+               one required, and each must occur in the expression.
+    [ ] 31.7.  The search engine — choose the per-type algorithm and how it steps
+               candidate values within the active mode's representation.
+    [ ] 31.8.  Reply shape — the found variable values plus the expression's value
+               there, annotated like calculate, with an error path for no solution.
+    [ ] 31.9.  TESTS — per type/mode: a solvable case, an optimise case, and the
+               no-solution / bad-argument errors.
+    [ ] 31.10. DOCS — document the tool's arguments and add a `solver` help section.
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
