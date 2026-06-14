@@ -154,6 +154,8 @@ def test_node_lines_come_from_defining_tokens():
         ("sqrt(4", 1),  # unclosed call
         ("1 +\nfoo(2)", 2),  # unknown name's line is the NAME's, not the call's first arg
         ("1 +\nsqrt(2, 3)", 2),  # arity error carries the NAME's line
+        ("pi(1)", 1),  # nullary given an argument (29.2) — arity 0, so 1 is too many
+        ("1 +\npi(1)", 2),  # the nullary arity error carries the NAME's line too
     ],
 )
 def test_parse_errors_carry_line(text, line):
@@ -251,6 +253,39 @@ def test_variadic_min_arity_message():
     # parser's "expected a number" first — so assert the phrasing through FuncCall.
     with pytest.raises(ValueError, match=r"'sum' takes at least 1 argument\(s\), got 0"):
         FuncCall("sum", (), line=1)
+
+
+def test_nullary_call_parses_with_an_empty_arg_list():
+    # pi()/e() are nullaries (29.2): NAME '(' ')' with NO arguments, the one call
+    # shape where the empty parens are legal. The args tuple is empty, the line the
+    # NAME's — same FuncCall node as every other call, just arity 0.
+    assert parse("pi()") == FuncCall("pi", (), line=1)
+    assert parse("e()") == FuncCall("e", (), line=1)
+
+
+def test_nullary_call_is_an_atom_binds_tighter_than_power():
+    # 2*pi() is 2*(pi()) and pi()**2 is (pi())**2 — a nullary call is an atom like
+    # any other, so it binds tighter than * and ** despite the empty arg list (29.2).
+    assert parse("2 * pi()") == BinOp("*", Number("2", line=1), FuncCall("pi", (), line=1), line=1)
+    assert parse("pi()**2") == BinOp("**", FuncCall("pi", (), line=1), Number("2", line=1), line=1)
+
+
+def test_nullary_wrong_arity_message():
+    # A nullary takes 0 args, so any argument is a wrong-count parse error (29.4) —
+    # the fixed-arity phrasing, "0 argument(s)", mirroring sqrt's wrong-arity message.
+    with pytest.raises(ParseError, match=r"'pi' takes 0 argument\(s\), but 1 given"):
+        parse("pi(1)")
+
+
+def test_nullary_call_evaluates_end_to_end():
+    # pi() is wired through nodes._NULLARY_FUNCS to Value.pi, dispatched the context
+    # rather than operands (29.2). Irrational, so floating-point is inexact and
+    # rational refuses; here just prove the float path reaches math.pi.
+    import math
+
+    result = parse("pi()").evaluate(Mode.FLOATING_POINT)
+    assert result.payload == math.pi
+    assert result.exact is False
 
 
 def test_function_call_evaluates_end_to_end():

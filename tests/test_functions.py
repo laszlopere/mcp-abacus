@@ -21,22 +21,27 @@ import pytest
 from mcp_abacus.server import mcp
 
 
-def _calc(expression, mode=None):
+def _calc(expression, mode=None, floor=None):
     """Invoke `calculate` in-process; return its structured payload dict (25.1).
 
     `mode` is omitted from the request when None, exercising the fixed-point default.
+    `floor` (min_fixed_point_precision) is likewise omitted when None — supplied only
+    by the nullary-precision tests (29.4) that raise the derived scale past the
+    literals' own.
     """
     arguments = {"expression": expression}
     if mode is not None:
         arguments["mode"] = mode
+    if floor is not None:
+        arguments["min_fixed_point_precision"] = floor
     result = asyncio.run(mcp.call_tool("calculate", arguments))
     blocks = result[0] if isinstance(result, tuple) else result
     return json.loads(blocks[0].text)
 
 
-def _value(expression, mode=None):
+def _value(expression, mode=None, floor=None):
     """The annotated `value` string on success; fail loudly if the call errored."""
-    payload = _calc(expression, mode)
+    payload = _calc(expression, mode, floor)
     assert payload["error"] is None, f"{expression!r} [{mode}] errored: {payload['error']}"
     return payload["value"]
 
@@ -795,3 +800,82 @@ def test_log10_refuses_with_a_line_tagged_error(expression, mode, error):
     payload = _calc(expression, mode)
     assert payload["error"] == error
     assert payload["value"] is None
+
+
+# --- nullary constants pi() and e() (29.2 / 29.3 / 29.4) --------------------
+# Zero-argument calls, the one function shape that takes the run context instead
+# of operands (29.2). Both are irrational, so the per-mode story is the same as
+# sqrt's: float rounds its native double (inexact), fixed-point truncates to the
+# run's DERIVED scale (29.3), and rational refuses outright.
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # binary64: the nearest double, carrying the inexact flag (math.pi / math.e).
+        ("pi()", "floating-point", "3.141592653589793 (inexact)"),
+        ("e()", "floating-point", "2.718281828459045 (inexact)"),
+        # A nullary is an ordinary atom, so it threads through surrounding arithmetic.
+        ("2 * pi()", "floating-point", "6.283185307179586 (inexact)"),
+    ],
+)
+def test_nullary_floating_point(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # rational refuses: an irrational constant has no finite fraction (like sqrt(2)).
+        ("pi()", "rational", "error (line 1): pi is irrational; no rational value"),
+        ("e()", "rational", "error (line 1): e is irrational; no rational value"),
+        ("2 * pi()", "rational", "error (line 1): pi is irrational; no rational value"),
+    ],
+)
+def test_nullary_rational_refuses(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "floor", "value"),
+    [
+        # No literal to derive a scale from: the nullary sits at the default floor of
+        # 0 decimals, the hint nudging toward min_fixed_point_precision for more (29.3).
+        (
+            "pi()",
+            None,
+            "3 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 3.1415)",
+        ),
+        (
+            "e()",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 2.7182)",
+        ),
+        # A 0xffff@8 literal pushes the derived scale to 8; the nullary matches it (29.3).
+        (
+            "0xffff@8 + pi()",
+            None,
+            "3.14224800 (inexact, rounded to 8 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =12 → 3.142248003589)",
+        ),
+        # A 2.000000000 literal (9 written decimals) pushes the scale to 9.
+        (
+            "2.000000000 + pi()",
+            None,
+            "5.141592653 (inexact, rounded to 9 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =13 → 5.1415926535897)",
+        ),
+        # With no literal, the floor IS the derived scale: min_fixed_point_precision=4
+        # gives the bare nullary 4 decimals (the floor wins where it exceeds 0).
+        ("pi()", 4, "3.1415 (inexact, rounded to 4 decimals)"),
+        ("e()", 5, "2.71828 (inexact, rounded to 5 decimals)"),
+    ],
+)
+def test_nullary_fixed_point_precision_derivation(expression, floor, value):
+    # fixed-point is the default mode (mode omitted), so this also exercises the
+    # mode-without-operand dispatch (29.2): the run mode reaches the nullary.
+    assert _value(expression, floor=floor) == value

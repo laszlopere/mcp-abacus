@@ -1213,7 +1213,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     others just compute.
 
 
-[ ] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
+[x] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
          TO PLAN, blocking 19.5.3 and 28.1). Grammar atom NAME '(' ')', arity 0
          in the registry, mode-without-operand dispatch.
     [x] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
@@ -1234,7 +1234,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                recoverable since Number keeps the lexeme verbatim. The pre-walk
                is FIXED-POINT-ONLY: float uses the native type (math.pi) and
                rational has no scale (irrational constants refuse, like sqrt(2)).
-    [ ] 29.4.  TESTS — parse pi() (empty arg list); arity error on pi(1);
+    [x] 29.4.  TESTS — parse pi() (empty arg list); arity error on pi(1);
                precision derivation: 0xffff@8 -> scale 8, 2.000000000 -> 9,
                no-literal -> the default floor; per-mode dispatch.
 
