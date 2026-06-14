@@ -1213,6 +1213,83 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                     never approximates) and float already does it via math.pow — the
                     per-mode asymmetry stays intact. Promotes Value.pow's fixed-point
                     arm from the 28.20 facade to a real sqrt-shaped implementation.
+    [ ] 28.21.  cbrt(x) — cube root, x**(1/3). UNARY operand-method, the SHAPE of
+                sqrt (19.5.2): the two-step add, no new call machinery. The q=3 case
+                of the integer q-th root 28.20.1 Path A flags, so cbrt could later be
+                a thin facade over a fractional pow; as its own named function it is
+                the convenient spelling (the math.cbrt sibling of math.sqrt). The ONE
+                real difference from sqrt: a cube root is an ODD root, so NEGATIVE
+                inputs are in DOMAIN — cbrt(-8) == -2, real, NOT a NotRepresentable
+                refusal the way sqrt(-1) is. Per-mode story mirrors sqrt otherwise:
+                floating-point: math.cbrt is 3.11+ but the project floor is 3.10
+                  (pyproject requires-python), so compute sign-preserving via
+                  math.copysign(abs(x) ** (1/3), x) — handles negatives, inexact.
+                fixed-point: SUPPORTED. Integer cube root of the scaled mantissa
+                  (Newton-on-ints + verify, the q=3 bignum sibling of math.isqrt that
+                  28.20.1 Path A needs anyway), quantized to the operand scale,
+                  exact=False — EXCEPT a perfect cube at the working scale is exact
+                  (sqrt's perfect-square exemption). Negative mantissa is fine (odd
+                  root): cbrt the magnitude, carry the sign.
+                rational: exact ONLY when numerator and denominator are BOTH perfect
+                  cubes (incl. negative numerator — odd root); else
+                  NotRepresentableError, the same exact-or-refuse stance as sqrt.
+    [ ] 28.22.  OPTIONAL-ARG ARITY — the (1, 2) call shape: a REQUIRED first operand
+                plus ONE OPTIONAL trailing argument. The prerequisite for the ndigits
+                forms of the rounding family (28.23-28.26), the way nullary support
+                (29) preceded pi()/time(). SMALL: _arity_of (22.2) already reads a
+                (min, max) range off the signature but counts every positional param
+                as required; teach it to treat a param WITH A DEFAULT as optional, so
+                round(self, ndigits=None) reads (1, 2). The parser's range check (22.2)
+                and FuncCall dispatch already honour a range — the method's default
+                fills the absent arg — so this is the one-line arity fix plus tests, no
+                new node or grammar. NDIGITS is a COUNT, not a value-in-the-mode (cf.
+                the sqrt target-scale arg still-to-plan in 22's list): the second
+                operand is evaluated like any other, then required to be an exact
+                INTEGER (any mode) and read as a Python int — non-integer refuses (the
+                pow integer-exponent stance, 28.20). Negative ndigits rounds to
+                tens/hundreds (round(1234, -2) -> 1200), the standard Python semantics.
+    [ ] 28.23.  floor(x[, ndigits]) — round toward NEGATIVE infinity. UNARY operand-
+                method (the shape of abs, 19.5.1) with the 28.22 optional ndigits.
+                EXACT in every mode (it snaps to a representable value, no compute) —
+                EXCEPT floating-point with ndigits > 0, where the n-decimal target is
+                not binary-representable; float to an INTEGER stays exact. Per mode:
+                floating-point: math.floor (to int) -> float; ndigits via the decimal
+                  shift floor(x*10**n)/10**n.
+                fixed-point: M // 10**d on the scaled mantissa (Python // already
+                  floors toward -inf), result scale 0; ndigits n floors at scale n
+                  (result scale max(0, n)). Exact.
+                rational: math.floor(Fraction) -> int; ndigits floors the shifted
+                  fraction. Exact.
+                floor(2.7) -> 2, floor(-2.1) -> -3.
+    [ ] 28.24.  ceil(x[, ndigits]) — round toward POSITIVE infinity; the mirror of
+                floor (28.23). Same shape and per-mode exactness story. fixed-point via
+                -((-M) // 10**d); floating-point math.ceil; rational math.ceil.
+                ceil(2.1) -> 3, ceil(-2.7) -> -2. Canonical spelling ceil (the math
+                module / programming name), NOT ceiling.
+    [ ] 28.25.  round(x[, ndigits]) — round to NEAREST, ties to EVEN. DECISION
+                (2026-06-14): half-to-even (banker's) — round(2.5) -> 2, round(3.5) ->
+                4 — matching Python's builtin round, the IEEE 754 default, AND the
+                engine's existing fixed-point half-even quantize (sqrt, 22.4.2), so the
+                whole engine rounds ONE way. Same unary + optional-ndigits shape and
+                exact-except-float-with-ndigits story as floor (28.23).
+                floating-point: builtin round(x) / round(x, n) (already half-even).
+                rational: round(Fraction) / round(Fraction, n) — Fraction.__round__ is
+                  half-even, returns int / Fraction -> exact.
+                fixed-point: half-even on the scaled mantissa at the target scale,
+                  exact.
+    [ ] 28.26.  trunc(x[, ndigits]) — round toward ZERO (drop the fraction): floor for
+                x >= 0, ceil for x < 0. Same shape and exactness story as floor (28.23).
+                floating-point math.trunc; fixed-point sign * (abs(M) // 10**d);
+                rational math.trunc. trunc(2.7) -> 2, trunc(-2.7) -> -2 (vs
+                floor(-2.7) -> -3). DISTINCT from fixed-point's literal truncation in
+                time() (28.1.1): same toward-zero idea, here an explicit function over
+                any value.
+    NAMING (28.23-28.26): canonical spellings floor, ceil, round, trunc — the
+    math.floor/ceil/trunc + builtin round family, the names every language uses. All
+    four are EXACT in every mode (rounding selects a representable value), the lone
+    exception floating-point with ndigits > 0 (a non-representable decimal). They
+    differ ONLY in tie/sign handling: floor -> -inf, ceil -> +inf, trunc -> 0,
+    round -> nearest (half-even, 28.25).
     NAMING (28.17-28.19): canonical spellings are log (== natural, ln alias), log10,
     log2 — the math.log/log10/log2 family. DECIDED that bare `log` is the NATURAL log
     (not base-10) over the calculator convention, for consistency with the programming
