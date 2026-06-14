@@ -1213,6 +1213,32 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     others just compute.
 
 
+[ ] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
+         TO PLAN, blocking 19.5.3 and 28.1). Grammar atom NAME '(' ')', arity 0
+         in the registry, mode-without-operand dispatch.
+    [ ] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
+               nullary mode + precision below, room for more later), threaded
+               down the evaluate walk rather than a module global.
+    [ ] 29.2.  DISPATCH SHAPE — nullaries are NOT operand-methods (every other
+               func is a Value method with self as the first operand). With no
+               operand, a nullary is a new registered-callable kind that takes
+               the eval context (29.1) instead of operands.
+    [ ] 29.3.  MODE & PRECISION — nullaries have no operand to carry them.
+               Mode = the request mode (already known). Fixed-point precision:
+               start from the default floor (0 or min_fixed_point_precision,
+               already implemented), then PRE-WALK the AST once before
+               evaluation and raise it to the largest decimal scale of any
+               literal — so fixed-point/4 with a 0xffff@8 literal gives the
+               nullaries scale 8, and a 2.000000000 literal pushes them to 9.
+               Held on the eval context (29.1) for the run; the written scale is
+               recoverable since Number keeps the lexeme verbatim. The pre-walk
+               is FIXED-POINT-ONLY: float uses the native type (math.pi) and
+               rational has no scale (irrational constants refuse, like sqrt(2)).
+    [ ] 29.4.  TESTS — parse pi() (empty arg list); arity error on pi(1);
+               precision derivation: 0xffff@8 -> scale 8, 2.000000000 -> 9,
+               no-literal -> the default floor; per-mode dispatch.
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
