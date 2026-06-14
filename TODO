@@ -1472,6 +1472,34 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                leave the reply; `objective` and `algorithm` take their place.
 
 
+[ ] 33.  MORE SOLVER ALGORITHMS — candidates beyond golden-section search,
+         each reported via the `algorithm` field (32.3).
+    [ ] 33.1.  Bisection — bracketed root, sign change, robust.
+    [ ] 33.2.  Brent's method — root, bisection + secant/inverse-quad.
+    [ ] 33.3.  Secant — root, no derivative, superlinear.
+    [ ] 33.4.  Newton-Raphson — root via symbolic derivative.
+    [ ] 33.5.  Ridders' — bracketed root, exponential fit.
+    [ ] 33.6.  Ternary search — unimodal optimise alternative.
+    [ ] 33.7.  Chandrupatla's — bracketed root, often beats Brent.
+    [ ] 33.8.  Halley's / Householder — root, cubic+ convergence.
+    [ ] 33.9.  Durand-Kerner / Aberth — all polynomial roots at once.
+    [ ] 33.10. Sturm sequences — real-root isolation/counting.
+    [ ] 33.11. Companion-matrix eigenvalues — polynomial roots.
+    [ ] 33.12. Brent (parabolic) minimise — derivative-free optimise.
+    [ ] 33.13. Newton/BFGS — gradient optimise via symbolic deriv.
+    [ ] 33.14. Nelder-Mead — derivative-free, multivariate-ready.
+    [ ] 33.15. Differential evolution / annealing — global, non-unimodal.
+    [ ] 33.16. Newton (systems) — multivariate root via Jacobian.
+    [ ] 33.17. Broyden's — multivariate root, quasi-Newton, no Jacobian.
+    [ ] 33.18. Powell's — derivative-free conjugate directions.
+    [ ] 33.19. Conjugate gradient — large-scale gradient optimise.
+    [ ] 33.20. L-BFGS(-B) — limited-memory quasi-Newton, bounds.
+    [ ] 33.21. Gauss-Newton / Levenberg-Marquardt — nonlinear least squares.
+    [ ] 33.22. Trust-region (dogleg / Newton-CG) — robust step control.
+    [ ] 33.23. SLSQP / interior-point — constrained optimise.
+    [ ] 33.24. CMA-ES / particle swarm — global, derivative-free.
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
