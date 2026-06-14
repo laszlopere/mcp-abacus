@@ -463,3 +463,41 @@ class Var(Node):
             # The store error has no line; position it here (30.1) so the run
             # surfaces an EvalError like every other evaluation failure.
             raise EvalError(str(exc), line=self.line) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class Sequence(Node):
+    """An ordered list of statements — a whole multi-statement program (30.5).
+
+    Produced when the source holds more than one newline-separated statement; a
+    single-statement input stays its bare node, with NO Sequence wrapper. Every
+    statement is walked IN ORDER against the SAME run context, so an earlier
+    ``x = ...`` assignment is visible to a later reference through the shared
+    VariableStore (30.2). The Sequence YIELDS the LAST statement's Value — the
+    program's result, the way a REPL echoes its final line — while the leading
+    statements run for their effect (their bindings).
+    """
+
+    statements: tuple[Node, ...]
+    line: int = field(kw_only=True, compare=False)
+    value: Value | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.statements:
+            raise ValueError("Sequence must hold at least one statement")
+        _validate_line(self.line)
+
+    def _label(self) -> str:
+        # 26.8: SEQUENCE with the statement count, paralleling LITERAL / CALL.
+        return f"SEQUENCE ({len(self.statements)})"
+
+    def _children(self) -> tuple[Node, ...]:
+        return self.statements
+
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        # Walk every statement against the one ctx (shared store, 30.2); the leading
+        # ones run for their bindings, the last one's Value is the program's result.
+        *leading, last = self.statements
+        for statement in leading:
+            statement._walk(ctx)
+        return last._walk(ctx)

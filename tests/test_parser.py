@@ -120,8 +120,9 @@ def test_redundant_parens_leave_no_trace():
 
 def test_node_lines_come_from_defining_tokens():
     # Lines are no longer shown in pretty() (26.4) but remain a node property that
-    # feeds error messages — assert it straight off the tree across a multi-line input.
-    tree = parse("1 +\n2 *\n3")  # '+' on line 1, '*' and its left on line 2, '3' on line 3
+    # feeds error messages — assert it straight off the tree across a multi-line
+    # input (parenthesised, since spanning lines needs parens now, 30.5).
+    tree = parse("(1 +\n2 *\n3)")  # '+' on line 1, '*' and its left on line 2, '3' on line 3
     assert isinstance(tree, BinOp) and tree.op == "+" and tree.line == 1
     assert tree.left.line == 1  # Number "1"
     mul = tree.right
@@ -142,7 +143,7 @@ def test_node_lines_come_from_defining_tokens():
         ("1 2", 1),
         ("()", 1),  # operator/atom missing
         ("1+", 1),
-        ("1+\n", 2),
+        ("1+\n", 1),  # trailing '+' with no operand; the newline ends the statement (30.5)
         ("*3", 1),
         ("1//", 1),
         ("2**", 1),
@@ -152,10 +153,12 @@ def test_node_lines_come_from_defining_tokens():
         # ("sqrt", 1) is NO LONGER an error: a bare NAME is a variable reference (30.4)
         ("sqrt 4", 1),  # bare-name ref (30.4) then trailing '4' -> garbage after the expression
         ("sqrt(4", 1),  # unclosed call
-        ("1 +\nfoo(2)", 2),  # unknown name's line is the NAME's, not the call's first arg
-        ("1 +\nsqrt(2, 3)", 2),  # arity error carries the NAME's line
+        # Spanning lines needs parens now (30.5); the inner NAME error still carries
+        # its own line, not the call's first arg or the wrapping addition's.
+        ("(1 +\nfoo(2))", 2),  # unknown name's line is the NAME's
+        ("(1 +\nsqrt(2, 3))", 2),  # arity error carries the NAME's line
         ("pi(1)", 1),  # nullary given an argument (29.2) — arity 0, so 1 is too many
-        ("1 +\npi(1)", 2),  # the nullary arity error carries the NAME's line too
+        ("(1 +\npi(1))", 2),  # the nullary arity error carries the NAME's line too
     ],
 )
 def test_parse_errors_carry_line(text, line):

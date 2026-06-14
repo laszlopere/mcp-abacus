@@ -13,6 +13,7 @@ from mcp_abacus.expr.nodes import (
     FuncCall,
     Node,
     Number,
+    Sequence,
     UnaryOp,
     Var,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "NotRepresentableError",
     "Number",
     "ParseError",
+    "Sequence",
     "Token",
     "UnaryOp",
     "UndefinedVariableError",

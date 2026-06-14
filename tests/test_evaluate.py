@@ -124,12 +124,13 @@ def test_sqrt_rational_irrational_refusal_carries_the_call_line():
 
 def test_sqrt_refusal_line_survives_parse_and_outer_nodes():
     # End to end: the sqrt on the second source line refuses, and the EvalError
-    # carries line 2 even though the addition wrapping it begins on line 1.
+    # carries line 2 even though the addition wrapping it begins on line 1. The
+    # expression spans lines inside parens (the only way now, 30.5).
     with pytest.raises(EvalError) as excinfo:
-        parse("1 +\nsqrt(-4)").evaluate(Mode.FIXED_POINT)
+        parse("(1 +\nsqrt(-4))").evaluate(Mode.FIXED_POINT)
     assert excinfo.value.line == 2
     with pytest.raises(EvalError) as excinfo:
-        parse("1 +\nsqrt(2)").evaluate(Mode.RATIONAL)  # irrational rational root
+        parse("(1 +\nsqrt(2))").evaluate(Mode.RATIONAL)  # irrational rational root
     assert excinfo.value.line == 2
 
 

@@ -4,9 +4,12 @@
 r"""Tokenizer for the expression language: source text -> tokens (TODO 20.1).
 
 NUMBER lexemes are kept as RAW SOURCE text (17.2.2) and are UNSIGNED — sign is
-parsed as a unary operator. Whitespace is skipped; '\n' increments the line
-counter, so an expression may span lines. Every token carries the 1-based line
-it started on — this is what feeds node.line (17.2.6).
+parsed as a unary operator. Spaces/tabs are skipped; a '\n' is emitted as a
+NEWLINE token AND increments the line counter. NEWLINE is a STATEMENT SEPARATOR
+(30.5): the parser ends a statement at one, so an expression spans lines only
+inside parentheses (where the parser treats NEWLINE as insignificant). Every
+token carries the 1-based line it started on — this is what feeds node.line
+(17.2.6).
 
 Fixed-point DECIMALS notation (20.5). A fixed-point literal takes its scale from
 one of two places: a DECIMAL's own digits (1.5 -> scale 1, 1.50 -> scale 2;
@@ -39,9 +42,10 @@ OP = "OP"
 LPAREN = "LPAREN"
 RPAREN = "RPAREN"
 COMMA = "COMMA"  # argument separator, reserved for n-ary function calls (22.1)
+NEWLINE = "NEWLINE"  # statement separator (30.5); insignificant inside parentheses
 EOF = "EOF"
 
-TOKEN_KINDS: frozenset[str] = frozenset({NUMBER, NAME, OP, LPAREN, RPAREN, COMMA, EOF})
+TOKEN_KINDS: frozenset[str] = frozenset({NUMBER, NAME, OP, LPAREN, RPAREN, COMMA, NEWLINE, EOF})
 
 _DIGITS = frozenset("0123456789")
 # ^ & | bitwise, ~ bitwise NOT (24.3.2); = is the assignment operator (30.3) — not a
@@ -88,6 +92,7 @@ def tokenize(text: str) -> list[Token]:
     while i < len(text):
         char = text[i]
         if char == "\n":
+            tokens.append(Token(NEWLINE, "\n", line))  # statement separator (30.5)
             line += 1
             i += 1
         elif char.isspace():

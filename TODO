@@ -1386,7 +1386,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 30.4.  Parser — a bare NAME atom is a variable reference (an AST
                Var node holding the lexeme); keep it distinct from the
                NAME '(' ... ')' call / nullary forms.
-    [ ] 30.5.  Parser — instruction list: statements separated by newlines,
+    [x] 30.5.  Parser — instruction list: statements separated by newlines,
                an AST Sequence node wrapping them in order.
     [ ] 30.6.  AST eval — Assign sets the store and yields its value; Var
                gets from the store (error if unset); Sequence evaluates each

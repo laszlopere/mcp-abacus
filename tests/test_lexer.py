@@ -12,6 +12,7 @@ from mcp_abacus.expr.lexer import (
     EOF,
     LPAREN,
     NAME,
+    NEWLINE,
     NUMBER,
     OP,
     RPAREN,
@@ -220,12 +221,17 @@ def test_number_followed_by_name_is_malformed():
 
 
 def test_multiline_input_line_numbers():
+    # Each '\n' is a NEWLINE token (a statement separator, 30.5) carrying the line it
+    # ends; consecutive newlines emit consecutive NEWLINEs. Line numbers still advance.
     tokens = tokenize("1 +\n2 *\n\n3")
     assert [(token.kind, token.lexeme, token.line) for token in tokens] == [
         (NUMBER, "1", 1),
         (OP, "+", 1),
+        (NEWLINE, "\n", 1),
         (NUMBER, "2", 2),
         (OP, "*", 2),
+        (NEWLINE, "\n", 2),
+        (NEWLINE, "\n", 3),
         (NUMBER, "3", 4),
         (EOF, "", 4),
     ]
@@ -233,9 +239,10 @@ def test_multiline_input_line_numbers():
 
 def test_empty_and_whitespace_only_input():
     assert _kinds_and_lexemes(tokenize("")) == [(EOF, "")]
+    # A '\n' is emitted even amid blank whitespace (30.5); spaces/tabs are still skipped.
     tokens = tokenize(" \t\n ")
-    assert _kinds_and_lexemes(tokens) == [(EOF, "")]
-    assert tokens[0].line == 2
+    assert _kinds_and_lexemes(tokens) == [(NEWLINE, "\n"), (EOF, "")]
+    assert tokens[-1].line == 2
 
 
 @pytest.mark.parametrize(
