@@ -1216,7 +1216,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 [ ] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
          TO PLAN, blocking 19.5.3 and 28.1). Grammar atom NAME '(' ')', arity 0
          in the registry, mode-without-operand dispatch.
-    [ ] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
+    [x] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
                nullary mode + precision below, room for more later), threaded
                down the evaluate walk rather than a module global.
     [ ] 29.2.  DISPATCH SHAPE — nullaries are NOT operand-methods (every other

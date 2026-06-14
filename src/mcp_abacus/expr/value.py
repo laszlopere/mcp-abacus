@@ -158,6 +158,22 @@ def resolve_mode(name: str) -> Mode:
 
 
 @dataclass(frozen=True, slots=True)
+class EvalContext:
+    """Per-run evaluation state, threaded down the evaluate walk (29.1).
+
+    ONE instance is built at the top of a single ``Node.evaluate`` run and passed
+    to every node as it is walked, so the per-run state lives in an argument
+    rather than a module global. It carries the ``mode`` the run evaluates in and
+    the ``min_fixed_point_precision`` floor (25.2.1) — the two quantities the walk
+    threaded as loose parameters before. Later items hang more state here without
+    re-touching every node signature (the nullary fixed-point precision, 29.3).
+    """
+
+    mode: Mode
+    min_fixed_point_precision: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class FixedPoint:
     """A fixed-point number as a scaled integer: value == mantissa * 10**-decimals.
 

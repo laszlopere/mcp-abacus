@@ -15,12 +15,13 @@ from mcp_abacus.expr.nodes import (
     UnaryOp,
 )
 from mcp_abacus.expr.parser import ParseError, parse
-from mcp_abacus.expr.value import Mode, NotRepresentableError, Value
+from mcp_abacus.expr.value import EvalContext, Mode, NotRepresentableError, Value
 
 __all__ = [
     "BINARY_OPS",
     "UNARY_OPS",
     "BinOp",
+    "EvalContext",
     "EvalError",
     "FuncCall",
     "LexError",

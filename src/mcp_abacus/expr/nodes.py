@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from mcp_abacus.expr.value import Mode, Value
+from mcp_abacus.expr.value import EvalContext, Mode, Value
 
 UNARY_OPS: frozenset[str] = frozenset({"+", "-", "~"})  # ~ is bitwise NOT (24.3.2)
 # ** is POWER; ^ & | are bitwise (24.3.2 — ^ is XOR, not power).
@@ -154,8 +154,12 @@ class Node(ABC):
         """Child nodes in source order."""
 
     @abstractmethod
-    def _evaluate(self, mode: Mode, min_fixed_point_precision: int) -> Value:
-        """Compute this node's Value in the given mode (no storing, no wrapping)."""
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        """Compute this node's Value under the run context (no storing, no wrapping).
+
+        Children recurse through ``_walk`` so the SAME context flows down the whole
+        tree; ``ctx`` carries the mode and the fixed-point precision floor (29.1).
+        """
 
     def evaluate(self, mode: Mode, min_fixed_point_precision: int = 0) -> Value:
         """Evaluate the subtree in ONE mode; store and return this node's Value.
@@ -168,9 +172,22 @@ class Node(ABC):
         it raises each fixed-point operand to at least that many decimals so the
         scale propagates through the calculation. Defaults to 0 (no floor); it is
         a no-op outside fixed-point mode, which has no decimal scale.
+
+        This is the public entry: it bundles the two into the per-run EvalContext
+        (29.1) and walks the tree threading that one object down, rather than
+        passing the pair to every node or reaching for a module global.
+        """
+        ctx = EvalContext(mode=mode, min_fixed_point_precision=min_fixed_point_precision)
+        return self._walk(ctx)
+
+    def _walk(self, ctx: EvalContext) -> Value:
+        """Evaluate this node under a shared context; store and return its Value.
+
+        The recursion step every node funnels through (children call it on their
+        own children), so one EvalContext built at the top reaches the whole walk.
         """
         try:
-            result = self._evaluate(mode, min_fixed_point_precision)
+            result = self._evaluate(ctx)
         except ArithmeticError as exc:
             # A child's EvalError is not ArithmeticError, so it propagates
             # untouched — the line stays the innermost failing node's (18.4).
@@ -214,10 +231,11 @@ class Number(Node):
     def _children(self) -> tuple[Node, ...]:
         return ()
 
-    def _evaluate(self, mode: Mode, min_fixed_point_precision: int) -> Value:
-        # The mode parameter only ever lands here, on the literals (18.3) — and so
-        # does the min_fixed_point_precision floor (25.2.1), for the same reason.
-        return Value.from_lexeme(self.lexeme, mode, min_fixed_point_precision)
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        # The mode only ever lands here, on the literals (18.3) — and so does the
+        # min_fixed_point_precision floor (25.2.1), for the same reason; both ride
+        # the context down and are unpacked at this leaf.
+        return Value.from_lexeme(self.lexeme, ctx.mode, ctx.min_fixed_point_precision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,8 +258,8 @@ class UnaryOp(Node):
     def _children(self) -> tuple[Node, ...]:
         return (self.operand,)
 
-    def _evaluate(self, mode: Mode, min_fixed_point_precision: int) -> Value:
-        return _UNARY_FUNCS[self.op](self.operand.evaluate(mode, min_fixed_point_precision))
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        return _UNARY_FUNCS[self.op](self.operand._walk(ctx))
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,11 +283,11 @@ class BinOp(Node):
     def _children(self) -> tuple[Node, ...]:
         return (self.left, self.right)
 
-    def _evaluate(self, mode: Mode, min_fixed_point_precision: int) -> Value:
+    def _evaluate(self, ctx: EvalContext) -> Value:
         # Plain arithmetic on Values — all type-faithful semantics live in Value (18.2).
         return _BINARY_FUNCS[self.op](
-            self.left.evaluate(mode, min_fixed_point_precision),
-            self.right.evaluate(mode, min_fixed_point_precision),
+            self.left._walk(ctx),
+            self.right._walk(ctx),
         )
 
 
@@ -303,7 +321,5 @@ class FuncCall(Node):
     def _children(self) -> tuple[Node, ...]:
         return self.args
 
-    def _evaluate(self, mode: Mode, min_fixed_point_precision: int) -> Value:
-        return _FUNCS[self.name](
-            *(arg.evaluate(mode, min_fixed_point_precision) for arg in self.args)
-        )
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        return _FUNCS[self.name](*(arg._walk(ctx) for arg in self.args))
