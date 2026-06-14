@@ -959,17 +959,36 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          machinery itself is section 22. Each entry is normally the two-step
          add — one _FUNCS entry + its per-mode Value method — UNLESS it needs a
          call shape we have not built yet, flagged per entry.)
-    [ ] 28.1.  time() — current Unix epoch in GMT (UTC): the whole-number
-               seconds count, rendered in the CURRENT mode (fixed-point scale 0
-               / float / integer rational) via _from_scaled_int so the per-mode
-               chokepoint stays inside Value.
-               NULLARY: no operand, so it CANNOT be an ordinary operand-method —
-               it needs the zero-arg call path we have not built (parser atom
-               NAME '(' ')'; arity 0 in the registry; the mode handed in, since
-               no operand carries it). Also the first IMPURE function (clock-
-               dependent): re-evaluation yields a new value, so its tests assert
-               type/range/monotonicity, not a constant.
-               BLOCKED on nullary-call support (22's STILL TO PLAN).
+    [ ] 28.1.  time() — current Unix epoch in UTC, read once per run from the
+               REALTIME clock (time.time_ns -> integer nanoseconds since epoch).
+               NULLARY: rides the zero-arg call path built in 29 — one
+               _NULLARY_FUNCS entry + a Value classmethod taking the EvalContext
+               (no operand carries the mode). DEFAULT resolution is WHOLE SECONDS
+               (the C library time()); finer resolution down to tv_nsec is folded
+               in only where the mode's precision can carry it, reusing the 29.3
+               derived scale verbatim. UNLIKE the irrational constants
+               (pi/e/tau/phi, 29.5) a clock reading is EXACTLY rational, so time()
+               does NOT refuse in rational and is inexact only where the type
+               rounds — the first nullary that is representable in every mode.
+        [ ] 28.1.1.  PER-MODE RENDER — feed the single ns reading through
+                     _from_scaled_int (the per-mode chokepoint stays in Value):
+                     - fixed-point: render at the derived scale s (29.3). s = 0
+                       (default, no literal/floor) -> whole seconds; 1..9 ->
+                       seconds + tv_nsec TRUNCATED to s decimals; >= 9 -> full ns
+                       (further decimals are true zeros, the clock has no finer
+                       grain). Exact — the rendered decimal IS the sampled value,
+                       not an approximation (truncation is a resolution choice).
+                     - float: float(ns / 1e9) — native double, ~sub-microsecond at
+                       epoch magnitude, so inexact (the only mode that rounds).
+                     - rational: Fraction(ns, 10**9) — full ns, exact, no refuse.
+        [ ] 28.1.2.  IMPURITY + ONE INSTANT PER RUN — first clock-dependent
+                     function. Sample the clock ONCE and hold it on the EvalContext
+                     (29.1) as now_ns, shared by every time() in the expression, so
+                     a run sees a single instant (time() - time() == 0 exactly).
+                     evaluate() defaults now_ns from the real clock; tests inject a
+                     fixed epoch to assert exact per-mode/scale renders, a live call
+                     asserting only type/range. Keeps Value.time a pure function of
+                     the context.
     [x] 28.2.  max(...) — the largest of its operands. VARIADIC (>= 1 arg); all
                operands the same mode (no mixing, like every binary op). EXACT:
                it only selects an operand, never computes, so the result carries
@@ -1213,7 +1232,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     others just compute.
 
 
-[x] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
+[ ] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
          TO PLAN, blocking 19.5.3 and 28.1). Grammar atom NAME '(' ')', arity 0
          in the registry, mode-without-operand dispatch.
     [x] 29.1.  EVAL CONTEXT — an object carrying per-run evaluation state (the
@@ -1237,6 +1256,19 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 29.4.  TESTS — parse pi() (empty arg list); arity error on pi(1);
                precision derivation: 0xffff@8 -> scale 8, 2.000000000 -> 9,
                no-literal -> the default floor; per-mode dispatch.
+    [ ] 29.5.  MORE CONSTANTS — two more nullaries, each one registry entry
+               (29.2) plus a Value classmethod (29.3), reusing the fixed-point
+               series helpers already in place. Both irrational, so the per-mode
+               story is pi/e's verbatim: float a native double, fixed-point
+               truncated to the derived scale, rational REFUSES.
+        [ ] 29.5.1.  tau() — the circle constant 2*pi. Reuses _pi_scaled
+                     (doubled); float math.tau. Transcendental, like pi.
+        [ ] 29.5.2.  phi() — the golden ratio (1 + sqrt(5)) / 2. Reuses the
+                     fixed-point math.isqrt path sqrt() already uses; float
+                     (1 + 5**0.5) / 2. ALGEBRAIC irrational — a deliberate
+                     category contrast to pi/e/tau (transcendental), same
+                     multi-mode behaviour. (ln2/ln10 deferred: derivable as
+                     log(2)/log(10), so convenience not new capability.)
 
 
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
