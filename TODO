@@ -1396,29 +1396,54 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (the store holds Values verbatim, no mode/scale of its own).
 
 
-[ ] 31.  SOLVER TOOL  (a new MCP tool that searches for values of chosen
-         variables satisfying or optimising an expression, reusing the evaluator).
-         SCRATCH — flesh out when picked up.
-    [ ] 31.1.  New MCP tool `solver` taking: solver type (optional), mode
-               (default fixed-point), min precision (optional), the expression,
-               a minimise/maximise goal (optional), and the variables to vary.
-    [ ] 31.2.  `type` (optional) picks the solving strategy (e.g. root-find,
-               optimise, equation-solve); inferred from the other args when omitted.
-    [ ] 31.3.  Reuse calculate's front-end for `mode` and `min_fixed_point_precision`
-               — same resolution, validation, and per-mode evaluation.
-    [ ] 31.4.  Parse the expression once; the listed variables are the unknowns the
-               solver drives, every other name a constant (unset name -> error).
-    [ ] 31.5.  `goal` (optional) is minimise or maximise: present -> optimise the
-               expression; absent -> solve it (e.g. expression == 0).
-    [ ] 31.6.  `variables` is the list of names the solver may manipulate; at least
-               one required, and each must occur in the expression.
-    [ ] 31.7.  The search engine — choose the per-type algorithm and how it steps
-               candidate values within the active mode's representation.
-    [ ] 31.8.  Reply shape — the found variable values plus the expression's value
-               there, annotated like calculate, with an error path for no solution.
-    [ ] 31.9.  TESTS — per type/mode: a solvable case, an optimise case, and the
-               no-solution / bad-argument errors.
-    [ ] 31.10. DOCS — document the tool's arguments and add a `solver` help section.
+[ ] 31.  SOLVER TOOL  (a new MCP tool that finds the value of one variable that
+         drives a calculate-language expression to zero (solve) or to an extremum
+         (optimise), over a required bracket, reusing the parser/evaluator).
+         Single-variable first; multivariate is a later item.
+    [x] 31.1.  New MCP tool `solver(expression, variable, lower, upper, goal=None,
+               type=None, mode="fixed-point", min_fixed_point_precision=None)`.
+               Same expression language as calculate, including multi-line programs
+               whose assignments set the constants.
+    [x] 31.2.  `type` (optional) in {solve, optimise}; inferred when omitted — goal
+               present -> optimise, goal absent -> solve. If supplied, validate
+               against goal (optimise requires a goal; solve forbids one).
+    [x] 31.3.  Reuse calculate's front-end for `mode` / `min_fixed_point_precision`:
+               factor the mode-resolve + precision-validation out of
+               _evaluate_request into a shared helper used by both tools (same
+               resolution, validation, error messages).
+    [x] 31.4.  Parse the expression once (parser.parse). The named `variable` is the
+               unknown; every other name is a constant set by an assignment in the
+               program; an unset non-unknown name -> EvalError. Validate via an AST
+               walk that `variable` occurs as a reference and is not an assignment
+               target.
+    [x] 31.5.  Objective from `goal`: minimise -> expr; maximise -> -expr; no goal
+               (solve) -> |expr|, with a final acceptance check |expr| <= tol (else
+               no-solution). Accept min/max/American spellings as aliases.
+    [x] 31.6.  `variable` (single name) with required `lower`, `upper` defining the
+               bracket; require lower < upper and that the variable occurs in the
+               expression.
+    [ ] 31.7.  Engine — golden-section search on [lower, upper], one minimizer for
+               all cases. Each candidate x is materialised as a Value in the active
+               mode (quantised to precision) and bound into a seeded VariableStore;
+               the program is evaluated and its Value reduced to a float to drive the
+               search. Candidate eval failures are penalised (+inf) so the search
+               steers away. Stop when interval width < tolerance or at a
+               max-iteration cap; tolerance defaults from the mode (fixed-point:
+               10^-precision; float: small epsilon).
+    [ ] 31.8.  Reply shape — {variable, solution (+ solution_hex_dump), value (the
+               expression's value at the solution, + value_hex_dump), mode, exact,
+               precision, goal, type, iterations, error}, annotated like calculate
+               (solutions marked approximate / within-tolerance, honest about
+               inexactness). Error path sets the value fields to null with an `error`
+               string; "no solution" when solve cannot reach zero in the bracket
+               (report the closest |expr|).
+    [ ] 31.9.  TESTS — per type/mode: a solvable root case (e.g. x**2 - 2 over [0,2]
+               -> sqrt 2), an optimise case (min/max of a unimodal expr), a
+               constants-via-assignment case, and the error cases (variable not in
+               expression, lower >= upper, unknown mode, min_fixed_point_precision
+               misuse, no-solution). In-process (test_solver.py) + over-the-wire.
+    [ ] 31.10. DOCS — solver tool docstring; a `solver` help section (reference.py
+               _SECTIONS); README "What it gives you" bullet.
 
 
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
