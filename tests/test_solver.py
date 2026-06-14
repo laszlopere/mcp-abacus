@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 László Pere
 
-"""The solver engine, built up item by item (TODO 31); vocabulary reworked in TODO 32."""
+"""Unit-level coverage of the solver module's pure helpers (TODO 31 / 32 / 33.14).
 
-import math
+The companion to test_solver_e2e.py: where that drives the whole `solver` TOOL
+seam (request dict -> dispatch -> search -> reply) and shows each round-trip, this
+exercises the building blocks in isolation — objective/algorithm resolution, the
+objective fold, and the bracket / unknown validators — without running a search.
+"""
 
 import pytest
 
-from mcp_abacus.expr.nodes import EvalError
 from mcp_abacus.expr.parser import parse
 from mcp_abacus.expr.value import Mode, Value
 from mcp_abacus.solver import (
@@ -15,24 +18,11 @@ from mcp_abacus.solver import (
     Objective,
     SolverError,
     fold_objective,
-    nelder_mead,
     resolve_algorithm,
     resolve_objective,
-    search,
     validate_bracket,
     validate_unknown,
 )
-
-
-def _annotated(description: str, code: str) -> str:
-    """Frame an abacus `code` snippet with a `#` comment header from `description`.
-
-    The lexer strips the comments before evaluation, so the solver sees only the
-    code; under ./run-tests.sh --human-readable the header is what makes each
-    printed "Code" block state WHAT the program searches for and what it expects.
-    """
-    header = "\n".join(f"# {line}".rstrip() for line in description.strip("\n").splitlines())
-    return f"#\n{header}\n#\n\n{code}"
 
 
 def test_objective_defaults_to_find_root_when_omitted():
@@ -116,107 +106,6 @@ def test_inverted_bracket_is_rejected():
     assert "must be below upper" in excinfo.value.message
 
 
-# --- the search engine (31.7) -------------------------------------------------
-
-
-def test_find_root_in_floating_point():
-    program = _annotated(
-        "find-root of x**2 - 2 over [0, 2]\n"
-        "expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
-        "x**2 - 2",
-    )
-    result = search(parse(program), "x", 0.0, 2.0, Mode.FLOATING_POINT, 0, Objective.FIND_ROOT)
-    assert result.solution.to_float() == pytest.approx(2**0.5, abs=1e-9)
-    assert result.value.to_float() == pytest.approx(0.0, abs=1e-6)
-    assert result.objective is Objective.FIND_ROOT
-    assert result.algorithm == "golden-section-search"
-    assert result.iterations > 0
-
-
-def test_find_root_finds_an_exact_root_on_the_fixed_point_grid():
-    program = _annotated(
-        "find-root of 2*x - 3 over [0, 3] in fixed-point (scale 1)\n"
-        "expect x = 1.5 exactly: it lands on the grid, so the expression\n"
-        "evaluates to an EXACT zero there (grid polish, 31.7)",
-        "2*x - 3",
-    )
-    result = search(parse(program), "x", 0.0, 3.0, Mode.FIXED_POINT, 1, Objective.FIND_ROOT)
-    assert result.solution.to_string() == "1.5"
-    assert result.value.to_string() == "0.0"
-    assert result.value.exact is True
-
-
-def test_find_minimum_finds_the_low_point():
-    program = _annotated(
-        "find-minimum of (x - 3)**2 over [0, 5]\nunimodal; expect x = 3, value 0 (the low point)",
-        "(x - 3)**2",
-    )
-    result = search(parse(program), "x", 0.0, 5.0, Mode.FLOATING_POINT, 0, Objective.FIND_MINIMUM)
-    assert result.solution.to_float() == pytest.approx(3.0, abs=1e-6)
-    assert result.value.to_float() == pytest.approx(0.0, abs=1e-9)
-    assert result.objective is Objective.FIND_MINIMUM
-
-
-def test_find_maximum_finds_the_high_point():
-    program = _annotated(
-        "find-maximum of 5 - (x - 1)**2 over [-2, 4]\nexpect x = 1, value 5 (the peak)",
-        "5 - (x - 1)**2",
-    )
-    result = search(parse(program), "x", -2.0, 4.0, Mode.FLOATING_POINT, 0, Objective.FIND_MAXIMUM)
-    assert result.solution.to_float() == pytest.approx(1.0, abs=1e-5)
-    assert result.value.to_float() == pytest.approx(5.0, abs=1e-9)
-    assert result.objective is Objective.FIND_MAXIMUM
-
-
-def test_find_root_with_constants_set_by_assignments():
-    # r, p are set by assignment; n is the free unknown. The header is a full-line
-    # comment block, and each assignment also carries an inline comment — all stripped
-    # by the lexer, so the solver sees only the three statements.
-    program = _annotated(
-        "find-root for n: compound-interest break-even over [0, 100]\n"
-        "1000 * 1.05**n == 2000  ->  n = ln2 / ln1.05 ~ 14.2067",
-        "r = 0.05  # annual rate\np = 1000  # principal\np * (1 + r)**n - 2000  # solve for n",
-    )
-    result = search(parse(program), "n", 0.0, 100.0, Mode.FLOATING_POINT, 0, Objective.FIND_ROOT)
-    assert result.solution.to_float() == pytest.approx(math.log(2) / math.log(1.05), abs=1e-6)
-    assert result.value.to_float() == pytest.approx(0.0, abs=1e-6)
-
-
-def test_find_root_reports_no_solution_when_zero_is_unreachable():
-    program = _annotated(
-        "find-root of x**2 + 1 over [0, 2]\n"
-        "no solution: never zero; the closest |expr| is 1 at x = 0",
-        "x**2 + 1",
-    )
-    with pytest.raises(SolverError) as excinfo:
-        search(parse(program), "x", 0.0, 2.0, Mode.FLOATING_POINT, 0, Objective.FIND_ROOT)
-    message = excinfo.value.message
-    assert "No solution" in message and "closest" in message
-
-
-def test_domain_failures_are_penalised_not_fatal():
-    program = _annotated(
-        "find-root of sqrt(x) - 1 over [-1, 4] (bracket dips below 0)\n"
-        "the negative side raises a domain error per candidate (penalised\n"
-        "+inf), yet expect x = 1 is still found",
-        "sqrt(x) - 1",
-    )
-    result = search(parse(program), "x", -1.0, 4.0, Mode.FLOATING_POINT, 0, Objective.FIND_ROOT)
-    assert result.solution.to_float() == pytest.approx(1.0, abs=1e-6)
-
-
-def test_unset_constant_surfaces_as_an_eval_error():
-    program = _annotated(
-        "find-root of a * x - 1 over [0, 2]\n"
-        "`a` is neither the unknown nor assigned: it fails at EVERY candidate,\n"
-        "so it is a structural user error (EvalError), not a region to avoid",
-        "a * x - 1",
-    )
-    with pytest.raises(EvalError) as excinfo:
-        search(parse(program), "x", 0.0, 2.0, Mode.FLOATING_POINT, 0, Objective.FIND_ROOT)
-    assert "undefined variable: a" in excinfo.value.message
-
-
 # --- algorithm resolution (33.14) ---------------------------------------------
 
 
@@ -242,100 +131,3 @@ def test_unknown_algorithm_lists_the_valid_algorithms():
     message = excinfo.value.message
     assert "Unknown algorithm" in message
     assert "golden-section-search" in message and "nelder-mead" in message
-
-
-# --- the Nelder-Mead engine (33.14) -------------------------------------------
-
-
-def test_nelder_mead_finds_a_two_variable_minimum():
-    program = _annotated(
-        "find-minimum of a 2-var paraboloid over x in [0, 5], y in [-4, 2]\n"
-        "single minimum at (3, -1), value 0; the simplex walks both axes downhill",
-        "(x - 3)**2 + (y + 1)**2",
-    )
-    result = nelder_mead(
-        parse(program),
-        [("x", 0.0, 5.0), ("y", -4.0, 2.0)],
-        Mode.FLOATING_POINT,
-        0,
-        Objective.FIND_MINIMUM,
-    )
-    found = dict((name, value.to_float()) for name, value in result.solutions)
-    assert found["x"] == pytest.approx(3.0, abs=1e-3)
-    assert found["y"] == pytest.approx(-1.0, abs=1e-3)
-    assert result.value.to_float() == pytest.approx(0.0, abs=1e-6)
-    assert result.objective is Objective.FIND_MINIMUM
-    assert result.algorithm == "nelder-mead"
-    assert result.iterations > 0
-
-
-def test_nelder_mead_solves_a_single_variable_root():
-    program = _annotated(
-        "find-root via Nelder-Mead (it minimises |expr|): x**2 - 2 over [0, 2]\n"
-        "expect x = sqrt(2) ~ 1.41421",
-        "x**2 - 2",
-    )
-    result = nelder_mead(
-        parse(program), [("x", 0.0, 2.0)], Mode.FLOATING_POINT, 0, Objective.FIND_ROOT
-    )
-    assert result.solution.to_float() == pytest.approx(2**0.5, abs=1e-6)
-    assert result.value.to_float() == pytest.approx(0.0, abs=1e-6)
-    # The single-unknown convenience: solutions carries the one (name, value) pair.
-    assert [name for name, _ in result.solutions] == ["x"]
-
-
-def test_nelder_mead_finds_a_two_variable_maximum():
-    program = _annotated(
-        "find-maximum of a 2-var dome over x in [-2, 4], y in [-5, 1]\n"
-        "peaks at (1, -2) with value 5",
-        "5 - (x - 1)**2 - (y + 2)**2",
-    )
-    result = nelder_mead(
-        parse(program),
-        [("x", -2.0, 4.0), ("y", -5.0, 1.0)],
-        Mode.FLOATING_POINT,
-        0,
-        Objective.FIND_MAXIMUM,
-    )
-    found = dict((name, value.to_float()) for name, value in result.solutions)
-    assert found["x"] == pytest.approx(1.0, abs=1e-3)
-    assert found["y"] == pytest.approx(-2.0, abs=1e-3)
-    assert result.value.to_float() == pytest.approx(5.0, abs=1e-6)
-    assert result.objective is Objective.FIND_MAXIMUM
-
-
-def test_nelder_mead_reports_no_solution_naming_the_point():
-    program = _annotated(
-        "find-root of x**2 + y**2 + 1 over x, y in [-1, 1]\n"
-        "no solution: never zero; closest is 1 at the origin. The error\n"
-        "names the full multivariate point it reached",
-        "x**2 + y**2 + 1",
-    )
-    with pytest.raises(SolverError) as excinfo:
-        nelder_mead(
-            parse(program),
-            [("x", -1.0, 1.0), ("y", -1.0, 1.0)],
-            Mode.FLOATING_POINT,
-            0,
-            Objective.FIND_ROOT,
-        )
-    message = excinfo.value.message
-    assert "No solution" in message and "x =" in message and "y =" in message
-
-
-def test_nelder_mead_unset_constant_surfaces_as_an_eval_error():
-    program = _annotated(
-        "find-minimum of a * x + y over x, y in [0, 1]\n"
-        "as with golden-section, `a` is neither an unknown nor assigned: it\n"
-        "fails at every vertex and is a structural error, not a region to avoid",
-        "a * x + y",
-    )
-    with pytest.raises(EvalError) as excinfo:
-        nelder_mead(
-            parse(program),
-            [("x", 0.0, 1.0), ("y", 0.0, 1.0)],
-            Mode.FLOATING_POINT,
-            0,
-            Objective.FIND_MINIMUM,
-        )
-    assert "undefined variable: a" in excinfo.value.message

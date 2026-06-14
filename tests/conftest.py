@@ -28,7 +28,7 @@ import mcp_abacus.expr as expr_package
 import mcp_abacus.expr.lexer as lexer_module
 import mcp_abacus.expr.parser as parser_module
 from mcp_abacus.expr.lexer import EOF, Token
-from mcp_abacus.expr.nodes import EvalError, Node
+from mcp_abacus.expr.nodes import Node
 from mcp_abacus.expr.value import Value
 
 
@@ -60,10 +60,11 @@ def _human_readable_trace(request, monkeypatch):
 
     Records solver runs at THREE seams so it works wherever a test drives the
     solver: the over-the-wire tool (ClientSession.call_tool, as test_e2e drives a
-    server subprocess), the in-process tool (FastMCP mcp.call_tool), and the engine
-    itself (solver.search, as test_solver calls it directly with a parsed node). For
-    the engine seam the source text is recovered by tracing parse() and keying on
-    id(node), since search() is handed the AST, not the program string. At teardown
+    server subprocess), the in-process tool (FastMCP mcp.call_tool, as
+    test_solver_e2e drives it), and the engine itself (solver.search, when a test
+    calls it directly with a parsed node). For the engine seam the source text is
+    recovered by tracing parse() and keying on id(node), since search() is handed the
+    AST, not the program string. At teardown
     each run prints the abacus program under a "Code" rule and the outcome under a
     "Result" rule: the found ``solution`` on success, or the message (a "No solution…"
     or a rejected request) on failure. Non-solver work passes straight through, so
@@ -83,8 +84,17 @@ def _human_readable_trace(request, monkeypatch):
 
     def _record(arguments, payload) -> None:
         expression = (arguments or {}).get("expression", "")
-        result = payload["error"] if payload.get("error") is not None else payload.get("solution")
-        _append(expression, "" if result is None else str(result))
+        if payload.get("error") is not None:
+            _append(expression, payload["error"])
+            return
+        # Single unknown -> the scalar `solution`; several -> join the `solutions` list
+        # so each found unknown shows in the multivariate Result block.
+        solution = payload.get("solution")
+        if solution is None and payload.get("solutions"):
+            solution = ", ".join(
+                f"{entry['variable']} = {entry['solution']}" for entry in payload["solutions"]
+            )
+        _append(expression, "" if solution is None else str(solution))
 
     original_mcp_call = mcp.call_tool
 
@@ -366,91 +376,29 @@ def _compact_e2e_trace(request, monkeypatch):
             print(_indent(reply_json))
 
 
-def _compact_solver_trace(request, monkeypatch):
-    """For test_solver.py under -v: print each search() as a REQUEST / REPLY pair.
+def _compact_solver_e2e_trace(request, monkeypatch):
+    """For test_solver_e2e.py under -v: print each solver tool call as REQUEST / REPLY.
 
-    The engine tests call solver.search() directly with a parsed node, so there is
-    no wire round-trip to record like test_e2e has. Instead we trace parse() to
-    recover each node's source text and search() to capture its arguments and
-    outcome, then render the SAME request/reply JSON the solver TOOL produces — the
-    request rebuilt from search()'s arguments, the reply via the shared
-    _solver_reply / _solver_error builders — so the verbose view matches the wire
-    shape. A blank line follows each pair to separate the cases. Tests that never
-    search (the resolve_*/validate_* unit tests) record nothing, so only real solver
-    runs print.
+    The tests drive the in-process `solver` tool (mcp.call_tool), so each call is
+    recorded at that seam and, at teardown, printed as the request arguments and the
+    full reply payload — the actual JSON the tool sends back — each as a 2-space-
+    indented block, a blank line separating the cases. Non-solver work passes
+    straight through, so other tools in the module record nothing.
     """
-    import mcp_abacus.solver as solver_module
-    from mcp_abacus.server import _solver_error, _solver_reply
-    from mcp_abacus.solver import SolverError
+    from mcp_abacus.server import mcp
 
     rows: list[tuple[dict, dict]] = []  # (request args, reply payload)
-    sources: dict[int, str] = {}  # id(root node) -> the source text it was parsed from
+    original_call_tool = mcp.call_tool
 
-    original_parse = parser_module.parse
-    original_search = solver_module.search
-    original_nelder_mead = solver_module.nelder_mead
+    @functools.wraps(original_call_tool)
+    async def traced_call_tool(name, arguments=None, *args, **kwargs):
+        result = await original_call_tool(name, arguments, *args, **kwargs)
+        if name == "solver":
+            blocks = result[0] if isinstance(result, tuple) else result
+            rows.append((arguments or {}, json.loads(blocks[0].text)))
+        return result
 
-    def _record(request, mode, floor, call):
-        # Run the engine, recording the SAME request/reply JSON the tool produces —
-        # the reply via the shared _solver_reply / _solver_error builders.
-        try:
-            result = call()
-            rows.append((request, _solver_reply(result, mode, floor or None)))
-            return result
-        except SolverError as exc:
-            rows.append((request, _solver_error(exc.message)))
-            raise
-        except EvalError as exc:  # a constant the program never set (structural, 31.7)
-            rows.append((request, _solver_error(f"error (line {exc.line}): {exc.message}")))
-            raise
-
-    @functools.wraps(original_parse)
-    def traced_parse(text):
-        node = original_parse(text)
-        sources[id(node)] = text
-        return node
-
-    @functools.wraps(original_search)
-    def traced_search(node, variable, lower, upper, mode, floor, objective):
-        # floor is `min_fixed_point_precision or 0`; map 0 back to None to mirror the
-        # tool's argument (and its _annotate behaviour) when no floor was set.
-        request = {
-            "expression": sources.get(id(node), ""),
-            "variable": variable,
-            "lower": lower,
-            "upper": upper,
-            "mode": mode.value,
-            "min_fixed_point_precision": floor or None,
-            "objective": objective.value,
-        }
-        run = functools.partial(
-            original_search, node, variable, lower, upper, mode, floor, objective
-        )
-        return _record(request, mode, floor, run)
-
-    @functools.wraps(original_nelder_mead)
-    def traced_nelder_mead(node, unknowns, mode, floor, objective):
-        request = {
-            "expression": sources.get(id(node), ""),
-            "variables": {name: [lo, hi] for name, lo, hi in unknowns},
-            "mode": mode.value,
-            "min_fixed_point_precision": floor or None,
-            "objective": objective.value,
-            "algorithm": "nelder-mead",
-        }
-        run = functools.partial(original_nelder_mead, node, unknowns, mode, floor, objective)
-        return _record(request, mode, floor, run)
-
-    monkeypatch.setattr(solver_module, "search", traced_search)
-    monkeypatch.setattr(solver_module, "nelder_mead", traced_nelder_mead)
-    for module in (parser_module, expr_package, request.module):
-        if getattr(module, "parse", None) is original_parse:
-            monkeypatch.setattr(module, "parse", traced_parse)
-    if getattr(request.module, "search", None) is original_search:
-        monkeypatch.setattr(request.module, "search", traced_search)
-    if getattr(request.module, "nelder_mead", None) is original_nelder_mead:
-        monkeypatch.setattr(request.module, "nelder_mead", traced_nelder_mead)
-
+    monkeypatch.setattr(mcp, "call_tool", traced_call_tool)
     yield
 
     if rows:
@@ -613,11 +561,11 @@ def _verbose_trace(request, monkeypatch):
         yield from _compact_e2e_trace(request, monkeypatch)
         return
 
-    if request.module.__name__ == "test_solver":
-        # test_solver.py gets the REQUEST / REPLY JSON view: it drives the engine
-        # directly, so the pair is rebuilt from search()'s arguments and the shared
-        # tool-reply builders rather than read off a wire seam.
-        yield from _compact_solver_trace(request, monkeypatch)
+    if request.module.__name__ == "test_solver_e2e":
+        # test_solver_e2e.py gets the REQUEST / REPLY JSON view, recorded at the in-
+        # process `solver` tool seam so the pair is the real request and the real reply
+        # the tool sends back. (test_solver.py is unit-level and drives no tool.)
+        yield from _compact_solver_e2e_trace(request, monkeypatch)
         return
 
     if request.module.__name__ == "test_functions":
