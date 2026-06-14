@@ -498,8 +498,7 @@ def _resolve_unknowns(
         return unknowns
     if variable is None or lower is None or upper is None:
         raise SolverError(
-            "No unknown given: pass variable + lower + upper (single), or variables "
-            "(multiple)."
+            "No unknown given: pass variable + lower + upper (single), or variables (multiple)."
         )
     return [(variable, float(lower), float(upper))]
 

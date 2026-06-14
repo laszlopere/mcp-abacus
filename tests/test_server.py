@@ -123,7 +123,13 @@ def test_solver_tool_signature_exposes_both_unknown_forms():
     schema = tools["solver"].inputSchema
     properties = schema["properties"]
     for name in (
-        "expression", "variable", "lower", "upper", "variables", "objective", "algorithm",
+        "expression",
+        "variable",
+        "lower",
+        "upper",
+        "variables",
+        "objective",
+        "algorithm",
     ):
         assert name in properties
     # Only `expression` is required: the unknown is given EITHER as variable+lower+upper

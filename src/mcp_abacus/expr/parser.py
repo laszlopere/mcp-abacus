@@ -226,9 +226,7 @@ class _Parser:
             if closing.kind != RPAREN:
                 raise ParseError(f"expected ')', got {_describe(closing)}", closing.line)
             return node  # parens only shape the tree — no Group node (20.2.2)
-        raise ParseError(
-            f"expected a number, name, or '(', got {_describe(token)}", token.line
-        )
+        raise ParseError(f"expected a number, name, or '(', got {_describe(token)}", token.line)
 
     def _call(self, name: Token) -> Node:
         """Parse ``NAME '(' (expr (',' expr)*)? ')'`` after the NAME (22.2 / 29.2).

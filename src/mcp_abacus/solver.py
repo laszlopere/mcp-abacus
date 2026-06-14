@@ -94,9 +94,7 @@ def resolve_objective(objective: str | None) -> Objective:
         if objective in _OBJECTIVE_ALIASES:
             return _OBJECTIVE_ALIASES[objective]
         valid = ", ".join(o.value for o in Objective)
-        raise SolverError(
-            f"Unknown objective: {objective!r}. Valid objectives: {valid}."
-        ) from None
+        raise SolverError(f"Unknown objective: {objective!r}. Valid objectives: {valid}.") from None
 
 
 # Never-surfaced spellings for the `algorithm` argument (the 23.6 alias rule): a short
@@ -126,9 +124,7 @@ def resolve_algorithm(algorithm: str | None) -> Algorithm:
         if algorithm in _ALGORITHM_ALIASES:
             return _ALGORITHM_ALIASES[algorithm]
         valid = ", ".join(a.value for a in Algorithm)
-        raise SolverError(
-            f"Unknown algorithm: {algorithm!r}. Valid algorithms: {valid}."
-        ) from None
+        raise SolverError(f"Unknown algorithm: {algorithm!r}. Valid algorithms: {valid}.") from None
 
 
 def fold_objective(value: Value, objective: Objective) -> Value:
@@ -363,18 +359,14 @@ def search(
             evaluate_objective(centre + k * step)
 
     if best_solution is None or best_value is None:
-        limit = (
-            f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
-        )
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
         raise SolverError(
             f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
             f"{limit} (every candidate for {variable!r} raised a domain error)."
         )
     if objective is Objective.FIND_ROOT and best_obj > residual_tol:
         limit = (
-            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit."
-            if timed_out
-            else ""
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
         )
         raise SolverError(
             f"No solution: the expression does not reach zero for {variable!r} in "
@@ -492,9 +484,7 @@ def nelder_mead(
         order = sorted(range(n + 1), key=lambda k: fvals[k])  # best (least) first
         simplex = [simplex[k] for k in order]
         fvals = [fvals[k] for k in order]
-        size = max(
-            max(v[i] for v in simplex) - min(v[i] for v in simplex) for i in range(n)
-        )
+        size = max(max(v[i] for v in simplex) - min(v[i] for v in simplex) for i in range(n))
         if size <= x_tol:  # the simplex has collapsed below what the mode resolves
             break
         centroid = [sum(simplex[k][i] for k in range(n)) / n for i in range(n)]
@@ -549,9 +539,7 @@ def nelder_mead(
     solutions = tuple(zip(names, best_solution, strict=True))
     if objective is Objective.FIND_ROOT and best_obj > residual_tol:
         limit = (
-            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit."
-            if timed_out
-            else ""
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
         )
         point = ", ".join(f"{name} = {value.to_string()}" for name, value in solutions)
         raise SolverError(

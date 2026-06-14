@@ -468,29 +468,44 @@ def test_solver_replies_are_observable_over_the_wire(capsys):
         ),
         (
             {
-                "expression": "(x - 3)**2", "variable": "x", "lower": 0, "upper": 5,
-                "objective": "find-minimum", "mode": "double",
+                "expression": "(x - 3)**2",
+                "variable": "x",
+                "lower": 0,
+                "upper": 5,
+                "objective": "find-minimum",
+                "mode": "double",
             },
             "find-minimum of a unimodal expr -> x = 3, value 0",
         ),
         (
             {
-                "expression": "5 - (x - 1)**2", "variable": "x", "lower": -2, "upper": 4,
-                "objective": "max", "mode": "double",
+                "expression": "5 - (x - 1)**2",
+                "variable": "x",
+                "lower": -2,
+                "upper": 4,
+                "objective": "max",
+                "mode": "double",
             },
             "find-maximum (alias 'max') -> x = 1, value 5",
         ),
         (
             {
-                "expression": "r = 0.05\np = 1000\np * (1 + r)**n - 2000", "variable": "n",
-                "lower": 0, "upper": 100, "mode": "double",
+                "expression": "r = 0.05\np = 1000\np * (1 + r)**n - 2000",
+                "variable": "n",
+                "lower": 0,
+                "upper": 100,
+                "mode": "double",
             },
             "constants from assignment lines -> n ~ 14.21",
         ),
         (
             {
-                "expression": "2*x - 3", "variable": "x", "lower": 0, "upper": 3,
-                "mode": "fixed-point", "min_fixed_point_precision": 1,
+                "expression": "2*x - 3",
+                "variable": "x",
+                "lower": 0,
+                "upper": 3,
+                "mode": "fixed-point",
+                "min_fixed_point_precision": 1,
             },
             "fixed-point exact root -> 1.5 (value exactly 0)",
         ),
@@ -635,8 +650,7 @@ def test_solver_finds_a_multivariate_minimum_over_the_wire():
     # Multivariate: the scalar solution is null; every unknown is in `solutions`.
     assert payload["solution"] is None
     found = {
-        entry["variable"]: float(entry["solution"].split(" (")[0])
-        for entry in payload["solutions"]
+        entry["variable"]: float(entry["solution"].split(" (")[0]) for entry in payload["solutions"]
     }
     assert found["x"] == pytest.approx(3.0, abs=1e-3)
     assert found["y"] == pytest.approx(-1.0, abs=1e-3)
@@ -646,8 +660,6 @@ def test_solver_finds_a_multivariate_minimum_over_the_wire():
 def test_solver_rejects_multiple_unknowns_for_golden_section():
     # The `variables` form needs Nelder-Mead; golden-section (the default) is single-
     # variable, so the request is refused with a pointer to the right algorithm.
-    payload = _solve(
-        {"expression": "x + y", "variables": {"x": [0, 1], "y": [0, 1]}}
-    )
+    payload = _solve({"expression": "x + y", "variables": {"x": [0, 1], "y": [0, 1]}})
     assert payload["solution"] is None and payload["solutions"] is None
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
