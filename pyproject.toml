@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-abacus"
+version = "0.1.0"
+description = "An MCP server for type-faithful calculation: evaluate expressions bit-for-bit under fixed-width int, IEEE-754 float, fixed-point, decimal, and rational regimes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+    { name = "László Pere", email = "226979892+laszlopere@users.noreply.github.com" },
+]
+keywords = ["mcp", "calculator", "ieee-754", "fixed-point", "twos-complement"]
+dependencies = [
+    "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+mcp-abacus = "mcp_abacus.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_abacus"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true

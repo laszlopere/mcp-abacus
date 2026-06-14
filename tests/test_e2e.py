@@ -1,0 +1,424 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 László Pere
+
+"""End-to-end tests for the `calculate` tool (TODO 23).
+
+test_server.py drives the FastMCP app object in-process. These tests go one
+layer further out: they launch mcp-abacus as a real child process and speak the
+MCP protocol to it over stdio — the exact path a production client (Claude)
+takes. So they prove the tool survives the full initialize -> list_tools ->
+call_tool round-trip, that the default and explicit `mode` arguments travel
+across the wire intact, and that the error / unknown-mode paths come back as
+readable text content rather than a protocol-level failure.
+
+Each test opens its own server subprocess for isolation; a round-trip is a
+fraction of a second, so the small suite stays fast. No pytest-asyncio
+dependency — we drive the async client with asyncio.run, as test_server.py does.
+"""
+
+import asyncio
+import json
+import sys
+from contextlib import asynccontextmanager
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+# Launch the server with the interpreter already running the tests (the venv
+# that has mcp_abacus installed), via its console module entry point.
+SERVER = StdioServerParameters(command=sys.executable, args=["-m", "mcp_abacus"])
+
+
+@asynccontextmanager
+async def _client():
+    """Spawn the server over stdio and yield an initialized client session."""
+    async with stdio_client(SERVER) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session
+
+
+def _call(tool, arguments=None):
+    """Synchronously invoke one tool against a fresh server; return the result."""
+
+    async def go():
+        async with _client() as session:
+            return await session.call_tool(tool, arguments or {})
+
+    return asyncio.run(go())
+
+
+def _text(result):
+    """The single text block of a tool result."""
+    return result.content[0].text
+
+
+def _payload(result):
+    """calculate's structured dict (25.1), rendered by FastMCP as JSON text."""
+    return json.loads(_text(result))
+
+
+def _value(result):
+    """The bare rendered number (precision annotation stripped) on success.
+
+    calculate now annotates `value` with its precision verdict (25.1); these
+    arithmetic-over-the-wire tests assert the number, so strip the "(exact)" /
+    "(inexact, ...)" tail here. The verdict itself is asserted by its own tests.
+    """
+    payload = _payload(result)
+    return payload["value"].split(" (")[0]
+
+
+def _calc_in_one_session(calls):
+    """Evaluate (expression, mode) pairs against ONE server; return their texts.
+
+    Keeps the multi-call tests on a single subprocess (mode is omitted from the
+    request when None, exercising the default). Order is preserved.
+    """
+
+    async def go():
+        async with _client() as session:
+            texts = []
+            for expression, mode in calls:
+                arguments = {"expression": expression}
+                if mode is not None:
+                    arguments["mode"] = mode
+                result = await session.call_tool("calculate", arguments)
+                texts.append(_value(result))
+            return texts
+
+    return asyncio.run(go())
+
+
+def _analyze_in_one_session(calls):
+    """Invoke `analyze` for each (expression, mode, floor) against ONE server.
+
+    Returns the list of structured payloads in order. `mode`/`min_fixed_point_
+    precision` are omitted from the request when None, so the defaults are
+    exercised on the wire.
+    """
+
+    async def go():
+        async with _client() as session:
+            payloads = []
+            for expression, mode, floor in calls:
+                arguments = {"expression": expression}
+                if mode is not None:
+                    arguments["mode"] = mode
+                if floor is not None:
+                    arguments["min_fixed_point_precision"] = floor
+                result = await session.call_tool("analyze", arguments)
+                payloads.append((arguments, _payload(result)))
+            return payloads
+
+    return asyncio.run(go())
+
+
+def test_analyze_renders_evaluated_trees_across_modes_and_precision_over_the_wire(capsys):
+    # End-to-end over real stdio: each case is (expression, mode, floor) with the
+    # tree ROOT it must evaluate to. The cases span all three modes and the fixed-
+    # point floor, and each is chosen so the tree EXPLAINS its root:
+    #   - (1 + 1/2)*3 is 3 in fixed-point (the 1/2 -> 0 leaf rounds the half away),
+    #     4.5 in floating-point, and 4.50 once the floor keeps two decimals;
+    #   - (0.1 + 0.2)*3 is exactly 9/10 in rational;
+    #   - 1 ETH in wei (hex mantissa @18) quartered stays exact in fixed-point;
+    #   - mixed power/rational and floor-div/modulo round-trip as whole numbers.
+    cases = [
+        ("(1 + 1/2) * 3", "fixed-point", None, "3"),
+        ("(1 + 1/2) * 3", "floating-point", None, "4.5"),
+        ("(1 + 1/2) * 3", "fixed-point", 2, "4.50"),
+        ("(0.1 + 0.2) * 3", "rational", None, "9/10"),
+        ("0xDE0B6B3A7640000@18 / 4", "fixed-point", None, "0.250000000000000000"),
+        ("2**10 / 8 - 1", "rational", None, "127"),
+        ("100 // 7 + 100 % 7", "fixed-point", None, "16"),
+    ]
+    payloads = _analyze_in_one_session([(e, m, f) for e, m, f, _ in cases])
+
+    # Show the tool's input and output so `pytest -s` prints the actual trees.
+    with capsys.disabled():
+        for _case, (arguments, payload) in zip(cases, payloads, strict=True):
+            print(f"\nINPUT  analyze({arguments})")
+            print("OUTPUT tree:")
+            print(payload["tree"])
+
+    for (expr, _mode, _floor, root), (_arguments, payload) in zip(cases, payloads, strict=True):
+        assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
+        first_line = payload["tree"].splitlines()[0]
+        # Each line is `<OPCODE/LITERAL> Value = <value> (<type>[scale], <verdict>)[ · details]`
+        # (26): the rendered value sits between " = " and the " (" type envelope.
+        rendered = first_line.split(" = ", 1)[1].split(" (", 1)[0]
+        assert rendered == root, f"{expr!r} root mismatch: {first_line!r}"
+        # Every non-leaf line carries its computed sub-result, so each has " = ".
+        assert all(" = " in line for line in payload["tree"].splitlines())
+
+
+def test_analyze_renders_bitwise_trees_over_the_wire(capsys):
+    # The bitwise ops (24.3.2) through the real `analyze` path: the printed AST
+    # pins the opcodes (BINARY_AND/OR/XOR, UNARY_NOT), the | < ^ < & precedence
+    # and ~-as-tight-prefix shape, and each node's per-mode value / exactness / bits:
+    #   - fixed-point shows the negative sign-extend (~5 -> -6) and hex mantissa;
+    #   - fixed-point ^ across differing scales lands at the max() scale (1.5 ^ 3);
+    #   - rational is componentwise on num/den ((3/2) ^ (5/4) = 6/6 = 1);
+    #   - floating-point masks the raw IEEE-754 bit pattern (2.0 | 1.0 -> inf).
+    cases = [
+        (
+            "~5 & 0xF0 | 3",
+            "fixed-point",
+            "BINARY_OR Value = 243 (fixed-point[0], exact) · hex 0xf3\n"
+            "  BINARY_AND Value = 240 (fixed-point[0], exact) · hex 0xf0\n"
+            "    UNARY_NOT Value = -6 (fixed-point[0], exact) · hex -0x06\n"
+            '      LITERAL "5" Value = 5 (fixed-point[0], exact) · hex 0x05\n'
+            '    LITERAL "0xF0" Value = 240 (fixed-point[0], exact) · hex 0xf0\n'
+            '  LITERAL "3" Value = 3 (fixed-point[0], exact) · hex 0x03',
+        ),
+        (
+            "1.5 ^ 3",
+            "fixed-point",
+            "BINARY_XOR Value = 1.7 (fixed-point[1], exact) · hex 0x11@1\n"
+            '  LITERAL "1.5" Value = 1.5 (fixed-point[1], exact) · hex 0x0f@1\n'
+            '  LITERAL "3" Value = 3 (fixed-point[0], exact) · hex 0x03',
+        ),
+        (
+            "1.5 ^ 1.25",
+            "rational",
+            "BINARY_XOR Value = 1 (rational, exact)\n"
+            '  LITERAL "1.5" Value = 3/2 (rational, exact) · ≈ 1.5\n'
+            '  LITERAL "1.25" Value = 5/4 (rational, exact) · ≈ 1.25',
+        ),
+        (
+            "2.0 | 1.0",
+            "floating-point",
+            "BINARY_OR Value = inf (floating-point, inexact) · hex 0x7ff0000000000000\n"
+            '  LITERAL "2.0" Value = 2.0 (floating-point, inexact) · hex 0x4000000000000000\n'
+            '  LITERAL "1.0" Value = 1.0 (floating-point, inexact) · hex 0x3ff0000000000000',
+        ),
+    ]
+    payloads = _analyze_in_one_session([(e, m, None) for e, m, _ in cases])
+
+    # Show the tool's input and output so `pytest -s` prints the actual trees.
+    with capsys.disabled():
+        for (_expr, _mode, _tree), (arguments, payload) in zip(cases, payloads, strict=True):
+            print(f"\nINPUT  analyze({arguments})")
+            print("OUTPUT tree:")
+            print(payload["tree"])
+
+    for (expr, _mode, expected_tree), (_arguments, payload) in zip(cases, payloads, strict=True):
+        assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
+        assert payload["tree"] == expected_tree, f"{expr!r} tree mismatch:\n{payload['tree']}"
+
+
+def test_analyze_rational_bitwise_zero_denominator_errors_with_a_line_over_the_wire():
+    # Componentwise rational bitwise (24.3.2) can drive a denominator to zero:
+    # 5 ^ 3 is (5 ^ 3) / (1 ^ 1) = 6 / 0. It must surface as a line-tagged domain
+    # error with a null tree, NOT a protocol failure — the price the all-types-bits
+    # decision accepted for rational's faithful numerator/denominator componentwise.
+    ((_arguments, payload),) = _analyze_in_one_session([("5 ^ 3", "rational", None)])
+    assert payload["tree"] is None
+    assert payload["error"].startswith("error (line 1):")
+
+
+def test_initialize_handshake_identifies_the_server():
+    async def go():
+        async with _client() as session:
+            # A successful _client() already completed initialize(); re-issuing
+            # a request proves the session is live after the handshake.
+            return await session.list_tools()
+
+    tools = asyncio.run(go())
+    assert sorted(t.name for t in tools.tools) == ["analyze", "calculate", "help", "info"]
+
+
+def test_calculate_is_advertised_with_optional_mode_over_the_wire():
+    async def go():
+        async with _client() as session:
+            return await session.list_tools()
+
+    tools = {t.name: t for t in asyncio.run(go()).tools}
+    schema = tools["calculate"].inputSchema
+    assert schema["required"] == ["expression"]  # mode is optional...
+    assert schema["properties"]["mode"]["default"] == "fixed-point"  # ...and defaults here
+
+
+def test_calculate_defaults_to_fixed_point_over_stdio():
+    # 0.1 + 0.2 is the flagship discriminator: it is 0.3 in scaled fixed-point,
+    # but the famous 0.30000000000000004 in floating_point. Omitting `mode` must pick
+    # the money-safe default all the way through the protocol.
+    result = _call("calculate", {"expression": "0.1 + 0.2"})
+    assert result.isError is False
+    assert _value(result) == "0.3"
+
+
+def test_each_mode_evaluates_the_same_expression_its_own_way():
+    # One session, one expression, three regimes — the product's whole pitch is
+    # that the *type* governs the arithmetic, and that must hold over the wire.
+    modes = ("fixed-point", "floating-point", "rational")
+    texts = _calc_in_one_session([("0.1 + 0.2", m) for m in modes])
+    assert dict(zip(modes, texts, strict=True)) == {
+        "fixed-point": "0.3",
+        "floating-point": "0.30000000000000004",
+        "rational": "3/10",
+    }
+
+
+def test_operator_precedence_and_mixed_bases_travel_over_the_wire():
+    # Each expression pins a piece of the grammar end-to-end through the
+    # protocol; all are integer-valued, so the default fixed-point mode suffices.
+    cases = {
+        "2**3**2": "512",  # power is right-associative -> 2**(3**2)
+        "-2**2": "-4",  # power binds tighter than unary minus -> -(2**2)
+        "7 % 3 ** 2": "7",  # ...and tighter than % -> 7 % 9
+        "((2 + 3) * (4 - 1))**2": "225",  # nested grouping -> 15**2
+        "100 // 7 + 100 % 7": "16",  # floor-division and modulo -> 14 + 2
+        "0xFF * 0b10 + 0o17": "525",  # hex, binary, octal literals in one expr
+    }
+    texts = _calc_in_one_session([(expr, None) for expr in cases])
+    assert dict(zip(cases, texts, strict=True)) == cases
+
+
+def test_bitwise_operators_travel_over_the_wire():
+    # The bitwise rungs end-to-end (24.3.2): ^ is XOR (not power), the | < ^ < &
+    # ordering below additive, and ~ as a tight unary prefix. Integer-valued, so
+    # the default fixed-point mode suffices.
+    cases = {
+        "0xF0 | 0x0F": "255",  # OR combines the nibbles -> 0xFF
+        "0b1100 & 0b1010": "8",  # AND -> 0b1000
+        "5 ^ 3": "6",  # XOR -> 0b110 (NOT power: 5 ** 3 would be 125)
+        "2 ^ 3": "1",  # ^ is XOR; contrast 2 ** 3 below
+        "2 ** 3": "8",  # ** is still power
+        "1 | 2 ^ 3 & 4 + 5": "3",  # 1 | (2 ^ (3 & (4 + 5))) = 1 | (2 ^ 1) = 1 | 3
+        "~5 + 8": "2",  # ~ binds tighter than + : (~5) + 8 = -6 + 8
+        "~0": "-1",  # ~x == -x-1 on the integer mantissa
+    }
+    texts = _calc_in_one_session([(expr, None) for expr in cases])
+    assert dict(zip(cases, texts, strict=True)) == cases
+
+
+def test_binary_and_octal_literals_evaluate_over_the_wire():
+    # Exercise the 0b / 0o literal forms directly: standalone values, mixed-base
+    # arithmetic, and cross-base equivalences (0xFF == 0o377, 0b100 == 0o4)
+    # proving every prefix parses to the same integer. All integer-valued, so
+    # the default fixed-point mode suffices.
+    cases = {
+        "0b1010": "10",  # binary -> 10
+        "0o17": "15",  # octal -> 15
+        "0b11111111": "255",  # a binary byte -> 255
+        "0o777": "511",  # octal -> 511
+        "0o10 * 0b10": "16",  # octal 8 * binary 2
+        "(0b1010 + 0o12) * 0o2": "40",  # mixed bases with grouping -> (10 + 10) * 2
+        "0o20 // 0b11": "5",  # floor-division of octal 16 by binary 3
+        "0b1010 % 0o11": "1",  # binary 10 mod octal 9
+        "0xFF - 0o377": "0",  # 255 in hex equals 255 in octal
+        "0b100 - 0o4": "0",  # 4 in binary equals 4 in octal
+    }
+    texts = _calc_in_one_session([(expr, None) for expr in cases])
+    assert dict(zip(cases, texts, strict=True)) == cases
+
+
+def test_complex_expressions_diverge_by_mode():
+    # Richer expressions where each regime's character shows: float rounding,
+    # fixed-point truncation, and rational exactness, all over the wire.
+    modes = ("fixed-point", "floating-point", "rational")
+    expected = {
+        "(0.1 + 0.2) * 3": {
+            "fixed-point": "0.9",
+            "floating-point": "0.9000000000000001",
+            "rational": "9/10",
+        },
+        "1 / 7 * 7": {"fixed-point": "0", "floating-point": "1.0", "rational": "1"},
+        "2**-3": {"fixed-point": "0", "floating-point": "0.125", "rational": "1/8"},
+        "2.5e-4 * 1e4": {"fixed-point": "2.50000", "floating-point": "2.5", "rational": "5/2"},
+    }
+    calls = [(expr, m) for expr in expected for m in modes]
+    texts = _calc_in_one_session(calls)
+    got = {
+        expr: dict(zip(modes, texts[i * 3 : i * 3 + 3], strict=True))
+        for i, expr in enumerate(expected)
+    }
+    assert got == expected
+
+
+def test_ethereum_wei_literal_evaluates_across_modes():
+    # 0xDE0B6B3A7640000@18 is 1 ETH as wei: a hex mantissa scaled by 10^-18.
+    # Quartering it stays exact in fixed-point and rational but rounds in float.
+    modes = ("fixed-point", "floating-point", "rational")
+    texts = _calc_in_one_session([("0xDE0B6B3A7640000@18 / 4", m) for m in modes])
+    assert dict(zip(modes, texts, strict=True)) == {
+        "fixed-point": "0.250000000000000000",
+        "floating-point": "0.25",
+        "rational": "1/4",
+    }
+
+
+def test_explicit_rational_mode_stays_exact():
+    result = _call("calculate", {"expression": "1/3", "mode": "rational"})
+    assert _value(result) == "1/3"
+
+
+def test_precision_verdict_and_fields_travel_over_the_wire():
+    # 25.1: every result must declare its precision so an inexact `/` cannot be
+    # mistaken for exact. The annotated value AND the structured exact/precision
+    # fields must survive the full stdio round-trip, for every mode.
+    exact_fp = _payload(_call("calculate", {"expression": "2 + 3"}))
+    assert exact_fp["value"] == "5 (exact)"
+    assert exact_fp["exact"] is True and exact_fp["precision"] == 0
+
+    inexact_fp = _payload(_call("calculate", {"expression": "10 / 3"}))
+    assert inexact_fp["value"] == (
+        "3 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+        "for more; e.g. =4 → 3.3333)"
+    )
+    assert inexact_fp["exact"] is False and inexact_fp["precision"] == 0
+    # 27: mode, value_hex_dump and the offered_precision what-if survive the wire.
+    assert inexact_fp["mode"] == "fixed-point"
+    assert inexact_fp["value_hex_dump"] == "0x03"  # mantissa 3, scale 0
+    assert inexact_fp["offered_precision"] == {
+        "mode": "fixed-point",
+        "min_fixed_point_precision": 4,
+        "value": "3.3333 (inexact, rounded to 4 decimals)",
+        "value_hex_dump": "0x8235@4",
+        "exact": False,
+    }
+
+    flt = _payload(_call("calculate", {"expression": "0.1 + 0.2", "mode": "floating-point"}))
+    assert flt["value"] == "0.30000000000000004 (inexact)"
+    assert flt["exact"] is False and flt["precision"] is None
+    # 27.1/27.5: float reads back as its canonical mode and dumps its raw IEEE bits.
+    assert flt["mode"] == "floating-point"
+    assert flt["value_hex_dump"] == "0x3fd3333333333334"
+
+    rat = _payload(_call("calculate", {"expression": "1/3", "mode": "rational"}))
+    assert rat["value"] == "1/3 (exact)"
+    assert rat["exact"] is True and rat["precision"] is None
+    # 27.5: rational has no single integer to dump.
+    assert rat["mode"] == "rational" and rat["value_hex_dump"] is None
+
+
+def test_floating_point_aliases_resolve_to_the_canonical_mode():
+    # The AI may spell the floating-point mode "float64" or "double" (23.6);
+    # all three resolve to the same IEEE-754 double arithmetic, where the
+    # flagship 0.1 + 0.2 famously rounds — while fixed-point holds it exactly,
+    # the contrast the whole product exists to show.
+    expr = "0.1 + 0.2"
+    expected = {
+        "floating-point": "0.30000000000000004",
+        "float64": "0.30000000000000004",
+        "double": "0.30000000000000004",
+        "fixed-point": "0.3",
+    }
+    texts = _calc_in_one_session([(expr, name) for name in expected])
+    assert dict(zip(expected, texts, strict=True)) == expected
+
+
+def test_malformed_expression_returns_an_error_line_not_a_protocol_failure():
+    result = _call("calculate", {"expression": "1 +"})
+    # The tool reports user errors as ordinary text (with the 1-based source
+    # line), so the call itself succeeds at the protocol level.
+    assert result.isError is False
+    assert _payload(result)["error"].startswith("error (line 1):")
+
+
+def test_unknown_mode_lists_the_valid_modes():
+    result = _call("calculate", {"expression": "1", "mode": "int128"})
+    error = _payload(result)["error"]
+    assert "Unknown mode" in error
+    assert "fixed-point" in error and "floating-point" in error and "rational" in error

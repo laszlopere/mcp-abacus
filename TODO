@@ -1,0 +1,1236 @@
+================================================================================
+mcp-abacus — CORE CONCEPT  (the single most important feature)
+--------------------------------------------------------------------------------
+* The defining feature: TYPE-FAITHFUL CALCULATION over many numeric types.
+  The user sets a type/mode (e.g. 32-bit integer) and evaluates an expression
+  (like a + b * 10^3); the WHOLE expression behaves EXACTLY as a 32-bit
+  calculation would — it overflows, it underflows, it then CARRIES the bad
+  value onward through the rest of the expression, and so on.
+* Purpose: the programmer (the AI) can simulate a calculation to see what
+  happened, or what would happen, in real code — bit-for-bit.
+* It must support a huge lot of number formats (fixed-width ints, IEEE-754
+  floats, fixed-point, decimal, rational, bigfloat — see 10.1 / 12 below).
+* It does NOT approximate or "simulate" a type — it CALCULATES USING that
+  type: every intermediate result is exactly what the real type produces.
+================================================================================
+
+
+================================================================================
+mcp-abacus — PROJECT NOTES  (apply to the feature sections 10-16 below)
+--------------------------------------------------------------------------------
+* LANGUAGE: section 16 decides on PURE PYTHON for the whole project (decision
+  revised — the earlier C++-core plan is dropped). The skeleton's
+  hatchling/pure-Python choices (2.3, 3.1) stand permanently; no
+  build-backend migration happens. Exact per-type semantics are achievable
+  in pure Python for every planned mode (see 10.L); performance is
+  irrelevant at one-expression-per-call.
+* Backlog provenance: copied from ~/Desktop/mcp-primitives-ideas.txt
+  (source §3 = Server A "mcp-abacus", plus its sections 3.A and SA/SHARED).
+  RENUMBERED for this file: source 3.0-3.5 -> 10-15, 3.A -> 16; SA and
+  SHARED keep their source names.
+* Feature work starts AFTER the bootstrap skeleton is green (9.5).
+
+Source legend:  [BUILD] core surface   [MAYBE] bundle only if cheap
+                [SKIP]  not building (model does it fine without a tool)
+                rel = how reliably the model does it WITHOUT a tool
+                      (low = tool adds most value)
+================================================================================
+
+
+================================================================================
+mcp-abacus — BOOTSTRAP TODO
+--------------------------------------------------------------------------------
+GOAL: from this empty directory, stand up the skeleton of a pure-Python MCP
+server. When every box below is checked the server starts over stdio, exposes
+exactly ONE tool, and that tool reports the server's availability + version
+information. No domain features yet (the programmer's-calculator tools — base
+conversion, bitwise ops, etc. — come later).
+
+DONE = `mcp-abacus` runs, a client lists one tool, and calling it returns
+       {status: "available", name, version, ...}.
+
+Checkbox legend:  [ ] not started   [~] in progress   [x] done
+================================================================================
+
+
+[x] 1.  PROJECT SCAFFOLDING (src layout)
+    [x] 1.1.  Create the package tree:
+              src/mcp_abacus/__init__.py
+              src/mcp_abacus/server.py
+              src/mcp_abacus/__main__.py
+              tests/test_info.py
+    [x] 1.2.  Add top-level files: README.md, LICENSE (MIT), .gitignore
+              (Python template); this TODO stays at repo root.
+    [x] 1.3.  Version control:
+        [x] 1.3.1.  `git init`; first commit once 1.x + 2.x exist.
+                    (2.x is enumeration only — recorded in this file, no
+                    artifacts — so the first commit is the 1.x scaffolding.)
+        [x] 1.3.2.  Create a NEW repository for this project on the local
+                    homelab git server (host named "git") — this is the
+                    PRIVATE server, not public.
+                    (bare repo: git@git.homelab.local:/home/git/mcp-abacus.git)
+        [x] 1.3.3.  Add that repo as the `origin` remote and push the first
+                    commit, e.g.
+                    `git remote add origin git@git:mcp-abacus.git`
+                    then `git push -u origin master`.
+        [x] 1.3.4.  Pushing to "git" is a PRIVATE upload to the local server
+                    only — NOT public. (A public GitHub remote for CI is
+                    separate; see section 8.)
+    [x] 1.4.  Distribution name "mcp-abacus", import package name
+              "mcp_abacus" (underscore). Keep them consistent.
+
+
+[x] 2.  DEPENDENCIES (enumerate now; install via uv)
+        (verified 2026-06-11: uv 0.11.19 installed; system Python 3.12.3;
+        mcp latest on PyPI = 1.27.2, requires-python >= 3.10 — the >=1.2
+        floor is valid. Install happens at 6.1 via `uv sync` once
+        pyproject.toml exists.)
+    [x] 2.1.  Runtime (required):
+        [x] 2.1.1.  mcp — the official MCP Python SDK; bundles FastMCP.
+                    Import: `from mcp.server.fastmcp import FastMCP`.
+                    Pin a recent floor, e.g. mcp >= 1.2.
+        [x] 2.1.2.  Python >= 3.10 (FastMCP requirement).
+        [x] 2.1.3.  Version read at runtime from package metadata via
+                    importlib.metadata (stdlib) — NO extra dep.
+    [x] 2.2.  Dev / tooling:
+        [x] 2.2.1.  uv — env, dependency resolution, lockfile (matches the
+                    existing mcp-tmux workflow).
+        [x] 2.2.2.  pytest — test runner.
+        [x] 2.2.3.  pytest-asyncio — only if tools are async (add lazily;
+                    FastMCP tools may be plain sync).  [EXCLUDED: info() is sync]
+        [x] 2.2.4.  ruff — lint + format.
+        [x] 2.2.5.  mypy — optional static typing.
+    [x] 2.3.  Build backend: hatchling.
+    [x] 2.4.  FUTURE optional extras — likely NONE: the planned calculator
+              features (base conversion, bitwise/shift ops, two's-complement
+              arithmetic at fixed word sizes, IEEE-754 float inspection) are
+              pure stdlib (int, struct, math). Declare extras later only if a
+              feature genuinely needs one, e.g.:
+              expr  = lark (expression parsing, if an eval-style tool is added)
+              units = pint (unit conversions, if ever in scope)
+
+
+[x] 3.  pyproject.toml
+        (mirrors ../mcp-tmux/pyproject.toml; also added [tool.mypy] to match.
+        No [project.urls] yet — added with the public GitHub remote in §8.
+        pytest config deferred to 7.1 as planned.)
+    [x] 3.1.  [build-system] requires = ["hatchling"];
+              build-backend = "hatchling.build".
+    [x] 3.2.  [project]: name="mcp-abacus", version="0.0.1",
+              requires-python=">=3.10", dependencies=["mcp>=1.2"],
+              description, readme, license, authors.
+    [x] 3.3.  [project.optional-dependencies]: dev=[pytest, ruff, mypy].
+              (No FUTURE extras placeholders — see 2.4; add only when needed.)
+    [x] 3.4.  [project.scripts]:
+              mcp-abacus = "mcp_abacus.__main__:main".
+    [x] 3.5.  [tool.hatch.build.targets.wheel]
+              packages = ["src/mcp_abacus"].
+    [x] 3.6.  Add ruff config (line length, target-version) under [tool.ruff].
+
+
+[x] 4.  ARCHITECTURE / WIRING
+        (verified: `uv run python` imports the app, mcp.name == "mcp-abacus",
+        __version__ resolves to 0.0.1 from metadata. uv created .venv with
+        CPython 3.13.13 as a side effect; 6.1 formalizes the sync.)
+    [x] 4.1.  server.py: construct the singleton FastMCP app —
+              `mcp = FastMCP("mcp-abacus")`. All tools register here.
+    [x] 4.2.  __main__.py: `def main(): mcp.run()` (stdio is default) and the
+              `if __name__ == "__main__": main()` guard. Import the app from
+              server.py so tools register on import.
+    [x] 4.3.  __init__.py: expose `__version__` via
+              importlib.metadata.version("mcp-abacus"), with a fallback for
+              the editable/unbuilt case.
+    [x] 4.4.  Transport = stdio (what Claude Code/Desktop launch). No HTTP/SSE
+              in the skeleton.
+    [x] 4.5.  Leave a marked spot in server.py for FUTURE opt-in toolset
+              gating (numeric/bits/eval — see SA.1 in the feature backlog
+              below) — comment only, not built.
+
+
+[x] 5.  THE ONE TOOL  (availability + version report)
+        (verified through the MCP layer: mcp.list_tools() shows exactly one
+        tool "info" with description + input schema; mcp.call_tool returns
+        {status: "available", name, version: 0.0.1, python: 3.13.13,
+        mcp_sdk: 1.27.2, toolsets: []}.)
+    [x] 5.1.  In server.py add a single tool: `@mcp.tool()` on
+              `def info() -> dict: ...`.
+    [x] 5.2.  Return a dict with at least:
+              status   = "available"
+              name     = "mcp-abacus"
+              version  = __version__ (from 4.3)
+              python   = platform.python_version()
+              mcp_sdk  = installed mcp SDK version (importlib.metadata)
+              toolsets = []   (placeholder; filled in a later task)
+    [x] 5.3.  One-line docstring + typed return so FastMCP auto-generates the
+              JSON schema (docstring = the tool description).
+    [x] 5.4.  Keep it pure stdlib (platform, importlib.metadata) — no new deps.
+
+
+[x] 6.  RUN & VERIFY
+    [x] 6.1.  `uv sync` (or `uv pip install -e .[dev]`) into a venv.
+              (`uv sync --extra dev` — dev tools pytest/ruff/mypy installed.)
+    [x] 6.2.  Smoke-run: `uv run mcp-abacus` starts and blocks on stdio
+              without error.  (Held stdin open; still blocking after 3 s,
+              no output — killed by timeout, exit 124.)
+    [x] 6.3.  Inspect with the MCP dev inspector
+              (`uv run mcp dev src/mcp_abacus/server.py`); confirm the
+              single `info` tool is listed with its schema. If the inspector
+              is not available on this computer, install it first (it ships
+              with the SDK's CLI extra, e.g. `uv add "mcp[cli]"` / ensure the
+              `mcp` CLI + Node-based Inspector are present), then run it.
+              (Used the Inspector's scriptable CLI mode via npx — node v22
+              present: tools/list shows exactly `info` + schema; tools/call
+              returns the payload. No mcp[cli] dep added.)
+    [x] 6.4.  ON THIS LOCAL COMPUTER: install + register the server at USER
+              scope so it is available in EVERY project (not just this repo) —
+              same model as the existing mcp-kodi / mcp-tmux user-scoped
+              servers.
+        [x] 6.4.1.  Install so the `mcp-abacus` entry point is runnable
+                    outside this repo's venv (e.g. `uv tool install .`, or
+                    register the command as `uv run --directory
+                    /home/pipas/projects/mcp-abacus mcp-abacus`).
+                    (`uv tool install .` -> ~/.local/bin/mcp-abacus, same as
+                    mcp-tmux/mcp-bytesmith. NOTE: snapshot install — rerun
+                    `uv tool install --reinstall .` after future changes.)
+        [x] 6.4.2.  Register user-scoped with Claude Code: `claude mcp add
+                    --scope user abacus -- mcp-abacus` -> ✔ Connected.
+        [x] 6.4.3.  Verify in a DIFFERENT project that the `info` tool is
+                    listed and returns the availability/version payload.
+                    (From ~/projects/mcp-tmux: Inspector CLI against the
+                    registered `mcp-abacus` command returns the payload;
+                    `claude mcp list` shows abacus ✔ Connected.)
+
+
+[x] 7.  UNIT TESTS (pytest; tests/ directory)
+    [x] 7.1.  Configure pytest under [tool.pytest.ini_options] in
+              pyproject.toml: testpaths=["tests"]; set asyncio mode if
+              pytest-asyncio is used (2.2.3).
+              (No asyncio mode — async FastMCP calls go through asyncio.run()
+              in plain sync tests, keeping pytest-asyncio excluded.)
+    [x] 7.2.  tests/test_info.py — assert the `info` tool's return payload:
+        [x] 7.2.1.  returns a dict; status == "available".
+        [x] 7.2.2.  name == "mcp-abacus".
+        [x] 7.2.3.  version is a non-empty string AND equals
+                    importlib.metadata.version("mcp-abacus").
+        [x] 7.2.4.  python and mcp_sdk fields present + non-empty.
+        [x] 7.2.5.  toolsets is a list (empty for now).
+    [x] 7.3.  tests/test_server.py — prove the tool is wired into FastMCP, not
+              merely importable:
+        [x] 7.3.1.  list the app's registered tools; assert EXACTLY ONE is
+                    exposed, named "info".
+        [x] 7.3.2.  that tool has a non-empty description (the docstring) and
+                    a generated input schema.
+        [x] 7.3.3.  invoke it through the app; payload matches 7.2 (end-to-end
+                    via the MCP layer).
+    [x] 7.4.  tests/test_package.py — import / packaging smoke:
+        [x] 7.4.1.  `import mcp_abacus` succeeds; `__version__` is defined
+                    and non-empty.
+        [x] 7.4.2.  the editable/unbuilt version fallback (4.3) does not raise.
+                    (monkeypatch importlib.metadata.version to raise
+                    PackageNotFoundError + reload; asserts "0.0.0+unknown".)
+    [x] 7.5.  All tests run OFFLINE — no network, no runtime deps beyond `mcp`
+              + stdlib.
+    [x] 7.6.  Once the tests above exist, RUN the suite: `uv run pytest`
+              green (moved here from RUN & VERIFY — run the tests as soon as
+              they are created).  (10 passed in 0.24s; ruff check also clean.)
+        7.7.  (OPTIONAL) pytest-cov for coverage; not required for the
+              skeleton — add only if useful.  [SKIPPED for the skeleton]
+
+
+[x] 8.  CI (minimal; mirror the mcp-tmux setup)
+    [x] 8.0.  REFERENCE: the mcp-tmux project lives at ../mcp-tmux/ (sibling
+              of this repo). It is a SEPARATE project — treat it as READ-ONLY:
+              read its CI / publish config to copy the pattern, never edit
+              anything under it.  (Read ci.yml + release.yml; nothing edited.)
+    [x] 8.1.  .github/workflows/ci.yml: on push/PR — set up uv, `uv sync`,
+              `uv run ruff check`, `uv run pytest`.
+              (Mirrors mcp-tmux exactly: also `ruff format --check` + `mypy`.
+              All four steps rehearsed locally on Python 3.10 AND 3.13 —
+              green. NOTE: workflow is inert until a GitHub remote exists —
+              creating the public repo is a separate, user-approved step.)
+    [x] 8.2.  Pin action versions; run on a current Python (3.12+).
+              (actions/checkout@v6, astral-sh/setup-uv@v7; matrix
+              3.10/3.11/3.12/3.13 — same as mcp-tmux.)
+        8.3.  (LATER, not part of skeleton) PyPI publish workflow via Trusted
+              Publishing on git tag — reuse the mcp-tmux pattern
+              (release.yml, OIDC, environment "pypi").
+
+
+[x] 9.  DEFINITION OF DONE  (acceptance check — all re-run fresh 2026-06-11)
+    [x] 9.1.  `uv run mcp-abacus` launches a stdio MCP server with no
+              errors.  (Blocked on stdio until killed at 3 s; zero output.)
+    [x] 9.2.  A client lists EXACTLY ONE tool (`info`).  (Inspector CLI
+              tools/list -> count 1, name "info".)
+    [x] 9.3.  Calling it returns status "available" + correct name + a real
+              version string.  (Inspector CLI tools/call -> status
+              "available", name "mcp-abacus", version "0.0.1".)
+    [x] 9.4.  `uv run pytest` (section 7) and `uv run ruff check` both pass.
+              (10 passed; "All checks passed!")
+    [x] 9.5.  Commit the green skeleton; tag-free. Feature work starts after.
+
+================================================================================
+BOOTSTRAP COMPLETE (sections 1-9 done 2026-06-11). Feature work (10-16, SA)
+can start. Remember: after changing server code, `uv tool install --reinstall .`
+so the user-scoped `abacus` MCP registration picks up the new build.
+================================================================================
+
+
+--- expression evaluator (10 — the flagship calculator) ---
+[ ] 10.  Multi-model expression evaluator               [BUILD] rel=low
+         Eval ONE expression under several numeric regimes at once;
+         return each regime's result as its normal string (see 10.3).
+         Why a tool: the model CANNOT predict exact float/double
+         rounding, and this makes
+         "why float != money" runnable. Crypto/fixed-point native.
+    [ ] 10.1.  Modes (each = representation + precision/scale + rounding
+               + division/irrational rule)
+        [ ] 10.1.1.  fixed-point / scaled-integer   *** FLAGSHIP ***
+                     your system: value = (mantissa:int, decimals:int);
+                     +/- align to max scale, * SUMS decimals, / needs a
+                     target scale + rounding. Exact, deterministic,
+                     ERC-20 / money-safe. Scale is data on the value.
+        [ ] 10.1.2.  binary32  (IEEE-754 float, ~7 sig digits)
+        [ ] 10.1.3.  binary64  (IEEE-754 double, ~15-17 sig digits;
+                     JS/JSON default)
+        [ ] 10.1.4.  binary16 / bfloat16  (ML; optional)
+        [ ] 10.1.5.  decimal(prec, rounding)  (base-10 arbitrary
+                     precision)
+        [ ] 10.1.6.  rational  (exact numerator/denominator; no
+                     irrationals)
+        [ ] 10.1.7.  bigfloat(prec)  (arbitrary-precision binary;
+                     sqrt/pi/trig)
+    [ ] 10.2.  Per-mode parameters
+        [ ] 10.2.1.  precision / scale (sig digits, or fixed decimals)
+        [ ] 10.2.2.  rounding mode (half-even / half-up / toward-zero /
+                     floor / ceil)
+        [ ] 10.2.3.  division & irrational handling (target scale;
+                     exact vs approx)
+        [ ] 10.2.4.  overflow / fixed-width behavior (wrap / saturate /
+                     error)
+    [ ] 10.3.  Output: the calculated value per mode, converted to its
+               normal string format — nothing more.
+    10.L.  Libraries — reference  (pure-Python implementations; all
+           exact, bit-for-bit — see notes):
+        10.L.1.  fixed-point / scaled-int -> stdlib int math (Python int
+                 is arbitrary-precision natively; ZERO deps)
+        10.L.2.  binary16/32/64 -> CPython float IS IEEE-754 binary64;
+                 f32/f16: compute each op in binary64, then round via
+                 struct ('f'/'e') — EXACT by the double-rounding theorem
+                 (53 >= 2*24+2 and 53 >= 2*11+2). bfloat16: round-to-
+                 nearest-even bit manipulation on the f32 pattern.
+                 CAVEAT: struct 'e' raises OverflowError past f16 range
+                 instead of rounding to inf — handle that branch
+                 manually (values >= 65520 round to inf).
+        10.L.3.  decimal(prec, rounding)  -> decimal (stdlib; contexts
+                 give per-mode precision + rounding directly)
+        10.L.4.  rational                 -> fractions (stdlib)
+        10.L.5.  bigfloat(prec)           -> mpmath (pip; pure Python).
+                 If MPFR-grade correctly-rounded transcendentals are
+                 ever required, gmpy2 (pip, prebuilt wheels) — a dep we
+                 install, not code we build.
+        10.L.6.  big-integer (for L.1/L.4 at scale) -> Python int,
+                 arbitrary-precision natively
+        10.L.7.  expression parsing       -> ast (stdlib, safe-eval) or
+                 a small Pratt parser; NEVER raw eval()
+        10.L.8.  fixed-width ints (12.2 + 10.2.4) -> Python int +
+                 mask/re-sign after EVERY op (wrap); compare-and-clamp
+                 (saturate); range-check (error)
+
+--- numbers & bits (11-14) ---
+[ ] 11.  Float internals
+    [ ] 11.1.  IEEE-754 float <-> raw bits, f16/f32/f64
+               (sign / exponent / mantissa)             [BUILD] rel=low
+[ ] 12.  Integer interpretation
+    [ ] 12.1.  two's-complement signed<->unsigned
+               at fixed width                           [BUILD] rel=low
+    [ ] 12.2.  fixed-width overflow / wraparound
+               (int8..int64, signed & unsigned)         [BUILD] rel=low
+[ ] 13.  Bit operations
+    [ ] 13.1.  bitwise AND/OR/XOR/NOT (32/64-bit)       [BUILD] rel=medium
+    [ ] 13.2.  shifts (logical/arithmetic) + rotates
+               (ROL/ROR) at fixed width                 [BUILD] rel=medium
+    [ ] 13.3.  popcount / Hamming weight / bit-length   [BUILD] rel=medium
+    [ ] 13.4.  byte-order swap / endianness
+               (bswap16/32/64)                          [MAYBE] rel=medium
+    [ ] 13.5.  Gray-code encode/decode                  [MAYBE] rel=medium
+        13.6.  single bit set/clear/toggle/test         [SKIP]  rel=high
+[ ] 14.  Big-integer
+    [ ] 14.1.  modpow / modinv / gcd                    [BUILD] rel=low
+    [ ] 14.2.  base conversion hex/oct/bin/dec
+               (large values)                           [BUILD] rel=medium
+
+--- text, unicode & bytes (15 — moved from old 1.5) ---
+[ ] 15.  Text, Unicode & byte manipulation
+    [ ] 15.1.  string escape/unescape
+               (JSON/JS/Python/C/shell)                 [BUILD] rel=medium
+    [ ] 15.2.  \uXXXX / \xNN unicode-escape <-> text    [BUILD] rel=medium
+    [ ] 15.3.  code point <-> char; UTF-8 / UTF-16
+               byte view                                [BUILD] rel=low
+    [ ] 15.4.  Unicode normalization (NFC/NFD/NFKC/
+               NFKD)                                    [BUILD] rel=low
+    [ ] 15.5.  hex dump / hexdump <-> bytes             [BUILD] rel=low
+    [ ] 15.6.  charset transcode (latin-1 / cp1252
+               <-> utf-8)                               [BUILD] rel=low
+        15.7.  ROT13 / Caesar shift                     [SKIP]  rel=high
+    (Libraries: all stdlib — unicodedata / codecs / binascii)
+
+
+[ ] 16.  ARCHITECTURE / BUILD  (DECISION REVISED: PURE PYTHON, whole
+         project. The earlier C++-core plan — nanobind, scikit-build-core,
+         CMake, cibuildwheel, abi3 wheel matrix — is DROPPED.)
+    16.1.  LANGUAGE (decision, for reference):
+        16.1.1.  §1 encoding/hashing/crypto (Server B "mcp-bytesmith")
+                 -> PURE PYTHON STDLIB, as before. hashlib/base64/hmac/
+                 secrets are already thin bindings over OpenSSL's C.
+        16.1.2.  §3 calculator / bit-math / fixed-point eval -> PURE PYTHON
+                 too. Rationale: every planned mode is implementable with
+                 EXACT, bit-for-bit type semantics in pure Python (see
+                 10.L — verified for int32 wrap, binary32, binary16);
+                 per-call performance is irrelevant for an MCP calculator;
+                 and dropping the compiled core deletes the project's
+                 single biggest cost (the ~10-30 wheel CI matrix).
+    [ ] 16.2.  TOOLCHAIN (unchanged from the skeleton — nothing migrates):
+        [ ] 16.2.1.  hatchling build backend (2.3, 3.1) stays.
+        [ ] 16.2.2.  FastMCP (Python SDK) -> auto-generates each tool's
+                     JSON schema from type hints + docstrings.
+        [ ] 16.2.3.  Deps: stdlib for everything except bigfloat (mpmath,
+                     pip) and expression parsing if lark is chosen over a
+                     hand-written Pratt parser (2.4).
+    [ ] 16.3.  PYPI PUBLISHING (now trivial):
+        16.3.1.  Pure Python = ONE universal wheel + sdist. No compilers,
+                 no cibuildwheel, no platform babysitting.
+        [ ] 16.3.2.  Reuse the EXISTING mcp-tmux Trusted-Publishing
+                     workflow unchanged (see 8.3).
+    16.4.  COST: effectively none — CI is just lint + tests + a universal
+           wheel, identical in shape to mcp-tmux.
+
+
+[x] 17.  EXPRESSION AST  (foundation for the evaluator 10; pure stdlib)
+         Design decided 2026-06-11: arithmetic-core node set, frozen
+         dataclasses, literals stored as SOURCE LEXEME strings,
+         IN-NODE evaluation (see 18 — methods added there, not here;
+         17 ships data-only nodes + pretty()).
+         (done 2026-06-11: expr/nodes.py + expr/__init__.py +
+         tests/test_nodes.py; pretty() format "Kind op/lexeme (line N)",
+         2-space indent; line is kw-only with NO default.)
+    [x] 17.1.  New subpackage src/mcp_abacus/expr/ — home of the future
+               expression engine (nodes now; lexer/parser and the
+               multi-mode evaluator are LATER items). __init__.py
+               re-exports the public names from nodes.py.
+    [x] 17.2.  expr/nodes.py — frozen-dataclass AST node classes
+               (dataclass(frozen=True, slots=True); stdlib only):
+        [x] 17.2.1.  Node — abstract base, no fields (__slots__ = ()).
+        [x] 17.2.2.  Number(lexeme: str) — the literal kept EXACTLY as
+                     written ("0.1", "1e-3"); each mode interprets the
+                     string in its OWN representation (type-
+                     faithfulness: parsing to float here would bake in
+                     binary64 rounding before fixed-point/decimal modes
+                     ever see the value). Lexemes are UNSIGNED — sign
+                     is UnaryOp.
+        [x] 17.2.3.  UnaryOp(op: str, operand: Node) — op in {+, -}.
+        [x] 17.2.4.  BinOp(op: str, left: Node, right: Node) — op in
+                     {+, -, *, /, //, %, ^}; ^ is POWER in this
+                     expression language (per the CORE CONCEPT example
+                     "a + b * 10^3"), not XOR.
+        [x] 17.2.5.  Validate in __post_init__ -> ValueError (unknown
+                     op; empty lexeme; line < 1). Operator sets as
+                     module-level frozensets UNARY_OPS / BINARY_OPS.
+        [x] 17.2.6.  line: int on EVERY node (keyword-only, 1-based) —
+                     the input line the node came from, so error
+                     messages from the later parser/evaluator can say
+                     WHERE. Excluded from __eq__/__hash__ (compare=
+                     False): trees are structurally equal regardless
+                     of where they appeared in the input.
+        [x] 17.2.7.  Recursive pretty printer — Node.pretty() -> str:
+                     multi-line, indented tree view (one node per
+                     line: kind + op/lexeme + line number), children
+                     indented one level deeper. For seeing the tree
+                     on demand; repr stays the dataclass default.
+                     (18.6 later appends each node's calculated
+                     value to its line.)
+    [x] 17.3.  tests/test_nodes.py (plain sync pytest, like 7.x):
+               construction + field round-trip; the "1 + 2 * 10^3"
+               example tree nests correctly; structural equality
+               (same tree, different line numbers -> still equal);
+               hashable; frozen (FrozenInstanceError); ValueError on
+               bad op / empty lexeme / line < 1; match/case
+               destructuring works (for external consumers; the
+               evaluator itself is in-node — 18);
+               pretty() golden test on the example tree (exact
+               expected multi-line string, line numbers shown);
+               re-export imports from mcp_abacus.expr work.
+    [x] 17.4.  Verify: uv run pytest green (new + existing 10), ruff
+               check + format --check clean, mypy clean. NO MCP tool
+               surface change — server.py untouched, so NO
+               `uv tool install --reinstall` needed for this item.
+               Commit when green.  (24 passed — 14 new; all 4 gates
+               clean.)
+    17.5.  Deliberately EXCLUDED for now (added later, when a consumer
+           exists): Name/variables, Call/functions (sqrt etc. —
+           anticipates 10.1.7), column/character-span position info
+           (line number IS in scope — 17.2.6; finer spans only if
+           error messages ever need them), evaluate() methods (18).
+
+
+[x] 18.  EVALUATION — IN-NODE  (decision recorded 2026-06-11;
+         full planning TBD in a later session)
+         (done 2026-06-11: evaluate() on the nodes against a MINIMAL
+         Value slice built ahead of 19 — expr/values.py, modes
+         "rational" + "binary64" as plain strings, see the 19 note.
+         Base Node.evaluate() wraps abstract _evaluate() per class:
+         one shared place for error-wrapping (18.4) + storing (18.5).
+         EvalError(message, line) lives in nodes.py. value field is
+         init=False, compare=False, repr=False — repr stays
+         structural; pretty() is the values view.)
+    [x] 18.1.  Each node class implements evaluate(mode) -> Value
+               (19) — the post-order recursion lives ON the nodes.
+               Nodes from 17 gain their evaluate() methods HERE,
+               once Value exists.
+    [x] 18.2.  ALL arithmetic delegates to Value: BinOp.evaluate
+               computes left and right, then combines them with
+               plain Python operators on Values (a + b, a * b);
+               our ^ translates to a ** b (Python's ^ is XOR —
+               never overloaded as power, see 19.5).
+    [x] 18.3.  Number.evaluate calls Value.from_lexeme(lexeme, mode);
+               the mode parameter only threads down to the literals.
+    [x] 18.4.  Error reporting split: Value ops raise mode-agnostic
+               arithmetic errors WITHOUT position info (19.8);
+               node.evaluate() catches and re-raises EvalError
+               carrying node.line (the reason for 17.2.6). One mode
+               erroring must not stop the other modes' results —
+               that isolation lives in the item-10 runner (18.7.2),
+               not here.
+    [x] 18.5.  Nodes HOLD their calculated value: every node gets a
+               value: Value | None annotation field — None until
+               evaluated; evaluate() stores each node's result as the
+               recursion unwinds. compare=False keeps structural
+               equality/hash untouched. NOTE: on a frozen dataclass
+               evaluate() must set it via object.__setattr__ (the
+               same bypass frozen dataclasses' own generated __init__
+               uses) — the structural fields stay frozen; only this
+               designated annotation slot is written.
+               ONE value, NOT per-mode: a calculation always runs in
+               ONE type at a time, like a real calculator set to a
+               type ("how much is 12 / 766 on a 64-bit integer
+               calculator?") — every part of the expression is done
+               in that type. Re-evaluating under another mode
+               OVERWRITES; the item-10 multi-mode runner just does
+               N single-mode runs and collects the ROOT result after
+               each.
+    [x] 18.6.  pretty() extended (from 17.2.7): when a node has a
+               stored value, append " = <formatted value>" to its
+               line — so printing the tree shows what each PART of
+               the expression got in the current mode's run.
+    [ ] 18.7.  STILL TO PLAN (separate items, later):
+            18.7.1.  lexer/parser text -> AST — DONE as item 20
+                     (2026-06-11).
+        [ ] 18.7.2.  item-10 tool wiring: run evaluate() once per
+                     requested mode, return each mode's root result as
+                     its normal string (10.3).
+
+
+[ ] 19.  UNIVERSAL VALUE CLASS — the shell, design decisions, and open
+         faithfulness questions all live in expr/value.py's docstring;
+         the working minimal slice stays at expr/values.py until rewired.
+    [ ] 19.1.  Enum recording the type of the held value AND the storage
+               that holds it — each type below adds an enum member plus
+               the capability to store that type's value:
+        [x] 19.1.1.  floating-point — IEEE-754 double, ~15-17 sig digits;
+                     the default float type (C's "double"). The narrower
+                     floats (19.1.3-19.1.5) keep width-tagged names
+                     (float32/float16/bfloat16) so "floating-point" stays
+                     unambiguous as the default (decided 2026-06-12).
+        [x] 19.1.2.  fixed-point — scaled integer (mantissa, decimals);
+                     exact, money/ERC-20-safe (flagship).
+        [ ] 19.1.3.  binary32 — IEEE-754 single, ~7 significant digits.
+        [ ] 19.1.4.  binary16 — IEEE-754 half, ~3-4 sig digits.
+        [ ] 19.1.5.  bfloat16 — brain float: binary32 range, 8-bit mantissa.
+        [ ] 19.1.6.  decimal — base-10 arbitrary precision (prec, rounding).
+        [x] 19.1.7.  rational — exact numerator/denominator; no irrationals.
+        [ ] 19.1.8.  bigfloat — arbitrary-precision binary (sqrt/pi/trig).
+    [ ] 19.2.  Implement from_lexeme() — raw literal -> Value for every
+               20.1.3 form, incl. base-prefixed integers (20.4). The
+               behaviour contract is in value.py's class docstring.
+        [x] 19.2.1.  Restrict `M@D` to hex/octal/binary literals — raw
+                     integers that have no other way to write a fraction.
+                     Decimal literals set precision by writing the decimals:
+                     273645.00 is scale 2. Decimal `@` is a nightmare: it
+                     point-shifts to a tiny number instead of setting scale.
+                     Drop decimal `@`. Abacus today returns for 67@8:
+                       0.00000067 (exact), precision 8
+                     — should be 67.00000000 at scale 8, or just not allowed.
+    [x] 19.3.  Operator methods (named methods — the class design and
+               the no-overloading decision live in value.py's docstring):
+        [x] 19.3.1.  Implement add()       (binary +)
+        [x] 19.3.2.  Implement sub()       (binary -)
+        [x] 19.3.3.  Implement mul()       (binary *)
+        [x] 19.3.4.  Implement div()       (binary /)
+        [x] 19.3.5.  Implement floordiv()  (binary //)
+        [x] 19.3.6.  Implement mod()       (binary %)
+        [x] 19.3.7.  Implement pow()       (binary **, power)
+        [x] 19.3.8.  Implement neg()       (unary -)
+        [x] 19.3.9.  Implement pos()       (unary +)
+        [x] 19.3.10. Implement bitand()    (binary &, bitwise AND) — 24.3.2
+        [x] 19.3.11. Implement bitor()     (binary |, bitwise OR)  — 24.3.2
+        [x] 19.3.12. Implement bitxor()    (binary ^, bitwise XOR) — 24.3.2
+        [x] 19.3.13. Implement bitnot()    (unary ~, bitwise NOT)  — 24.3.2
+    [x] 19.4.  Implement to_string() — render the Value in its mode's
+               normal string format (10.3). Named method (not __str__)
+               so it can grow formatting options later, per 19.3's
+               no-dunder rationale.
+    [ ] 19.5.  Function methods — the per-mode implementation home for
+               the call functions (section 22). Named methods on Value,
+               each its own per-mode match like 19.3; dispatched from
+               nodes._FUNCS. Per-mode semantics live in each method's
+               docstring. Fixed-point math stays on int — NEVER route it
+               through decimal: decimal's sig-digit context silently rounds
+               arithmetic on big values; decimal is for literal PARSING
+               only (exact construction).
+        [x] 19.5.1.  Implement abs_()  — exact in every mode (cf. neg()).
+        [x] 19.5.2.  Implement sqrt()  — irrational: fixed-point + binary64
+                     compute and round (exact=False); rational exact only
+                     for perfect squares, else NotRepresentableError.
+                     Fixed-point: math.isqrt on the scaled mantissa (exact
+                     floor, bignum-native).
+        [ ] 19.5.3.  Implement pi()  — nullary constant. binary64: math.pi.
+                     rational: NotRepresentableError (irrational). fixed-point:
+                     irrational, compute to a target scale (bc-style series on
+                     int, see section 22).
+                     ISSUE TO PLAN: a nullary function has NO operand, so there
+                     is no scale to round to (every other function inherits its
+                     scale from its argument). Where does pi()'s fixed-point
+                     scale come from — a required precision arg, a per-mode
+                     default scale, or some ambient setting? Affects every
+                     future constant/nullary function.
+
+
+[x] 20.  LEXER / PARSER  (text -> AST; planned 2026-06-11; fleshes
+         out stub 18.7.1)
+         Hand-written, pure stdlib — no lark dep (keeps 2.4/16.2.3
+         clean). stdlib ast is UNUSABLE here: our ^ is POWER with
+         tighter-than-* precedence; Python's ^ is XOR with looser.
+         (done 2026-06-11: expr/lexer.py + expr/parser.py +
+         tests/test_lexer.py + tests/test_parser.py — 52 new tests,
+         122 total green; ruff check/format + mypy clean. The two
+         left-assoc binary levels run on a Pratt binding-power
+         table; unary/power/atom are plain descent. LexError
+         propagates out of parse() unchanged. ASCII-only digits, no
+         underscore separators. NO MCP surface change — no
+         `uv tool install --reinstall` needed.)
+    [x] 20.1.  expr/lexer.py — the tokenizer:
+        [x] 20.1.1.  Token = frozen dataclass (kind, lexeme, line).
+                     Every token carries its 1-based input line —
+                     this is what feeds node.line (17.2.6).
+        [x] 20.1.2.  Token kinds: NUMBER, OP (+ - * / // % ^),
+                     LPAREN, RPAREN, EOF. Longest match: '//' is ONE
+                     token, never two '/'.
+        [x] 20.1.3.  NUMBER lexemes (kept as RAW SOURCE — 17.2.2):
+                     integers (42), decimals (0.1, 3., .5),
+                     scientific (1e-3, 2.5E+6), and base-prefixed
+                     INTEGERS 0xFF / 0b1010 / 0o17 (decided
+                     2026-06-11: included from the start, ahead of
+                     the fixed-width/bit modes 12.x/13.x). UNSIGNED —
+                     sign is parsed as a unary op (17.2.2).
+        [x] 20.1.4.  Whitespace skipped; '\n' increments the line
+                     counter (an expression may span lines).
+        [x] 20.1.5.  LexError(message, line) on unknown characters
+                     and malformed numbers ('0x' without digits,
+                     '1e' without exponent, '1.2.3').
+    [x] 20.2.  expr/parser.py — recursive descent (Pratt-style
+               binding powers for the binary levels), producing 17's
+               nodes:
+        [x] 20.2.1.  Grammar / precedence (loose -> tight), DECIDED
+                     2026-06-11 — math convention, NOT Excel:
+                     1. additive        + -        left-assoc
+                     2. multiplicative  * / // %   left-assoc
+                     3. unary           + -
+                     4. power           ^          RIGHT-assoc and
+                        TIGHTER than unary minus:
+                        -2^2 = -(2^2) = -4;  2^3^2 = 2^(3^2) = 512;
+                        exponent may itself be unary: 2^-3 = 2^(-3).
+                     5. atom: NUMBER | '(' expr ')'.
+        [x] 20.2.2.  parse(text: str) -> Node is the public API;
+                     every node built with line= from its defining
+                     token. Parens only shape the tree — no Group
+                     node.
+        [x] 20.2.3.  ParseError(message, line) on unexpected/missing
+                     tokens: unbalanced parens, trailing garbage,
+                     empty input, operator without operand.
+        [x] 20.2.4.  ONE expression per parse() call (the calculator
+                     model, 18.5); input may span lines but must
+                     contain exactly one expression.
+    [x] 20.3.  tests/test_lexer.py + tests/test_parser.py:
+               token kinds/lexemes/line numbers incl. multi-line
+               input; '//' longest match; every literal form of
+               20.1.3 round-trips as raw lexeme; precedence proven
+               via tree shapes (pretty() golden tests): 1+2*3,
+               -2^2 -> -(2^2), 2^3^2 right-assoc, 2^-3, (1+2)*3,
+               7//2%3 left-assoc; LexError/ParseError cases carry
+               the correct line number.
+    [x] 20.4.  Consequence for 19.3 (from_lexeme): base-prefixed
+               lexemes are INTEGER literals, valid in EVERY mode as
+               that integer value (0xFF == 255 in fixed-point,
+               binary64, decimal, ...) — each mode converts the raw
+               string itself.  (Already implemented in the item-18
+               values.py slice; covered end-to-end by
+               test_parse_then_evaluate_end_to_end.)
+    [x] 20.5.  Fixed-point DECIMALS literal notation (decided
+               2026-06-12; consumed by from_lexeme 19.2 / fixed-point
+               19.1.2). Scale from a DECIMAL's own digits, or a raw
+               integer + an explicit '@'<decimals> tag. Notation
+               rationale + examples: lexer.py module docstring.
+        [x] 20.5.1.  Lexer: integer '@'<decimals> suffix, kept as raw
+                     source. See lexer.py _lex_number / _lex_at_decimals.
+        [x] 20.5.2.  Tests (20.3): '@' forms round-trip as raw lexeme;
+                     the (0xFF@9)^2 binding; LexError line numbers for
+                     1.5@9 and a trailing '@'.
+
+
+[ ] 21.  LANGUAGE HELP TOOL  (planned 2026-06-12; an in-server reference
+         the AI reads to drive the evaluator correctly — terse, facts
+         only, no prose; the model fills in the rest)
+    [x] 21.1.  New MCP tool taking ONE argument `section`; returns that
+               section's reference text. Extensible — more sections added
+               later without changing the call shape.
+    [ ] 21.2.  Initial sections:
+        [x] 21.2.1.  `types` — short list of the numeric types the
+                     CURRENT build supports: each = name + a one-liner
+                     (e.g. "binary64 — IEEE-754 double, ~15-17 sig
+                     digits"). Sourced from the live Value type enum
+                     (19.1) so it tracks what is actually implemented,
+                     not what is planned.
+        [x] 21.2.2.  `language` — the expression grammar: operator set +
+                     precedence/associativity (20.2.1) and the literal
+                     forms incl. base prefixes and the M@D fixed-point
+                     notation (20.1.3 / 20.5). Just the grammar, nothing
+                     verbose.
+        [ ] 21.2.3.  `functions` — short list of the call functions the
+                     CURRENT build supports: each = name + signature/arity
+                     + a one-liner (e.g. "sqrt(x) — square root; inexact in
+                     fixed-point/binary64"). Sourced from the nodes._FUNCS
+                     registry (22.3) so it tracks what is actually wired,
+                     not what is planned.
+
+
+[ ] 22.  FUNCTIONS  (call syntax + abs/sqrt; planned 2026-06-12)
+    DECISION (2026-06-13): functions stay per-mode METHODS on Value (19.5/22.4),
+    dispatched from the _FUNCS name->method table in nodes.py (the "function set"
+    is that registry, parallel to _UNARY_FUNCS/_BINARY_FUNCS). REJECTED: an
+    external function-set class computing from a list of Values + payload getters
+    on Value. Reason: per-type math (sqrt: isqrt vs math.sqrt vs perfect-square)
+    needs each mode's representation, so it would re-introduce per-Mode branching
+    OUTSIDE Value and break the single-chokepoint / two-step-add-a-type invariant
+    (value.py:4-13). Class-bloat worry is handled by module-level per-mode helpers
+    (_fp_value/_bitwise), NOT by crossing the mode boundary.
+    [x] 22.1.  Lexer: add NAME token [A-Za-z_][A-Za-z0-9_]*; add COMMA
+               (for future n-ary funcs). Generic NAME — function set is
+               not the lexer's concern.
+    [x] 22.2.  Parser: function call is an atom (tightest binding):
+               atom := NUMBER | '(' expr ')' | NAME '(' expr (',' expr)* ')'.
+               Validate name + arity against the registry HERE -> ParseError
+               (carries the token line); unknown-name/wrong-arity are parse
+               errors.
+    [x] 22.3.  Nodes: FuncCall(name, args: tuple[Node,...]); reuses
+               evaluate()/pretty(). Dispatch via a _FUNCS name->Value-method
+               table, mirroring _UNARY_FUNCS/_BINARY_FUNCS.
+    [ ] 22.4.  Value: one named method per function, each its own per-mode
+               match (NOT a giant switch). Camp split:
+        [x] 22.4.1.  abs FIRST — exact in every mode (shape of neg()).
+                     Pure plumbing check: exercises 22.1-22.3 end to end.
+        [x] 22.4.2.  sqrt SECOND — first irrational:
+                     - fixed-point: SUPPORTED (crypto). isqrt on the scaled
+                       int, half-even quantize, exact=False. Inexactness is
+                       documented in sqrt's docstring (the spec). Default
+                       round-to operand scale; leave room for an optional
+                       target-scale arg.
+                     - binary64: math.sqrt; negative -> NotRepresentableError.
+                     - rational: perfect square -> exact; else
+                       NotRepresentableError (no scale to round to).
+    [x] 22.5.  Tests: abs/sqrt per mode; sqrt exact vs inexact flag;
+               rational/negative refusals carry the right line; parse
+               errors for unknown name and wrong arity.
+    STILL TO PLAN:
+      - [DONE] n-ary (variadic) call support is built: FUNCTION_ARITIES is now a
+        (min, max|None) range, so a *args method declares a minimum. sum (28.5)
+        was the plumbing check. COMMA was reserved in 22.1.
+      - fixed-point sqrt target-scale argument (default = operand scale).
+      - constants pi/e as zero-arg names (out of scope for now).
+      - nullary-call support — a zero-argument call shape (grammar atom
+        NAME '(' ')'; arity 0 in the registry; mode-without-operand dispatch,
+        since no operand carries the mode). Prerequisite for the pi/e constants
+        above and for time() (28.1); to plan before any nullary function lands.
+      - functions feed the language-help `functions` section (21).
+
+
+[x] 23.  EVALUATE TOOL  (planned 2026-06-12; the flagship — expose the
+         evaluator to callers; 10 / SA.2.1)
+    [x] 23.1.  New MCP tool `calculate`: expression string -> result.
+    [x] 23.2.  Optional `mode` arg; default fixed-point.
+    [x] 23.3.  Errors -> message + line (Lex/Parse/EvalError).
+    [x] 23.4.  Output: always the result's string representation.
+    [x] 23.5.  Unknown mode -> error "Unknown mode." + list valid modes.
+    [x] 23.6.  mode-arg aliases: accept float64 and double as aliases for
+               floating-point (19.1.1). Canonical name resolved before
+               dispatch; help/output report the canonical name, not the
+               alias. No aliases for other modes.
+
+
+[ ] 24.  LATENCY / INTERFACE  (planned 2026-06-12; cut model round trips, not
+         wire speed. Each answer floors at 2 inference turns; expected turns
+         rise by P(model calls `help` first) + P(first calculate errors ->
+         retry). These drive both probabilities toward 0 via schema/text only
+         — no engine work.)
+    [x] 24.1.  Self-sufficient `calculate` docstring: replace the "call the
+               `help` tool for types/grammar" tail with an inline cheatsheet
+               (3 mode names, ^ is POWER not XOR, no implicit type promotion,
+               literal forms incl. M@D). Kills the `help` discovery turn for
+               the common case; `help` demoted to fallback for full detail.
+    [x] 24.2.  Broaden mode aliases (extends 23.6) to the model's likely
+               first guesses so a plausible name resolves in turn 1 instead
+               of erroring -> retry: float, ieee754 -> floating-point;
+               fraction, frac -> rational; decimal -> fixed-point. Flag
+               decimal if a true decimal Mode (SA.2.1) lands later. Same
+               rule as 23.6: aliases resolve to canonical; never surfaced.
+    [ ] 24.3.  Make first-attempt mistakes self-correcting in one turn:
+               the ^-as-XOR and type-mixing gotchas live only inside `help`
+               today, so 24.1 surfaces them up front; additionally embed the
+               correction in the Parse/EvalError text (23.3) for type-mixing
+               so a single retry fixes it rather than help+retry.
+
+               DECISION (2026-06-13): primarily a PROGRAMMER's tool, so adopt
+               C/Python operator conventions — flip the symbols (24.3.1 + 24.3.2)
+               rather than document around the ^-as-XOR surprise.
+        [x] 24.3.1.  Power moves from `^` to `**` (right-assoc, tightest), freeing
+                     `^` for XOR; `^`-as-power then errors, steering to `**`.
+        [x] 24.3.2.  Add bitwise XOR `^`, AND `&`, OR `|`, NOT `~` (unary),
+                     `^` reprecedenced loose.
+
+                     DECISION (2026-06-13): implement the bitwise ops for EVERY
+                     type, not integer-only. Masking a floating-point value may
+                     look pointless, but it is not ours to decide which bit
+                     manipulation is beneficial and which is not — offer it on
+                     all types and let the caller judge.
+
+                     DECISION (2026-06-13): when the two operands differ in bit
+                     width, the WIDER one wins — the narrower operand is
+                     zero-extended, i.e. the bits it does not cover are treated
+                     as 0.
+
+
+[ ] 25.  ENHANCING THE TOOLS
+    [x] 25.1.  The precision of the return value MUST absolutely be indicated
+               in the return. Otherwise a simple `/` operator may mislead the
+               caller seriously. The exact/inexact information is ALREADY there
+               (computed today as the Value.exact flag) — this is purely about
+               returning it, NOT about the calculation. When an inexact value
+               is reported back for a fixed-point calculation, the precision
+               must also be reported. The return string itself should carry the
+               exact/inexact information; AND separate fields should be returned
+               alongside it — the precision (when known) and the exact/inexact
+               property (as it is calculated now).
+    [x] 25.2.  Make `help` and the `calculate` description make it obvious that
+               M@D is base-prefixed-ONLY (19.2.1): only 0x.. 0o.. 0b.. take @D;
+               a DECIMAL mantissa (123.45@2) is INVALID.
+    [x] 25.3.  The "inexact" reply pushes the caller the WRONG way: toward
+               floating-point, instead of toward a higher-precision fixed-
+               point. Steer the inexact case toward more fixed-point
+               precision, NOT toward float.
+
+                 | # | Expression          | Mode            | Result                                    |
+                 |---|---------------------|-----------------|-------------------------------------------|
+                 | 1 | 928347569 / 2345    | fixed-point     | 395884 (inexact, rounded to 0 decimals)   |
+                 | 2 | 928347569 % 2345    | fixed-point     | 1934 (exact)                              |
+                 | 3 | 928347569 / 2345    | floating-point  | 395883.82473347546 (inexact)              |
+
+               TESTED 2026-06-13: docstring path confirmed — a fresh caller
+               (Claude) asked 89237465 / 2345 and made its FIRST call with
+               min_fixed_point_precision=10 already set, never touching
+               floating-point. The precision came from the DOCSTRING
+               description of the argument (25.3.2's "documented in the
+               calculate docstring, known before the first call"), NOT from
+               the inline =K annotation hint — there was no prior inexact
+               reply in-session to read that hint from. So this validates the
+               docstring-steering path only; the annotation-string hint path
+               (25.3.2 HOW, first clause) remains untested here.
+        [x] 25.3.1.  The call should take a min_fixed_point_precision argument,
+                     accepted only in fixed-point mode.
+        [x] 25.3.2.  Direct the caller to min_fixed_point_precision.
+                     WHEN — only on an inexact fixed-point result (the one
+                     case the arg helps and float tempts).
+                     HOW — name it in that result's inexact annotation
+                     ("...rounded to N decimals — pass
+                     min_fixed_point_precision=K for more"), and document it
+                     in the calculate docstring (known before the first call).
+        [x] 25.3.3.  Cheap to compute twice: alongside the result, preview
+                     what a higher precision would have shown — "the result
+                     is 27, but with min_fixed_point_precision=4 it would be
+                     27.6523". Add this ONLY if: fixed-point mode (the
+                     default); min_fixed_point_precision was NOT given in the
+                     call; AND the preview precision actually changes the
+                     value (not 27.0000).
+                     REPLY SHAPE (decided 2026-06-13). ONE representative
+                     preview, NOT a ladder — a single nullable `preview`
+                     sibling field that mirrors the reply's own string +
+                     structured-fields duality, recursed one level:
+                       "preview": { "min_fixed_point_precision": K,
+                                    "value": "395883.82", "exact": false }
+                     null whenever the three gate conditions above are not all
+                     met. The nested object is self-documenting — its
+                     min_fixed_point_precision key IS the argument to pass and
+                     its value is what you'd get back — and the ACTUAL answer
+                     stays at the TOP level, so nesting (not just naming) keeps
+                     the what-if from being mistaken for the result. The
+                     `value` annotation string ALSO carries the hint inline
+                     ("...for more; e.g. =K -> 395883.82") so the string never
+                     lies on its own.
+                     PREVIEW PRECISION K = result scale + N, a small fixed bump
+                     (N = 4): deterministic and cheap, no adaptive search. The
+                     "changes the value" gate still applies — if scale+N renders
+                     value-equal to the result (the rare "27.0000" case), omit
+                     the preview (null).
+
+[x] 26.  Make the `analyze` AST printout more useful to the caller.
+    [x] 26.1.  Print the value as "value = 1/10 (type [prec])".
+    [x] 26.2.  Rename "Number" to "Literal"; show the lexeme (already shown)
+               quoted, e.g. "12", so it reads as the source string.
+    [x] 26.3.  Also show the value in hex — even float/double (raw-bits
+               hexdump is useful). Fixed-point in hex uses M@D notation.
+    [x] 26.4.  Drop the line numbers — meaningless at this stage. Maybe later.
+    [x] 26.5.  Mark each node exact/inexact (straight from the node's own
+               value.exact; a parent is inexact simply by using an inexact child,
+               so no separate flip / first-loss flag is needed).
+    [x] 26.6.  For floating-point, also show the exact decimal the double
+               holds (e.g. 0.1 -> 0.1000000000000000055...).
+    [x] 26.7.  For rational, show a decimal approximation beside the exact
+               fraction (e.g. 1/3 = 0.3333...).
+
+
+[x] 27.  ENRICH THE `calculate` REPLY (and its docstring) for the AI caller.
+         Six reply-shape changes on top of 25.*, all so the caller reads the
+         numbers back without guessing the regime or re-deriving the bits.
+         Decided 2026-06-13. Scope is the `calculate` STRUCTURED reply; `analyze`
+         already renders hex and per-mode detail inline in its tree (26.3).
+    [x] 27.1.  Always return `mode` in the reply — the RESOLVED Mode.value
+               (e.g. "fixed-point"), even on success where it equals the
+               request. The reply must stand on its own: a request alias like
+               "double" must read back as its canonical "floating-point". On
+               the error path `mode` is null alongside value/exact/precision
+               (an unknown mode never resolved), matching _error's all-null shape.
+    [x] 27.2.  Rename the `preview` field to `offered_precision`. Same gate and
+               meaning as 25.3.3 — the what-if at result-scale + 4 decimals, null
+               unless fixed-point AND inexact AND no floor was passed — but the
+               name states what it IS: a higher precision being offered to the
+               caller, not a preview of the answer they asked for.
+    [x] 27.3.  `offered_precision` carries `mode` too (always "fixed-point" — it
+               is only ever produced in fixed-point), mirroring 27.1 so the
+               nested object is as self-describing as the top-level reply.
+    [x] 27.4.  `offered_precision.value` is ANNOTATED exactly as the top-level
+               `value` is — with its OWN exact/inexact verdict and rounding,
+               e.g. "3.3333 (inexact, rounded to 4 decimals — ...)", not a bare
+               "3.3333". The offered value is itself a fixed-point result and may
+               still be inexact (10/3 never terminates at any scale), so it must
+               declare its own precision the same way the main value does. Show
+               the offered value the same way the main value shows its value.
+    [x] 27.5.  Wherever a value STRING is returned, return a sibling
+               `value_hex_dump` with that value in hex: at the top level beside
+               `value`, and inside `offered_precision` beside its `value`. Reuse
+               Value.details()'s hex rendering (26.3) — fixed-point as M@D hex
+               (mantissa in whole-byte hex, `@scale` dropped at scale 0),
+               floating-point as the raw 64-bit IEEE-754 pattern.
+               DECISION (2026-06-13): rational has no single integer to dump (it
+               is a numerator/denominator pair) — `value_hex_dump` is NULL in
+               rational mode. It is meaningful only for the bit-backed types
+               (fixed-point's mantissa, float's IEEE bits). Null on the error
+               path too (no value to dump).
+    [x] 27.6.  The top-level `value` string KEEPS its inline worked-example hint
+               ("...for more; e.g. =4 → 3.3333") when an offered_precision exists
+               — even though offered_precision now carries that same value
+               structurally AND annotated (27.4). DECISION (2026-06-13): the
+               string must stay honest read on its own (25.3.3's rationale), so
+               the inline hint is duplicated, not relocated.
+    [x] 27.7.  Update the `calculate` docstring (the AI-facing result
+               description) to cover the new/renamed fields: `mode`,
+               `value_hex_dump` (with the null-in-rational rule), and
+               `offered_precision` (the rename of `preview`, now carrying `mode`,
+               an annotated `value`, and its own `value_hex_dump`).
+
+
+[ ] 28.  MORE FUNCTIONS  (the growing function set beyond abs/sqrt; the call
+         machinery itself is section 22. Each entry is normally the two-step
+         add — one _FUNCS entry + its per-mode Value method — UNLESS it needs a
+         call shape we have not built yet, flagged per entry.)
+    [ ] 28.1.  time() — current Unix epoch in GMT (UTC): the whole-number
+               seconds count, rendered in the CURRENT mode (fixed-point scale 0
+               / float / integer rational) via _from_scaled_int so the per-mode
+               chokepoint stays inside Value.
+               NULLARY: no operand, so it CANNOT be an ordinary operand-method —
+               it needs the zero-arg call path we have not built (parser atom
+               NAME '(' ')'; arity 0 in the registry; the mode handed in, since
+               no operand carries it). Also the first IMPURE function (clock-
+               dependent): re-evaluation yields a new value, so its tests assert
+               type/range/monotonicity, not a constant.
+               BLOCKED on nullary-call support (22's STILL TO PLAN).
+    [x] 28.2.  max(...) — the largest of its operands. VARIADIC (>= 1 arg); all
+               operands the same mode (no mixing, like every binary op). EXACT:
+               it only selects an operand, never computes, so the result carries
+               the chosen operand's own exactness — no rounding anywhere.
+    [x] 28.3.  min(...) — the smallest of its operands; the mirror of max (28.2):
+               variadic, same-mode, selection-only and therefore exact.
+    [x] 28.4.  avg(...) — the arithmetic mean (sum / count). VARIADIC (>= 1 arg),
+               same-mode. Unlike max/min it COMPUTES: the division can round, so
+               it follows the mode's own `/` rule — fixed-point quantizes to the
+               covering scale and may be inexact, rational is exact, float rounds.
+    [x] 28.5.  sum(...) — the total of its operands. VARIADIC (>= 1 arg),
+               same-mode. No division, so EXACT in every mode (like repeated `+`);
+               the building block avg (28.4) divides. Fixed-point result scale is
+               the covering max() of the operands', as every fixed-point op.
+    [x] 28.6.  product(...) — the product of its operands. VARIADIC (>= 1 arg),
+               same-mode. Like repeated `*`: fixed-point may round to the covering
+               scale (and flag inexact), rational is exact, float rounds.
+    [x] 28.7.  median(...) — the middle operand by value. VARIADIC (>= 1 arg),
+               same-mode. Sorting is order-only (no arithmetic). ODD count is pure
+               selection -> EXACT, carrying the chosen operand's exactness (like
+               max/min). EVEN count averages the two middles -> follows the mode's
+               `/` rule, exactly as avg (28.4).
+    [x] 28.8.  variance(...) — POPULATION variance, sum of squared deviations / n
+               (DECISION: divide by n, not n-1; a sample variant stddev_s/var_s is
+               STILL TO PLAN). VARIADIC (>= 1 arg), same-mode. COMPUTES (squares +
+               division), so it follows the mode's `/` rule: fixed-point may round,
+               rational exact, float rounds.
+    [x] 28.9.  stddev(...) — POPULATION standard deviation == sqrt(variance)
+               (28.8), so it INHERITS sqrt's per-mode story (19.5.2): inexact in
+               fixed-point and float, and in RATIONAL mode it honestly raises
+               NotRepresentableError when the root is irrational rather than
+               fabricate digits — the engine's exact-or-refuse pitch. VARIADIC
+               (>= 1 arg), same-mode.
+    [x] 28.10.  sin(x) — sine, argument in radians. UNARY operand-method (the
+                shape of sqrt, 19.5.2), so it needs NO new call machinery — the
+                two-step add — but with real transcendental math inside.
+                floating-point: math.sin; transcendental -> unconditionally
+                  inexact.
+                fixed-point: SUPPORTED via a TAYLOR SERIES summed at the operand's
+                  scale (plus guard digits), after RANGE-REDUCING the argument into
+                  a small interval around 0 (mod 2*pi) so the series converges fast
+                  and stays accurate. The reduction needs pi to at least the working
+                  precision -> an INTERNAL high-precision fixed-point pi helper
+                  (28.10.1). Transcendental -> exact=False.
+                rational: sin of a rational is irrational except the trivial
+                  sin(0) = 0; otherwise NotRepresentableError (no scale to round
+                  to), mirroring sqrt's rational refusal.
+        [x] 28.10.1.  INTERNAL fixed-point pi helper — computes pi to a requested
+                  precision (enough guard digits for 28.10's range reduction and
+                  series summation). This is an ENGINE helper we call when high-
+                  precision pi is needed; it is NOT the pi() abacus language
+                  function (that would be a nullary constant, still unplanned in
+                  22's STILL TO PLAN). Pure-stdlib integer algorithm (e.g. a
+                  Machin-type arctan series on scaled ints) — no new dependency.
+    [x] 28.11.  cos(x) — cosine, radians. UNARY operand-method, the SAME machinery
+                as sin (28.10): fixed-point Taylor series at the operand's scale +
+                guard digits, range-reduced mod 2*pi via the internal pi helper
+                (28.10.1); float math.cos inexact; rational irrational except the
+                trivial cos(0) = 1, else NotRepresentableError.
+    [x] 28.12.  tan(x) — tangent, == sin/cos (28.10/28.11). UNARY. Undefined at odd
+                multiples of pi/2 where cos = 0: in fixed-point that point is never
+                hit EXACTLY (pi is irrational, so pi/2 is not representable) — the
+                result is just a large inexact value — UNLESS cos rounds to 0 at
+                the working scale, which must raise ZeroDivisionError. float
+                math.tan; rational irrational except tan(0) = 0.
+    [x] 28.13.  cot(x) — cotangent, == cos/sin: the mirror of tan (28.12), undefined
+                where sin = 0 (multiples of pi; same round-to-0 division guard).
+                Same per-mode story; rational irrational except where trivially
+                defined.
+    NAMING (28.12/28.13): canonical spellings are tan/cot (the usual programming
+    ones — math.tan, C), DECIDED over the European tg/ctg. Offering tg/ctg as
+    aliases (cf. the mode aliases) is optional, still to plan.
+    [ ] 28.14.  asin(x) — arcsine, result in radians within [-pi/2, pi/2]. UNARY
+                operand-method. DOMAIN-RESTRICTED: |x| <= 1, else
+                NotRepresentableError (float math.asin raises outside [-1,1] ->
+                map to it). Transcendental -> inexact in float/fixed-point. The
+                plain arcsin Taylor series converges badly near |x| = 1, so
+                fixed-point should instead compute asin(x) = atan(x / sqrt(1-x**2)),
+                reusing sqrt (19.5.2) and an INTERNAL arctan series — the same
+                Machin-type arctan already behind the pi helper (28.10.1), worth
+                factoring out as a shared engine primitive. rational: irrational
+                except the trivial asin(0) = 0, else refuse.
+    [ ] 28.15.  acos(x) — arccosine, result in [0, pi]. UNARY, same domain |x| <= 1.
+                == pi/2 - asin(x) (28.14), so it also needs the internal pi helper
+                (28.10.1) for pi/2. Same inexact / refuse story; rational exact only
+                at the trivial acos(1) = 0.
+    [ ] 28.16.  atan(x) — arctangent, result in radians within (-pi/2, pi/2). UNARY,
+                domain ALL reals (NO restriction, unlike asin/acos). It is the
+                PRIMITIVE the inverse trig reduces to: the internal Machin-type
+                arctan series behind the pi helper (28.10.1) IS atan, so once that
+                series is factored out as a shared engine primitive, exposing atan
+                as a language function is nearly free. float math.atan;
+                transcendental -> inexact in float/fixed-point; rational irrational
+                except the trivial atan(0) = 0.
+    [x] 28.17.  log(x) — NATURAL logarithm, base e (DECISION 2026-06-13: bare `log`
+                is ln, matching math.log in C/Python/JS and this engine's own
+                canonical-spelling precedent, cf. the tan/cot-over-tg/ctg call; `ln`
+                is an alias, base-10 is the separate log10, 28.18). UNARY operand-
+                method (the shape of sqrt/sin), so NO new call machinery — the two-
+                step add — with real transcendental math inside. The PRIMITIVE the
+                whole log family reduces to: log10/log2 are just this divided by a
+                constant. DOMAIN x > 0; x <= 0 has no real log (x = 0 is -inf) and
+                raises NotRepresentableError in every mode (math.log's ValueError
+                maps to it), mirroring sqrt's negative refusal.
+                floating-point: math.log; transcendental -> unconditionally inexact.
+                fixed-point: SUPPORTED via base-10 argument reduction + an atanh
+                  series, the log-family mirror of the trig family's reduce-then-
+                  Taylor (28.10). Reducing in base 10 is EXACT here (a bare mantissa
+                  shift): write x = r * 10**n with r in [sqrt(0.1), sqrt(10)) so
+                  log(x) = n*ln(10) + log(r); then log(r) for r near 1 via
+                  log(r) = 2*atanh(t), t = (r-1)/(r+1), summed as the all-plus odd
+                  series t + t**3/3 + t**5/5 + ... on scaled ints at the operand's
+                  scale plus guard digits (|t| <= 0.52, so it converges fast — a
+                  tighter sqrt-based reduction is a possible later optimization),
+                  rounded half-to-even back. Transcendental -> exact=False, EXCEPT
+                  the trivial log(1) = 0, which is exact.
+                rational: log of a rational is transcendental except the trivial
+                  log(1) = 0 (Lindemann-Weierstrass: ln of a rational != 1 is
+                  irrational); otherwise NotRepresentableError, the same exact-or-
+                  refuse stance as sqrt.
+        [x] 28.17.1.  INTERNAL fixed-point atanh series helper — sums the all-plus
+                  odd series t + t**3/3 + t**5/5 + ... for t/unity in (-1, 1) on
+                  scaled ints, the log-family analogue of _fp_sin_series (28.10) and
+                  the all-plus sibling of the alternating _arctan_inv (28.10.1).
+                  Shared by the ln core (the reduced-argument log(r), with a general
+                  t) AND the ln constants (28.17.2, with t = unity/k a unit
+                  fraction), so ONE series primitive covers both — no separate
+                  _artanh_inv needed. Pure-stdlib integer arithmetic, no dependency.
+        [x] 28.17.2.  INTERNAL ln-constant helpers — ln(10) and ln(2) to a requested
+                  precision, the log-family analogue of the _pi_scaled Machin
+                  constant (28.10.1). Both fall out of the 28.17.1 series at unit-
+                  fraction arguments: ln(2) = 2*atanh(1/3); ln(10) = 6*atanh(1/3) +
+                  2*atanh(1/9) (since ln(5) = 2*ln(2) + 2*atanh(1/9) and ln(10) =
+                  ln(2)+ln(5)) — exactly paralleling pi = 16*arctan(1/5) -
+                  4*arctan(1/239). Summed with guard digits then truncated back,
+                  correct to the last place like _pi_scaled. ln(10) feeds both the
+                  base-10 reduction (28.17) and log10 (28.18); ln(2) feeds log2 (28.19).
+    [x] 28.18.  log10(x) — base-10 logarithm == log(x) / ln(10) (28.17 + the ln(10)
+                constant 28.17.2). UNARY operand-method, the two-step add. Same
+                domain (x > 0, else NotRepresentableError) and the same float/refuse
+                story. RICHER exact landmarks than log: because the base-10 reduction
+                already extracts n with x = r * 10**n, log10(x) = n + log(r)/ln(10),
+                so the integer part n is exact and only the log(r)/ln(10) fraction is
+                transcendental. A power of ten therefore logs EXACTLY:
+                floating-point: math.log10; transcendental -> inexact.
+                fixed-point: SUPPORTED. Reuse the ln core, divide by ln(10) at the
+                  working scale, quantize half-to-even to the operand's scale.
+                  exact=False EXCEPT when x is an exact power of ten at the operand's
+                  scale (r = 1 after reduction), where the result is the integer n
+                  exactly — e.g. log10(100) = 2, log10(0.001) = -3.
+                rational: log10 of a rational is irrational UNLESS x is an integer
+                  power of ten (the only rational-result case — x = 10**k for integer
+                  k, k possibly negative like 1/10, 1/100), where it is k exactly;
+                  otherwise NotRepresentableError. A cleaner exact set than sqrt's
+                  perfect-square, and the analogue of it for logs.
+    [ ] 28.19.  log2(x) — base-2 logarithm == log(x) / ln(2) (28.17 + the ln(2)
+                constant 28.17.2). UNARY operand-method, the two-step add; planned
+                with ln/log10 because this engine is bit-oriented (entropy / bit-
+                width work). Same domain (x > 0, else NotRepresentableError) and
+                float/refuse story.
+                floating-point: math.log2; transcendental -> inexact.
+                fixed-point: SUPPORTED. Reuse the ln core, divide by ln(2) at the
+                  working scale, quantize half-to-even. Unlike log10 the reduction is
+                  base 10, NOT base 2, so a power of two does NOT fall out exactly —
+                  exact=False EXCEPT the trivial log2(1) = 0. (A base-2 reduction
+                  would make powers of two exact but breaks the shared base-10 ln
+                  core; not worth a second reduction path — note as a possible later
+                  refinement.)
+                rational: log2 of a rational is irrational except log2(1) = 0
+                  (a non-unit power of two like 2, 1/2 logs to a rational integer,
+                  but proving/landing that exactly needs the base-2 reduction above,
+                  so for now ONLY log2(1) = 0 is the rational-exact case);
+                  otherwise NotRepresentableError.
+    [x] 28.20.  pow(x, y) — exponentiation, x to the power y: the CALL form of the
+                `**` operator (24.3.1 / 19.3.7), routing to the SAME Value.pow method a
+                `**` BinOp does — NO new arithmetic, the function is a pure facade.
+                It is the FIRST FIXED-ARITY-2 (binary-call) function, but needs NO new
+                call machinery either: _arity_of already reads (2, 2) off a (self,
+                other) method, so the binary-call shape the 28.17-28.19 NAMING note
+                flagged as still-to-plan (for a future log(x, base)) is ALREADY built —
+                pow just proves it. Adding it is literally one _FUNCS entry
+                ("pow": Value.pow), the usual two-step add minus step two (the method
+                exists). Per-mode story IS Value.pow's verbatim (same method):
+                floating-point: x ** y; a negative base to a fractional exponent goes
+                  complex -> NotRepresentableError (float can't hold it); inexact when
+                  the operands are.
+                fixed-point: INTEGER exponent only — exact via mantissa arithmetic
+                  (negative exponent = reciprocal; zero base to a negative power is
+                  ZeroDivisionError); a non-integer exponent is irrational ->
+                  NotRepresentableError.
+                rational: INTEGER exponent only — exact (Fraction ** int); a non-integer
+                  exponent -> NotRepresentableError, the same exact-or-refuse stance.
+                NOTE: pow(x, y) DELIBERATELY DUPLICATES the `**` operator (a named-call
+                alias, like ln for log) — convenience for users who reach for a
+                function; it adds no capability `**` lacks. A future fractional-exponent
+                pow via exp(y*ln(x)) (reusing the 28.17 ln core + an exp series) would be
+                a SEPARATE, inexact extension, NOT this item.
+        [x] 28.20.1.  FIXED-POINT FRACTIONAL EXPONENT — lift fixed-point pow past the
+                  integer-only core (28.20). A fixed-point exponent y is a scaled
+                  integer, so in lowest terms it is p/q with q | 10**decimals — i.e. q
+                  is a product of 2s and 5s (2, 4, 5, 8, 10, 20, ...). So x**y is NOT a
+                  repeated multiply but the q-th ROOT of x**p — which the engine already
+                  has two playbooks for. They LAYER (try exact, fall back), the same
+                  exact-then-approximate ladder sqrt wants:
+                  PATH A — exact-or-refuse (the sqrt model, 19.5.2). With x = M/10**E,
+                    x**(p/q) = (M**p)**(1/q) / (10**(E*p))**(1/q); EXACT iff both M**p
+                    and 10**(E*p) are perfect q-th powers (the generalization of sqrt's
+                    perfect-square exemption), checked with an integer q-th root (Newton
+                    on ints + verify, the bignum sibling of math.isqrt). Pure integer, no
+                    series: 100**0.5 -> 10, 0.25**0.5 -> 0.5 exact; 2**0.5 refuses. BONUS:
+                    this path reaches ODD roots of NEGATIVE bases ((-8)**(1/3) -> -2) that
+                    Path B cannot (ln of a negative).
+                  PATH B — inexact series (the sin/log model). x**y = exp(y*ln(x)), summed
+                    at the working scale + guard digits, exact=False. Domain x > 0
+                    (negative base -> complex). Reuses the 28.17 ln core and needs ONE new
+                    exp series (a 28.x sibling of the atanh/Taylor helpers). Answers for
+                    EVERY fixed-point exponent, at the cost of inexactness.
+                  LADDER: integer -> exact (28.20); fractional perfect root -> exact
+                    (A); fractional irrational, x>0 -> inexact (B); fractional, x<0 ->
+                    NotRepresentableError (complex). This is a FIXED-POINT-only story:
+                    rational still refuses (a Fraction can't hold 2**0.5, and rational
+                    never approximates) and float already does it via math.pow — the
+                    per-mode asymmetry stays intact. Promotes Value.pow's fixed-point
+                    arm from the 28.20 facade to a real sqrt-shaped implementation.
+    NAMING (28.17-28.19): canonical spellings are log (== natural, ln alias), log10,
+    log2 — the math.log/log10/log2 family. DECIDED that bare `log` is the NATURAL log
+    (not base-10) over the calculator convention, for consistency with the programming
+    spellings already chosen (tan/cot, 28.12/28.13). A two-argument log(x, base) =
+    log(x)/log(base) is a possible later add but needs a fixed-arity binary-call shape
+    (the current funcs are unary or variadic); still to plan if wanted.
+    NOTE: statistical "mode" (most-frequent value) is intentionally NOT added —
+    the name collides with the type-regime `mode`; revisit under another name if
+    ever wanted.
+    VARIADIC call support is BUILT (see 22's STILL TO PLAN): FUNCTION_ARITIES is a
+    (min, max|None) range read off the signature, so a variadic func is the usual
+    two-step add with a ``*others`` method. sum (28.5) landed as the plumbing
+    check; max/min (28.2/28.3) followed, adding the value-only Value._compare
+    ordering primitive (selection-only, so they return the chosen operand verbatim
+    — its own scale and exactness). The rest (28.4 avg, 28.6 product, 28.7 median,
+    28.8-28.9 variance/stddev) are ordinary adds — median reuses _compare, the
+    others just compute.
+
+
+[ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
+         Python)
+    [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
+    [ ] SA.2.  MVP (the differentiated, uncontested product — BUILD FIRST):
+        [ ] SA.2.1.  10 multi-model evaluator, modes: fixed-point +
+                     binary32 + binary64 + decimal (+ rational)
+                                                       -> 10  *** FLAGSHIP ***
+        [ ] SA.2.2.  IEEE-754 float <-> bits           -> 11.1
+        [ ] SA.2.3.  two's-complement / fixed-width int-> 12.1 / 12.2
+        [ ] SA.2.4.  base conversion (large values)    -> 14.2
+        [ ] SA.2.5.  bitwise + shifts/rotates          -> 13.1 / 13.2
+        [ ] SA.2.6.  popcount / bit-length             -> 13.3
+    SA.3.  Pitch: "One expression, every numeric regime, side by side — see
+           exactly where float, double, and money-safe fixed-point diverge.
+           The calculator that doesn't guess." Nobody else does this.
+
+SHARED.  Reuse mcp-tmux's opt-in toolset-gating pattern + its Trusted-
+         Publishing release workflow. Overarching thesis: "Makes Claude stop
+         emitting wrong-but-plausible answers for the operations it cannot do
+         by hand." Build order: A first (uncontested/novel), then B
+         (mcp-bytesmith, separate project).

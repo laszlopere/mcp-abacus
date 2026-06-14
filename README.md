@@ -1,0 +1,118 @@
+# mcp-abacus
+
+[![CI](https://github.com/laszlopere/mcp-abacus/actions/workflows/ci.yml/badge.svg)](https://github.com/laszlopere/mcp-abacus/actions/workflows/ci.yml)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2.svg)](https://github.com/sponsors/laszlopere)
+
+**A calculator for the artificial minds — because we know their needs are
+different.**
+
+People reach for a calculator to get a number. A language model reaches for one
+to get a number it can *trust* and reason about: Was this exact, or rounded? At
+what scale? Would a wider type have held more digits? Does this overflow the way
+the production code will? A floating-point answer that merely *looks* precise is
+worse than no answer — it launders a rounding error into a confident claim.
+
+mcp-abacus is built for that caller. It does **type-faithful calculation**: you
+pick a numeric type/mode (fixed-point, IEEE-754 double, exact rational) and the
+*whole* expression behaves exactly as that type would in real code — it rounds
+where the type rounds, stays exact where the type is exact, and carries the
+result onward bit-for-bit. Every answer comes back labelled with its own
+precision verdict (`exact` vs `inexact, rounded to N decimals`), so the model
+never has to guess whether a result is the true value. It does not approximate a
+type; it calculates *using* that type.
+
+## What it gives you
+
+- **`calculate`** — evaluate one expression in one numeric type. Modes:
+  - `fixed-point` *(default)* — exact scaled integer; money / ERC-20-safe
+  - `floating-point` — IEEE-754 double (aliases `float64`, `double`)
+  - `rational` — exact numerator/denominator; no silent rounding
+- **`analyze`** — evaluate an expression and return its whole parse tree, each
+  node annotated with the value it computed, so you can see *where* a surprising
+  answer rounded or overflowed (e.g. `(1 + 1/2) * 3` is `3` in fixed-point — the
+  tree shows the `1/2 = 0` leaf that explains it)
+- **`help`** — the grammar and type reference, on tap for the model
+- **`info`** — server version and environment
+
+Each `calculate` result is self-describing: a rendered `value` string with its
+precision verdict baked in, plus structured `exact` / `precision` fields. An
+inexact fixed-point result even previews what a few more decimals would reveal,
+so the caller is steered toward more precision rather than toward a misleading
+float.
+
+## Example — one expression, three numeric realities
+
+$10,000 compounded at 5% for 30 years: `(1 + 5 / 100) ** 30 * 10000`.
+
+**Fixed-point**, asking for 20 decimal places of precision:
+
+```jsonc
+calculate(
+  expression="(1 + 5 / 100) ** 30 * 10000",
+  min_fixed_point_precision=20
+)
+// → "43219.42375150662009160000 (inexact, rounded to 20 decimals
+//                                — pass min_fixed_point_precision for more)"
+```
+
+**Rational** — the same expression, held exactly, no rounding anywhere:
+
+```jsonc
+calculate(expression="(1 + 5 / 100) ** 30 * 10000", mode="rational")
+// → "4640650289117164100520051333566036654601
+//      /107374182400000000000000000000000000 (exact)"
+```
+
+**Floating-point** — what a naive `double` calculation would have told you:
+
+```jsonc
+calculate(expression="(1 + 5 / 100) ** 30 * 10000", mode="floating-point")
+// → "43219.42375150668 (inexact)"
+```
+
+Look at the last digits: the double drifts to `…150668`, while the true value
+(see the fixed-point and rational results) is `…1506620…`. Same expression,
+three different answers — and mcp-abacus tells you which one to trust, and why.
+
+## Install and register for Claude Code
+
+Install the server as a [uv](https://docs.astral.sh/uv/) tool from this
+checkout:
+
+```sh
+uv tool install .
+```
+
+This puts an `mcp-abacus` executable on your PATH. Register it with Claude Code
+(user scope, so it's available in every project):
+
+```sh
+claude mcp add abacus -- mcp-abacus
+```
+
+Then start (or `/mcp` reconnect) a Claude Code session — the `abacus` tools will
+be available. Verify the server is up with:
+
+```sh
+claude mcp list
+```
+
+> **Upgrading from source:** the version is pinned, so a plain reinstall can
+> reuse a cached wheel and silently install stale code. Force a clean rebuild:
+> ```sh
+> uv cache clean mcp-abacus
+> uv tool install --force --no-cache .
+> ```
+> A long-lived Claude session keeps the old server subprocess until you `/mcp`
+> reconnect or start a fresh session.
+
+## Development
+
+```sh
+uv sync
+uv run pytest
+```
+
+## License
+
+GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
