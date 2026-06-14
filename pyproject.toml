@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-abacus"
-version = "0.1.0"
+version = "0.2.0.dev0"
 description = "An MCP server for type-faithful calculation: evaluate expressions bit-for-bit under fixed-width int, IEEE-754 float, fixed-point, decimal, and rational regimes."
 readme = "README.md"
 requires-python = ">=3.10"
