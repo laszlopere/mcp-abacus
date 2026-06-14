@@ -5,6 +5,9 @@
 #                    expressions, token streams, parse trees and computed
 #                    values in readable form (see tests/conftest.py).
 #                    Translated to `pytest -v -s` (verbose, capture off).
+#   --human-readable  frame each solver call as a Code / Result block
+#                    (see tests/conftest.py). Translated to
+#                    `pytest --human-readable -s` (capture off so it prints).
 
 set -u
 
@@ -14,6 +17,7 @@ pytest_args=()
 for arg in "$@"; do
     case "$arg" in
         --verbose|-v) pytest_args+=(-v -s) ;;
+        --human-readable) pytest_args+=(--human-readable -s) ;;
         *) pytest_args+=("$arg") ;;
     esac
 done

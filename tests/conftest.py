@@ -10,6 +10,12 @@ expressions, token streams, parse trees and computed values appear in
 readable, indented form. The traces are plain prints, so they are visible
 when capture is off (run-tests.sh --verbose passes pytest -v -s).
 Non-verbose runs are completely untouched.
+
+A second, independent switch — ``--human-readable`` (run-tests.sh adds -s) —
+records solver TOOL calls and prints each as a framed Code / Result block: the
+abacus program it was given, then the solution it found (or the no-solution /
+error message). It targets the solver the way the verbose trace targets the
+evaluator, and takes precedence over -v when both are passed.
 """
 
 import functools
@@ -24,6 +30,151 @@ import mcp_abacus.expr.parser as parser_module
 from mcp_abacus.expr.lexer import EOF, Token
 from mcp_abacus.expr.nodes import Node
 from mcp_abacus.expr.value import Value
+
+
+def pytest_addoption(parser):
+    """Register ``--human-readable`` (off by default; pair with -s to see output)."""
+    parser.addoption(
+        "--human-readable",
+        action="store_true",
+        default=False,
+        help="Print each solver call as a framed Code / Result block (run-tests.sh adds -s).",
+    )
+
+
+# A framed block is `<RULE Code>` / program / `<RULE Result>` / result / `<RULE>`,
+# all at a fixed width so the rules line up however long the program is.
+_RULE_WIDTH = 76
+
+
+def _rule(label: str = "") -> str:
+    """A horizontal rule, optionally labelled (``----- Code -------…``)."""
+    if not label:
+        return "-" * _RULE_WIDTH
+    prefix = f"----------- {label} "
+    return prefix + "-" * max(0, _RULE_WIDTH - len(prefix))
+
+
+def _human_readable_trace(request, monkeypatch):
+    """Under --human-readable: print each solver call as a Code / Result block.
+
+    Records solver runs at THREE seams so it works wherever a test drives the
+    solver: the over-the-wire tool (ClientSession.call_tool, as test_e2e drives a
+    server subprocess), the in-process tool (FastMCP mcp.call_tool), and the engine
+    itself (solver.search, as test_solver calls it directly with a parsed node). For
+    the engine seam the source text is recovered by tracing parse() and keying on
+    id(node), since search() is handed the AST, not the program string. At teardown
+    each run prints the abacus program under a "Code" rule and the outcome under a
+    "Result" rule: the found ``solution`` on success, or the message (a "No solution…"
+    or a rejected request) on failure. Non-solver work passes straight through, so
+    the switch is a no-op for every other test.
+    """
+    from mcp import ClientSession
+
+    import mcp_abacus.solver as solver_module
+    from mcp_abacus.server import mcp
+    from mcp_abacus.solver import SolverError
+
+    rows: list[tuple[str, str]] = []  # (program source, result line)
+    sources: dict[int, str] = {}  # id(root node) -> the source text it was parsed from
+
+    def _append(expression: str, result: str) -> None:
+        rows.append((expression, result))
+
+    def _record(arguments, payload) -> None:
+        expression = (arguments or {}).get("expression", "")
+        result = payload["error"] if payload.get("error") is not None else payload.get("solution")
+        _append(expression, "" if result is None else str(result))
+
+    original_mcp_call = mcp.call_tool
+
+    @functools.wraps(original_mcp_call)
+    async def traced_mcp_call(name, arguments=None, *args, **kwargs):
+        result = await original_mcp_call(name, arguments, *args, **kwargs)
+        if name == "solver":
+            blocks = result[0] if isinstance(result, tuple) else result
+            _record(arguments, json.loads(blocks[0].text))
+        return result
+
+    original_client_call = ClientSession.call_tool
+
+    @functools.wraps(original_client_call)
+    async def traced_client_call(self, name, arguments=None, *args, **kwargs):
+        result = await original_client_call(self, name, arguments, *args, **kwargs)
+        if name == "solver":
+            _record(arguments, json.loads(result.content[0].text))
+        return result
+
+    # Engine seam: parse() records each node's source; search() looks it up and
+    # frames its outcome the same way the tool reply does (solution + "(approximate)",
+    # or the failure message — re-raised so pytest.raises tests still see it).
+    original_parse = parser_module.parse
+    original_search = solver_module.search
+
+    @functools.wraps(original_parse)
+    def traced_parse(text):
+        node = original_parse(text)
+        sources[id(node)] = text
+        return node
+
+    @functools.wraps(original_search)
+    def traced_search(node, *args, **kwargs):
+        expression = sources.get(id(node), "")
+        try:
+            result = original_search(node, *args, **kwargs)
+            _append(expression, f"{result.solution.to_string()} (approximate)")
+            return result
+        except SolverError as exc:
+            _append(expression, exc.message)
+            raise
+        except Exception as exc:  # EvalError (unset constant) etc. — still worth showing
+            _append(expression, getattr(exc, "message", str(exc)))
+            raise
+
+    monkeypatch.setattr(mcp, "call_tool", traced_mcp_call)
+    monkeypatch.setattr(ClientSession, "call_tool", traced_client_call)
+    # Patch parse/search in every namespace holding the original (the source module,
+    # the expr package re-export, and the test module's own from-import), so the
+    # call the test makes is the one intercepted. The server keeps its OWN bound
+    # `search`, so an in-process tool call records once, at the tool seam — not twice.
+    for module in (parser_module, expr_package, request.module):
+        if getattr(module, "parse", None) is original_parse:
+            monkeypatch.setattr(module, "parse", traced_parse)
+    for module in (solver_module, request.module):
+        if getattr(module, "search", None) is original_search:
+            monkeypatch.setattr(module, "search", traced_search)
+
+    # Mute the e2e subprocess's stderr request-logging so only the blocks print
+    # (the same redirect the verbose e2e trace uses); skipped for in-process modules.
+    sink = None
+    if getattr(request.module, "stdio_client", None) is not None:
+        sink = open(os.devnull, "w")
+        original_stdio_client = request.module.stdio_client
+
+        @functools.wraps(original_stdio_client)
+        def quiet_stdio_client(server, errlog=None):
+            return original_stdio_client(server, errlog=sink)
+
+        monkeypatch.setattr(request.module, "stdio_client", quiet_stdio_client)
+
+    try:
+        yield
+    finally:
+        if sink is not None:
+            sink.close()
+
+    if rows:
+        print()  # step off pytest's "test-id" progress line
+        for program, result in rows:
+            print(_rule("Code"))
+            for line in program.splitlines() or [""]:
+                print(f"  {line}")
+            print(_rule("Result"))
+            for line in result.splitlines() or [""]:
+                print(f"  {line}")
+            print(_rule())
+            print("\n")  # two blank lines between blocks, separating the tests
+
 
 # Value has no operator dunders (19.5); each binary op is a named method. Map
 # method -> source symbol so the tracer can narrate "a op b" arithmetic.
@@ -322,6 +473,12 @@ def _compact_variables_trace(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def _verbose_trace(request, monkeypatch):
     """Under pytest -v, narrate expressions, tokens, trees and values live."""
+    if request.config.option.human_readable:
+        # An independent switch (and -v's superior for solver runs): frame each
+        # solver call as a Code / Result block instead of the engine trace.
+        yield from _human_readable_trace(request, monkeypatch)
+        return
+
     if request.config.option.verbose < 1:
         yield
         return
