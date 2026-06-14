@@ -101,14 +101,15 @@ def _compact_parser_trace(request, monkeypatch):
         return node
 
     @functools.wraps(original_evaluate)
-    def traced_evaluate(self, mode):
+    def traced_evaluate(self, mode, min_fixed_point_precision=0):
         nonlocal in_evaluate
         if in_evaluate:
-            return original_evaluate(self, mode)  # only the outermost call records a row
+            # only the outermost call records a row
+            return original_evaluate(self, mode, min_fixed_point_precision)
         in_evaluate = True
         expr = sources.get(id(self), repr(self))
         try:
-            result = original_evaluate(self, mode)
+            result = original_evaluate(self, mode, min_fixed_point_precision)
             rows.append((expr, _render_value(result)))
             return result
         except Exception as exc:
@@ -316,11 +317,11 @@ def _verbose_trace(request, monkeypatch):
             tracer.depth -= 1
 
     @functools.wraps(original_from_lexeme)
-    def traced_from_lexeme(lexeme, mode):
+    def traced_from_lexeme(lexeme, mode, min_decimals=0):
         if tracer.in_evaluate:  # the evaluate() trace already shows the whole tree
-            return original_from_lexeme(lexeme, mode)
+            return original_from_lexeme(lexeme, mode, min_decimals)
         try:
-            value = original_from_lexeme(lexeme, mode)
+            value = original_from_lexeme(lexeme, mode, min_decimals)
             tracer.emit(f"Value.from_lexeme({lexeme!r}, {mode!r}) -> {_render_value(value)}")
             return value
         except Exception as exc:
