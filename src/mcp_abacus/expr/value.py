@@ -188,6 +188,52 @@ class EvalContext:
     now_ns: int | None = None
 
 
+class UndefinedVariableError(LookupError):
+    """A variable was read before any assignment bound it (30.1).
+
+    Raised by ``VariableStore.get`` on a name that was never set, carrying that
+    name so the referencing Var node (30.6) can re-raise it as an EvalError with
+    the source line. A ``LookupError`` — the natural base for a missing key —
+    deliberately NOT an ArithmeticError, so the evaluate walk's domain-error
+    wrapping leaves it alone and the Var node positions it itself.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"undefined variable: {name}")
+        self.name = name
+
+
+class VariableStore:
+    """Named values for one evaluation run: variable name (str) -> Value (30.1).
+
+    A thin wrapper over a dict, carried on the EvalContext (30.2) so a run's
+    assignments (``x = expr``) stay visible to later references (a bare ``x``).
+    ``set`` binds or overwrites; ``get`` on a name that was never assigned RAISES
+    (UndefinedVariableError) rather than inventing a default — reading an unset
+    variable is a user error, not a zero.
+
+    Mutable state, so a plain slotted class rather than a frozen dataclass; the
+    frozen EvalContext holds it by reference and its contents mutate as the run
+    assigns.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self) -> None:
+        self._values: dict[str, Value] = {}
+
+    def set(self, name: str, value: "Value") -> None:
+        """Bind ``name`` to ``value``, overwriting any previous binding."""
+        self._values[name] = value
+
+    def get(self, name: str) -> "Value":
+        """Return the Value bound to ``name``; raise UndefinedVariableError if unset."""
+        try:
+            return self._values[name]
+        except KeyError:
+            raise UndefinedVariableError(name) from None
+
+
 @dataclass(frozen=True, slots=True)
 class FixedPoint:
     """A fixed-point number as a scaled integer: value == mantissa * 10**-decimals.

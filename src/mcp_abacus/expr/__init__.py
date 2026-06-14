@@ -15,7 +15,14 @@ from mcp_abacus.expr.nodes import (
     UnaryOp,
 )
 from mcp_abacus.expr.parser import ParseError, parse
-from mcp_abacus.expr.value import EvalContext, Mode, NotRepresentableError, Value
+from mcp_abacus.expr.value import (
+    EvalContext,
+    Mode,
+    NotRepresentableError,
+    UndefinedVariableError,
+    Value,
+    VariableStore,
+)
 
 __all__ = [
     "BINARY_OPS",
@@ -32,7 +39,9 @@ __all__ = [
     "ParseError",
     "Token",
     "UnaryOp",
+    "UndefinedVariableError",
     "Value",
+    "VariableStore",
     "parse",
     "tokenize",
 ]
