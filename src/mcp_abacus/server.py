@@ -14,6 +14,14 @@ from mcp_abacus.expr.lexer import LexError
 from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.parser import ParseError
 from mcp_abacus.expr.value import FixedPoint, Mode, Value, resolve_mode
+from mcp_abacus.solver import (
+    SolverError,
+    resolve_goal,
+    resolve_type,
+    search,
+    validate_bracket,
+    validate_unknown,
+)
 
 mcp = FastMCP("mcp-abacus")
 
@@ -381,8 +389,85 @@ def solver(
     `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
     search runs in that numeric type, and the found value is reported in it. See
     `calculate` and `help` for the shared grammar, modes, and precision rules.
+
+    Returns a dict: `solution` is the found value of `variable`, rendered as a
+    string and marked "(approximate)" — the search locates it to a tolerance, never
+    exactly — with `solution_hex_dump` its bit-backed hex (as `calculate`'s
+    value_hex_dump). `value` is the EXPRESSION evaluated at that solution, annotated
+    with its own precision verdict (near zero for a solve, the extremum for an
+    optimise), and `value_hex_dump` its hex. `mode` is the resolved numeric type;
+    `exact` and `precision` describe `value` exactly as in `calculate`. `goal` and
+    `type` echo the resolved strategy, and `iterations` is how many search steps it
+    took. On any failure — a bad mode/precision, a malformed expression, an invalid
+    request (empty bracket, unknown not in the expression, type/goal disagreement),
+    or no solution in the bracket — every data field is null and `error` carries the
+    message (a no-solution error reports the closest |expr| it reached); on success
+    `error` is null.
     """
-    raise NotImplementedError("solver engine is not yet implemented (TODO 31.2-31.8)")
+    selected, mode_error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
+    if mode_error is not None:
+        return _solver_error(mode_error)
+    assert selected is not None  # mode_error is None means a mode resolved
+    try:
+        resolved_type = resolve_type(type, goal)
+        resolved_goal = resolve_goal(goal)
+    except SolverError as exc:
+        return _solver_error(exc.message)
+    try:
+        node = parser.parse(expression)
+    except (LexError, ParseError) as exc:
+        return _solver_error(f"error (line {exc.line}): {exc.message}")
+    try:
+        validate_bracket(lower, upper)
+        validate_unknown(node, variable)
+        result = search(
+            node, variable, lower, upper, selected, min_fixed_point_precision or 0,
+            resolved_type, resolved_goal,
+        )
+    except SolverError as exc:
+        return _solver_error(exc.message)
+    except EvalError as exc:  # a constant the program never set (structural, 31.7)
+        return _solver_error(f"error (line {exc.line}): {exc.message}")
+    value = result.value
+    return {
+        "variable": result.variable,
+        "solution": f"{result.solution.to_string()} (approximate)",
+        "solution_hex_dump": result.solution.hex_dump(),
+        "value": _annotate(
+            value.to_string(), value.exact, value.precision(), None, min_fixed_point_precision
+        ),
+        "value_hex_dump": value.hex_dump(),
+        "mode": selected.value,
+        "exact": value.exact,
+        "precision": value.precision(),
+        "goal": result.goal.value if result.goal is not None else None,
+        "type": result.type.value,
+        "iterations": result.iterations,
+        "error": None,
+    }
+
+
+def _solver_error(message: str) -> dict:
+    """A solver reply carrying only an error — every data field null (31.8).
+
+    Mirrors `_error` for calculate: the same key set as the success reply so the
+    shape never varies, with solution / value / mode / strategy / iterations all
+    null and the message in `error`.
+    """
+    return {
+        "variable": None,
+        "solution": None,
+        "solution_hex_dump": None,
+        "value": None,
+        "value_hex_dump": None,
+        "mode": None,
+        "exact": None,
+        "precision": None,
+        "goal": None,
+        "type": None,
+        "iterations": None,
+        "error": message,
+    }
 
 
 def _error(message: str) -> dict:

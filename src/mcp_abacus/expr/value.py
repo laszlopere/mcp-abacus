@@ -778,6 +778,36 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
+    @classmethod
+    def from_real(cls, x: "float | int | Fraction", mode: "Mode", scale: int) -> "Value":
+        """Materialise an arbitrary real number into ``mode`` at ``scale`` decimals (31.7).
+
+        The solver's bridge from a search candidate (a plain ``float`` the
+        golden-section engine carries) back into a mode-faithful Value the program
+        can be evaluated against. Unlike ``from_lexeme`` there is no source text —
+        the input is a number already — so it routes through the SAME chokepoints
+        the literal path uses (``_fp_quantize`` to round to the scale,
+        ``_from_scaled_int`` to build the payload), keeping one place that decides
+        how a real lands in each representation.
+
+        - floating-point: the nearest double (``scale`` is irrelevant — a double has
+          no decimal scale), inexact like every float here.
+        - fixed-point / rational: the exact rational ``x`` rounded half-to-even to
+          ``scale`` decimals, then stored exactly at that scale. The candidate IS
+          that representable value exactly, so it carries ``exact=True``; any
+          inexactness in a solver answer comes from the EXPRESSION's own rounding at
+          this point, not from the binding.
+        """
+        frac = x if isinstance(x, Fraction) else Fraction(x)
+        match mode:
+            case Mode.FLOATING_POINT:
+                return cls(Mode.FLOATING_POINT, float(frac), exact=False)
+            case Mode.FIXED_POINT | Mode.RATIONAL:
+                mantissa, _lossless = _fp_quantize(frac.numerator, frac.denominator, scale)
+                return cls._from_scaled_int(mantissa, scale, mode)
+            case _:
+                raise ValueError(f"unsupported mode: {mode!r}")
+
     # --- nullary functions (29.2 / 29.3 / 28.1) -------------------------
     # Zero-argument functions like pi(), e() and time(). UNLIKE every other function
     # they are NOT operand-methods (no ``self`` operand carries the mode): each takes
@@ -1715,6 +1745,30 @@ class Value:
                 return self.payload.decimals
             case Mode.FLOATING_POINT | Mode.RATIONAL:
                 return None
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def to_float(self) -> float:
+        """Reduce this Value to a plain ``float`` for the solver's search (31.7).
+
+        The golden-section engine drives the unknown over a real interval and
+        compares candidates as floats, so it needs the mode's value collapsed to a
+        double. Each mode reads its own payload: floating-point IS a double already;
+        fixed-point and rational go through ``Fraction`` so the conversion rounds
+        once, correctly, rather than compounding integer-division error. The result
+        is a lossy view used ONLY to steer the search — the faithful answer is the
+        Value itself, never this float. One case per type, like every operation here.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return self.payload
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                return float(Fraction(self.payload.mantissa, 10**self.payload.decimals))
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                return float(self.payload)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

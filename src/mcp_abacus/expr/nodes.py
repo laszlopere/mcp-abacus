@@ -20,6 +20,7 @@ from mcp_abacus.expr.value import (
     Mode,
     UndefinedVariableError,
     Value,
+    VariableStore,
     _lexeme_scale,
 )
 
@@ -189,6 +190,7 @@ class Node(ABC):
         mode: Mode,
         min_fixed_point_precision: int = 0,
         now_ns: int | None = None,
+        variables: VariableStore | None = None,
     ) -> Value:
         """Evaluate the subtree in ONE mode; store and return this node's Value.
 
@@ -206,6 +208,15 @@ class Node(ABC):
         to the real clock (``time.time_ns()``); tests pass a fixed epoch to assert
         exact per-mode/scale renders.
 
+        ``variables`` (31.7) SEEDS the run's VariableStore with bindings set before
+        the walk — the solver pre-binds the unknown to a candidate value so the
+        program reads it like any other name, while the program's own assignments
+        fill in the remaining constants into the same store. Defaults to None, a
+        fresh empty store: a bare ``calculate`` run starts with no bindings, exactly
+        as before. The store is used as given (not copied), so a caller reusing one
+        across runs sees the run's assignments accumulate — the solver passes a
+        fresh store per candidate to keep evaluations independent.
+
         This is the public entry: it bundles the run state into the per-run
         EvalContext (29.1) and walks the tree threading that one object down,
         rather than passing the state to every node or reaching for a module global.
@@ -222,6 +233,7 @@ class Node(ABC):
             min_fixed_point_precision=min_fixed_point_precision,
             nullary_precision=nullary_precision,
             now_ns=time.time_ns() if now_ns is None else now_ns,
+            variables=variables if variables is not None else VariableStore(),
         )
         return self._walk(ctx)
 
