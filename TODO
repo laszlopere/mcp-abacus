@@ -1494,7 +1494,13 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                initial guess (per-axis steps), and reuse the 2-second wall-clock and
                tolerance machinery already wrapping golden-section.
     [ ] 33.15. Differential evolution / annealing — global, non-unimodal.
-    [ ] 33.16. Newton (systems) — multivariate root via Jacobian.
+    [ ] 33.16. Newton (systems) — multivariate root via Jacobian. DEFERRED:
+               a true system is n equations in n unknowns (a square Jacobian to
+               invert, J·Δ = −F), but the solver drives ONE scalar expression —
+               1 equation in n unknowns, no square system to solve. Implement
+               only if/when the expression language can express MULTIPLE
+               equations (a vector of residuals); the same prerequisite gates
+               33.17 (Broyden's) and the other square-system root methods below.
     [ ] 33.17. Broyden's — multivariate root, quasi-Newton, no Jacobian.
     [ ] 33.18. Powell's — derivative-free conjugate directions.
     [ ] 33.19. Conjugate gradient — large-scale gradient optimise.
