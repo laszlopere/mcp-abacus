@@ -869,10 +869,11 @@ def test_nullary_rational_refuses(expression, mode, error):
             "5.141592653 (inexact, rounded to 9 decimals — pass min_fixed_point_precision "
             "for more; e.g. =13 → 5.1415926535897)",
         ),
-        # With no literal, the floor IS the derived scale: min_fixed_point_precision=4
-        # gives the bare nullary 4 decimals (the floor wins where it exceeds 0).
-        ("pi()", 4, "3.1415 (inexact, rounded to 4 decimals)"),
-        ("e()", 5, "2.71828 (inexact, rounded to 5 decimals)"),
+        # With no literal, the floor IS the derived scale: min_fixed_point_precision=18
+        # gives the bare nullary 18 decimals — the ERC-20 idiom — the floor winning
+        # where it exceeds the default 0.
+        ("pi()", 18, "3.141592653589793238 (inexact, rounded to 18 decimals)"),
+        ("e()", 18, "2.718281828459045235 (inexact, rounded to 18 decimals)"),
     ],
 )
 def test_nullary_fixed_point_precision_derivation(expression, floor, value):
