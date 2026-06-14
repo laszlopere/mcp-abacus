@@ -1374,6 +1374,28 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      log(2)/log(10), so convenience not new capability.)
 
 
+[ ] 30.  VARIABLES  (named values: `x = expr` assignment + bare-name
+         reference, and multi-line input — several instructions per call).
+         SCRATCH — flesh out when picked up.
+    [ ] 30.1.  Variable store — a small class holding name (str) -> Value
+               pairs, with set/get by name (get on an unknown name raises).
+    [ ] 30.2.  Carry a store instance on the eval context (29.1), so it
+               lives for the whole run and threads down the evaluate walk.
+    [ ] 30.3.  Parser — assignment `NAME '=' expr`, lowest precedence; the
+               AST Assign node holds the name lexeme + the value subtree.
+    [ ] 30.4.  Parser — a bare NAME atom is a variable reference (an AST
+               Var node holding the lexeme); keep it distinct from the
+               NAME '(' ... ')' call / nullary forms.
+    [ ] 30.5.  Parser — instruction list: statements separated by newlines,
+               an AST Sequence node wrapping them in order.
+    [ ] 30.6.  AST eval — Assign sets the store and yields its value; Var
+               gets from the store (error if unset); Sequence evaluates each
+               in turn and returns the last result.
+    [ ] 30.7.  TESTS — parse + evaluate assignment, reference, unknown-name
+               error, and a multi-line program; per-mode it's value passthrough
+               (the store holds Values verbatim, no mode/scale of its own).
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
