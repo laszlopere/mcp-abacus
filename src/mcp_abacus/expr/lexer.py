@@ -44,7 +44,9 @@ EOF = "EOF"
 TOKEN_KINDS: frozenset[str] = frozenset({NUMBER, NAME, OP, LPAREN, RPAREN, COMMA, EOF})
 
 _DIGITS = frozenset("0123456789")
-_SINGLE_CHAR_OPS = frozenset("+-*/%^&|~")  # ^ & | bitwise, ~ bitwise NOT (24.3.2)
+# ^ & | bitwise, ~ bitwise NOT (24.3.2); = is the assignment operator (30.3) — not a
+# value operator, so the parser only ever consumes it at statement level, never in _binary.
+_SINGLE_CHAR_OPS = frozenset("+-*/%^&|~=")
 _BASE_PREFIXES = ("0x", "0X", "0b", "0B", "0o", "0O")
 # ASCII-only on purpose: no unicode digits, no underscore separators (20.1.3).
 _BASE_INTEGER = re.compile(r"0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+")

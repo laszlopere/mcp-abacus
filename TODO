@@ -1381,7 +1381,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                pairs, with set/get by name (get on an unknown name raises).
     [x] 30.2.  Carry a store instance on the eval context (29.1), so it
                lives for the whole run and threads down the evaluate walk.
-    [ ] 30.3.  Parser — assignment `NAME '=' expr`, lowest precedence; the
+    [x] 30.3.  Parser — assignment `NAME '=' expr`, lowest precedence; the
                AST Assign node holds the name lexeme + the value subtree.
     [ ] 30.4.  Parser — a bare NAME atom is a variable reference (an AST
                Var node holding the lexeme); keep it distinct from the

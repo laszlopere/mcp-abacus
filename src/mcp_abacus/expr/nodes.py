@@ -382,3 +382,41 @@ class FuncCall(Node):
         if self.name in _NULLARY_FUNCS:
             return _NULLARY_FUNCS[self.name](ctx)
         return _FUNCS[self.name](*(arg._walk(ctx) for arg in self.args))
+
+
+@dataclass(frozen=True, slots=True)
+class Assign(Node):
+    """An assignment ``name = expr`` (30.3): a variable name and its value subtree.
+
+    The loosest-precedence construct — it wraps a whole expression, never nests
+    inside one (the parser only recognises it at statement level, 30.3). ``name``
+    is the target variable's lexeme; ``expr`` is the right-hand expression whose
+    Value the assignment binds. Evaluation walks ``expr``, stores the result under
+    ``name`` in the run's VariableStore (30.2), and YIELDS that same Value, so an
+    assignment also carries a value (the node's own computed ``value``) the way
+    every other node does — and a later reference (30.4) reads it back.
+    """
+
+    name: str
+    expr: Node
+    line: int = field(kw_only=True, compare=False)
+    value: Value | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("Assign name must not be empty")
+        _validate_line(self.line)
+
+    def _label(self) -> str:
+        # 26.8: ASSIGN with the target name quoted, paralleling LITERAL / CALL.
+        return f'ASSIGN "{self.name}"'
+
+    def _children(self) -> tuple[Node, ...]:
+        return (self.expr,)
+
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        # Bind the name to the RHS Value in the run store (30.2) and yield it; the
+        # store lookup itself is a future reference node's job (30.4).
+        result = self.expr._walk(ctx)
+        ctx.variables.set(self.name, result)
+        return result

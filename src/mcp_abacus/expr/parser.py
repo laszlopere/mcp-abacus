@@ -22,6 +22,7 @@ Pratt binding-power table; unary/power/atom are plain descent.
 from mcp_abacus.expr.lexer import COMMA, EOF, LPAREN, NAME, NUMBER, OP, RPAREN, Token, tokenize
 from mcp_abacus.expr.nodes import (
     FUNCTION_ARITIES,
+    Assign,
     BinOp,
     FuncCall,
     Node,
@@ -66,7 +67,7 @@ def parse(text: str) -> Node:
     if tokens[0].kind == EOF:
         raise ParseError("empty input: expected an expression", tokens[0].line)
     parser = _Parser(tokens)
-    node = parser.expression()
+    node = parser.assignment()
     parser.expect_end()
     return node
 
@@ -79,6 +80,12 @@ class _Parser:
     def _peek(self) -> Token:
         return self._tokens[self._pos]
 
+    def _peek_at(self, offset: int) -> Token:
+        # Bounded lookahead; the token list always ends with EOF, so an offset past
+        # the end clamps to it rather than raising (used by assignment's NAME '=' peek).
+        pos = self._pos + offset
+        return self._tokens[pos] if pos < len(self._tokens) else self._tokens[-1]
+
     def _advance(self) -> Token:
         token = self._tokens[self._pos]
         self._pos += 1
@@ -89,6 +96,26 @@ class _Parser:
         if token.kind == OP and token.lexeme in ops:
             return self._advance()
         return None
+
+    def assignment(self) -> Node:
+        """Parse ``NAME '=' expr`` (an assignment) or fall through to an expression (30.3).
+
+        Assignment is the LOOSEST precedence — it wraps the whole binary/unary/power
+        chain. Recognised by a two-token lookahead (a NAME immediately followed by
+        '='), so a bare NAME that is NOT an assignment target still descends into an
+        ordinary expression (a call today, a variable reference once 30.4 lands). The
+        right-hand side is a full expression; the Assign node keeps the name lexeme
+        and that subtree. Only ``parse`` calls this — RHS / parens / arguments use
+        ``expression``, so assignment never nests inside an expression (statement
+        level only).
+        """
+        name = self._peek()
+        after = self._peek_at(1)
+        if name.kind == NAME and after.kind == OP and after.lexeme == "=":
+            self._advance()  # NAME
+            self._advance()  # '='
+            return Assign(name.lexeme, self.expression(), line=name.line)
+        return self.expression()
 
     def expression(self) -> Node:
         return self._binary(1)

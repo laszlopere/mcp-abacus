@@ -7,6 +7,7 @@ from mcp_abacus.expr.lexer import LexError, Token, tokenize
 from mcp_abacus.expr.nodes import (
     BINARY_OPS,
     UNARY_OPS,
+    Assign,
     BinOp,
     EvalError,
     FuncCall,
@@ -27,6 +28,7 @@ from mcp_abacus.expr.value import (
 __all__ = [
     "BINARY_OPS",
     "UNARY_OPS",
+    "Assign",
     "BinOp",
     "EvalContext",
     "EvalError",
