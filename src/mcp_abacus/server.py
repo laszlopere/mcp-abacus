@@ -17,8 +17,7 @@ from mcp_abacus.expr.value import FixedPoint, Mode, Value, resolve_mode
 from mcp_abacus.solver import (
     SolverError,
     SolverResult,
-    resolve_goal,
-    resolve_type,
+    resolve_objective,
     search,
     validate_bracket,
     validate_unknown,
@@ -360,21 +359,20 @@ def solver(
     variable: str,
     lower: float,
     upper: float,
-    goal: str | None = None,
-    type: str | None = None,
+    objective: str | None = None,
     mode: str = "fixed-point",
     min_fixed_point_precision: int | None = None,
 ) -> dict:
-    """Find the value of one variable that solves or optimises an expression.
+    """Find the value of one variable that drives an expression to a root or extremum.
 
     `solver` takes the SAME expression language as `calculate` — every operator,
     function, literal form, and (crucially) multi-line programs with `name = expr`
     assignments — but instead of evaluating the expression it SEARCHES for the value
-    of one named `variable` that drives the expression to a target:
-      - no `goal` (default): SOLVE — find where the expression equals zero. Write an
-        equation `f = g` as the expression `f - g` and solve for its root.
-      - `goal` "minimise" / "maximise": OPTIMISE — find where the expression reaches
-        its smallest / largest value.
+    of one named `variable` that drives the expression to the chosen `objective`:
+      - "find-root" (default): find where the expression equals zero. Write an
+        equation `f = g` as the expression `f - g` and find its root.
+      - "find-minimum" / "find-maximum": find where the expression reaches its
+        smallest / largest value within the bracket.
 
     `variable` is the single unknown the search drives; it must occur in the
     expression and must NOT be assigned by it. Every OTHER name in the expression is
@@ -385,38 +383,38 @@ def solver(
     `lower` and `upper` give the required search bracket `[lower, upper]` the unknown
     is searched within; `lower` must be below `upper`.
 
-    `type` (optional) names the strategy — "solve" or "optimise"; when omitted it is
-    inferred from `goal` (a goal means optimise, no goal means solve).
+    `objective` (optional) names what to search for — "find-root", "find-minimum", or
+    "find-maximum"; omitted, it defaults to "find-root". (The older spellings `solve`,
+    `minimise`/`maximise` and their `min`/`max` and American forms are accepted too.)
 
     `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
     search runs in that numeric type, and the found value is reported in it. See
     `calculate` and `help` for the shared grammar, modes, and precision rules.
 
     The search is bounded by a hard 2-second time limit. If it has not converged by
-    then it stops and reports the best value reached so far (a solve that has not got
-    close enough to zero in that time is reported as no-solution, naming the limit).
+    then it stops and reports the best value reached so far (a find-root that has not
+    got close enough to zero in that time is reported as no-solution, naming the limit).
 
     Returns a dict: `solution` is the found value of `variable`, rendered as a
     string and marked "(approximate)" — the search locates it to a tolerance, never
     exactly — with `solution_hex_dump` its bit-backed hex (as `calculate`'s
     value_hex_dump). `value` is the EXPRESSION evaluated at that solution, annotated
-    with its own precision verdict (near zero for a solve, the extremum for an
-    optimise), and `value_hex_dump` its hex. `mode` is the resolved numeric type;
-    `exact` and `precision` describe `value` exactly as in `calculate`. `goal` and
-    `type` echo the resolved strategy, and `iterations` is how many search steps it
-    took. On any failure — a bad mode/precision, a malformed expression, an invalid
-    request (empty bracket, unknown not in the expression, type/goal disagreement),
-    or no solution in the bracket — every data field is null and `error` carries the
-    message (a no-solution error reports the closest |expr| it reached); on success
-    `error` is null.
+    with its own precision verdict (near zero for find-root, the extremum otherwise),
+    and `value_hex_dump` its hex. `mode` is the resolved numeric type; `exact` and
+    `precision` describe `value` exactly as in `calculate`. `objective` echoes the
+    resolved objective, `algorithm` names the search method used ("golden-section
+    search"), and `iterations` is how many search steps it took. On any failure — a
+    bad mode/precision, a malformed expression, an invalid request (empty bracket,
+    unknown not in the expression, unknown objective), or no solution in the bracket —
+    every data field is null and `error` carries the message (a no-solution error
+    reports the closest |expr| it reached); on success `error` is null.
     """
     selected, mode_error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
     if mode_error is not None:
         return _solver_error(mode_error)
     assert selected is not None  # mode_error is None means a mode resolved
     try:
-        resolved_type = resolve_type(type, goal)
-        resolved_goal = resolve_goal(goal)
+        resolved_objective = resolve_objective(objective)
     except SolverError as exc:
         return _solver_error(exc.message)
     try:
@@ -428,7 +426,7 @@ def solver(
         validate_unknown(node, variable)
         result = search(
             node, variable, lower, upper, selected, min_fixed_point_precision or 0,
-            resolved_type, resolved_goal,
+            resolved_objective,
         )
     except SolverError as exc:
         return _solver_error(exc.message)
@@ -458,8 +456,8 @@ def _solver_reply(result: SolverResult, mode: Mode, min_fixed_point_precision: i
         "mode": mode.value,
         "exact": value.exact,
         "precision": value.precision(),
-        "goal": result.goal.value if result.goal is not None else None,
-        "type": result.type.value,
+        "objective": result.objective.value,
+        "algorithm": result.algorithm,
         "iterations": result.iterations,
         "error": None,
     }
@@ -469,8 +467,8 @@ def _solver_error(message: str) -> dict:
     """A solver reply carrying only an error — every data field null (31.8).
 
     Mirrors `_error` for calculate: the same key set as the success reply so the
-    shape never varies, with solution / value / mode / strategy / iterations all
-    null and the message in `error`.
+    shape never varies, with solution / value / mode / objective / algorithm /
+    iterations all null and the message in `error`.
     """
     return {
         "variable": None,
@@ -481,8 +479,8 @@ def _solver_error(message: str) -> dict:
         "mode": None,
         "exact": None,
         "precision": None,
-        "goal": None,
-        "type": None,
+        "objective": None,
+        "algorithm": None,
         "iterations": None,
         "error": message,
     }

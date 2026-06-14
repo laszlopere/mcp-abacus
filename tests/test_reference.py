@@ -64,17 +64,15 @@ def test_functions_section_marks_variadic_functions():
             assert f"{name}(" in text and "…" in text
 
 
-def test_solver_section_lists_every_live_strategy_and_goal():
-    # Sourced from the solver's own enums/aliases, so the help cannot drift from
-    # what the tool accepts — every strategy, goal, and goal alias must appear.
-    from mcp_abacus.solver import _GOAL_ALIASES, Goal, SolverType
+def test_solver_section_lists_every_live_objective_and_alias():
+    # Sourced from the solver's own enum/aliases, so the help cannot drift from what
+    # the tool accepts — every canonical objective and every alias must appear.
+    from mcp_abacus.solver import _OBJECTIVE_ALIASES, Objective
 
     text = reference.render("solver")
-    for strategy in SolverType:
-        assert strategy.value in text
-    for goal in Goal:
-        assert goal.value in text
-    for alias in _GOAL_ALIASES:
+    for objective in Objective:
+        assert objective.value in text
+    for alias in _OBJECTIVE_ALIASES:
         assert alias in text
 
 

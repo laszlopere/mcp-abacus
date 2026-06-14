@@ -378,7 +378,7 @@ def _compact_solver_trace(request, monkeypatch):
         return node
 
     @functools.wraps(original_search)
-    def traced_search(node, variable, lower, upper, mode, floor, type_, goal):
+    def traced_search(node, variable, lower, upper, mode, floor, objective):
         # floor is `min_fixed_point_precision or 0`; map 0 back to None to mirror the
         # tool's argument (and its _annotate behaviour) when no floor was set.
         request = {
@@ -388,11 +388,10 @@ def _compact_solver_trace(request, monkeypatch):
             "upper": upper,
             "mode": mode.value,
             "min_fixed_point_precision": floor or None,
-            "type": type_.value,
-            "goal": goal.value if goal is not None else None,
+            "objective": objective.value,
         }
         try:
-            result = original_search(node, variable, lower, upper, mode, floor, type_, goal)
+            result = original_search(node, variable, lower, upper, mode, floor, objective)
             rows.append((request, _solver_reply(result, mode, floor or None)))
             return result
         except SolverError as exc:

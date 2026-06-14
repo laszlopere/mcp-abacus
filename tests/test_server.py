@@ -122,9 +122,9 @@ def test_solver_tool_signature_requires_expression_variable_and_bracket():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     schema = tools["solver"].inputSchema
     properties = schema["properties"]
-    for name in ("expression", "variable", "lower", "upper", "goal", "type"):
+    for name in ("expression", "variable", "lower", "upper", "objective"):
         assert name in properties
-    # The unknown and its search bracket are required; goal/type/mode are optional.
+    # The unknown and its search bracket are required; objective/mode are optional.
     assert sorted(schema["required"]) == ["expression", "lower", "upper", "variable"]
     assert properties["mode"]["default"] == "fixed-point"
 

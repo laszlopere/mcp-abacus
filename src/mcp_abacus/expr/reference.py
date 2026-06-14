@@ -112,16 +112,15 @@ def _functions_section() -> str:
 
 
 def _solver_section() -> str:
-    # Built from the solver's live strategy/goal enums and goal aliases, so the
-    # section cannot drift from what the tool accepts. Imported LOCALLY: the solver
-    # is a higher-level sibling that depends on this expr subpackage, so a
-    # module-level import here would invert the layering (and risk a load-time
-    # cycle) — deferring it to call time keeps expr free of an edge back to solver.
-    from mcp_abacus.solver import _GOAL_ALIASES, Goal, SolverType
+    # Built from the solver's live objective enum and aliases, so the section cannot
+    # drift from what the tool accepts. Imported LOCALLY: the solver is a higher-level
+    # sibling that depends on this expr subpackage, so a module-level import here would
+    # invert the layering (and risk a load-time cycle) — deferring it to call time
+    # keeps expr free of an edge back to solver.
+    from mcp_abacus.solver import _ALGORITHM, _OBJECTIVE_ALIASES, Objective
 
-    types = " | ".join(t.value for t in SolverType)
-    goals = " | ".join(g.value for g in Goal)
-    aliases = ", ".join(f"{name}={g.value}" for name, g in _GOAL_ALIASES.items())
+    objectives = " | ".join(o.value for o in Objective)
+    aliases = ", ".join(f"{name}={o.value}" for name, o in _OBJECTIVE_ALIASES.items())
     return "\n".join(
         [
             "solver tool — find the value of ONE variable that drives an expression to",
@@ -135,24 +134,24 @@ def _solver_section() -> str:
             "              be assigned by it; every OTHER name is a constant the program",
             "              sets via an assignment line.",
             "  lower upper the search bracket [lower, upper]; lower must be below upper.",
-            f"  type        strategy: {types}. Omitted -> inferred from goal.",
-            f"  goal        optimise direction: {goals}",
-            f"              (aliases: {aliases}). Omit to solve.",
+            f"  objective   what to search for: {objectives}.",
+            "              Omitted -> find-root.",
+            f"              (aliases: {aliases})",
             "  mode        numeric type the search runs in (see types); default fixed-point.",
             "  min_fixed_point_precision  fixed-point decimal floor, exactly as in calculate.",
             "",
-            "strategies:",
-            "  solve     (no goal) find where the expression equals zero — a root. Write an",
-            "            equation f = g as the expression f - g. 'No solution' when zero is",
-            "            not reached in the bracket (the closest |expr| is reported).",
-            "  optimise  (a goal) find where the expression is smallest (minimise) or",
-            "            largest (maximise) within the bracket.",
+            "objectives:",
+            "  find-root     find where the expression equals zero — a root. Write an",
+            "                equation f = g as the expression f - g. 'No solution' when zero",
+            "                is not reached in the bracket (the closest |expr| is reported).",
+            "  find-minimum  find where the expression is smallest within the bracket.",
+            "  find-maximum  find where the expression is largest within the bracket.",
             "",
             "reply: solution (the found value, marked approximate) + solution_hex_dump;",
-            "value (the expression AT the solution — near zero for solve, the extremum for",
-            "optimise) + value_hex_dump; mode, exact, precision (describing value, as in",
-            "calculate); goal, type, iterations; error. On failure every data field is null",
-            "and error carries the message.",
+            "value (the expression AT the solution — near zero for find-root, the extremum",
+            "otherwise) + value_hex_dump; mode, exact, precision (describing value, as in",
+            f"calculate); objective, algorithm ({_ALGORITHM}), iterations; error. On failure",
+            "every data field is null and error carries the message.",
         ]
     )
 
@@ -163,7 +162,7 @@ _SECTIONS: dict[str, tuple[str, Callable[[], str]]] = {
     "types": ("numeric types this build supports", _types_section),
     "language": ("expression grammar: operators, precedence, literals", _language_section),
     "functions": ("the callable functions and their argument counts", _functions_section),
-    "solver": ("the solver tool: solve / optimise one variable over a bracket", _solver_section),
+    "solver": ("the solver tool: find a root or extremum over a bracket", _solver_section),
 }
 
 

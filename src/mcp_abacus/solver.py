@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 László Pere
 
-"""The solver tool's engine: pick a strategy, then search for the variable's value.
+"""The solver tool's engine: pick an objective, then search for the variable's value.
 
-Built up item by item (TODO 31). Today it resolves the solver STRATEGY from the
-`type`/`goal` arguments; the objective and the search engine land in later items.
+Built up item by item (TODO 31); the strategy vocabulary reworked in TODO 32. The
+`objective` argument (find-root / find-minimum / find-maximum) names what the search
+looks for; the golden-section engine drives the unknown to it over a bracket.
 """
 
 import math
@@ -29,92 +30,72 @@ class SolverError(Exception):
         self.message = message
 
 
-class SolverType(Enum):
-    """The search strategy — drive the expression to zero, or to an extremum."""
+class Objective(Enum):
+    """What the search looks for — a root, or an extremum in one direction (32.1).
 
-    SOLVE = "solve"  # find where the expression equals zero (no goal)
-    OPTIMISE = "optimise"  # find where the expression is smallest / largest (a goal)
+    This single field replaces the pre-32 ``type``/``goal`` pair: ``FIND_ROOT`` is the
+    former solve (drive the expression to zero), and ``FIND_MINIMUM`` / ``FIND_MAXIMUM``
+    carry the direction the old ``goal`` held. The solver always minimises an internal
+    quantity (``fold_objective``); the objective names what the user is after.
+    """
+
+    FIND_ROOT = "find-root"  # where the expression equals zero
+    FIND_MINIMUM = "find-minimum"  # where the expression is smallest
+    FIND_MAXIMUM = "find-maximum"  # where the expression is largest
 
 
-class Goal(Enum):
-    """The optimise direction — make the expression as small or as large as possible."""
-
-    MINIMISE = "minimise"
-    MAXIMISE = "maximise"
-
-
-# Friendly spellings accepted alongside the canonical British names (31.5): the
-# short forms and the American -ize endings all resolve to the same Goal.
-_GOAL_ALIASES: dict[str, Goal] = {
-    "min": Goal.MINIMISE,
-    "minimize": Goal.MINIMISE,
-    "max": Goal.MAXIMISE,
-    "maximize": Goal.MAXIMISE,
+# Never-surfaced spellings accepted alongside the canonical find-* names (32.2): the
+# pre-32 ``solve`` and the ``minimise`` / ``maximise`` direction words, with their
+# short and American -ize forms, all resolve to one Objective. Bare ``optimise`` is
+# intentionally absent — it named a direction-less extremum, ambiguous now that the
+# direction lives in the objective itself (find-minimum vs find-maximum).
+_OBJECTIVE_ALIASES: dict[str, Objective] = {
+    "solve": Objective.FIND_ROOT,
+    "root": Objective.FIND_ROOT,
+    "minimise": Objective.FIND_MINIMUM,
+    "minimize": Objective.FIND_MINIMUM,
+    "min": Objective.FIND_MINIMUM,
+    "maximise": Objective.FIND_MAXIMUM,
+    "maximize": Objective.FIND_MAXIMUM,
+    "max": Objective.FIND_MAXIMUM,
 }
 
 
-def resolve_type(type_: str | None, goal: str | None) -> SolverType:
-    """Resolve the solver strategy from `type` and `goal`, or raise SolverError (31.2).
+def resolve_objective(objective: str | None) -> Objective:
+    """Resolve the search objective from the `objective` argument (32.1 / 32.2).
 
-    When `type` is omitted it is inferred from `goal`: a goal means OPTIMISE (there is
-    an extremum to seek), no goal means SOLVE (drive the expression to zero). When
-    `type` is given it must name a known strategy AND agree with the goal — OPTIMISE
-    needs a goal to optimise toward, while SOLVE takes none (its target is fixed at
-    zero). Goal presence is all that matters here; the goal's own value (minimise /
-    maximise, and its aliases) is resolved with the objective in a later item.
+    ``None`` means ``find-root`` — the default, drive the expression to zero. A given
+    value must name an objective: the canonical ``find-root`` / ``find-minimum`` /
+    ``find-maximum``, or a never-surfaced alias (the pre-32 ``solve``, and
+    ``minimise`` / ``maximise`` with their ``min`` / ``max`` and American spellings).
+    Anything else is a SolverError listing the canonical names.
     """
-    has_goal = goal is not None
-    if type_ is None:
-        return SolverType.OPTIMISE if has_goal else SolverType.SOLVE
+    if objective is None:
+        return Objective.FIND_ROOT
     try:
-        resolved = SolverType(type_)
+        return Objective(objective)
     except ValueError:
-        valid = ", ".join(t.value for t in SolverType)
-        raise SolverError(f"Unknown solver type: {type_!r}. Valid types: {valid}.") from None
-    if resolved is SolverType.OPTIMISE and not has_goal:
-        raise SolverError("Solver type 'optimise' requires a goal (minimise or maximise).")
-    if resolved is SolverType.SOLVE and has_goal:
+        if objective in _OBJECTIVE_ALIASES:
+            return _OBJECTIVE_ALIASES[objective]
+        valid = ", ".join(o.value for o in Objective)
         raise SolverError(
-            "Solver type 'solve' does not take a goal "
-            "(omit goal to solve, or set type to 'optimise')."
-        )
-    return resolved
+            f"Unknown objective: {objective!r}. Valid objectives: {valid}."
+        ) from None
 
 
-def resolve_goal(goal: str | None) -> Goal | None:
-    """Resolve the optimise direction, or None for a solve, or raise SolverError (31.5).
+def fold_objective(value: Value, objective: Objective) -> Value:
+    """Fold the expression's Value into the quantity the search drives to its least (32.1).
 
-    None stays None — a solve has no direction, it drives the expression to zero. A
-    given goal must name a direction: the canonical ``minimise`` / ``maximise``, the
-    American ``minimize`` / ``maximize``, or the short ``min`` / ``max``. Anything
-    else is a SolverError listing the canonical names. (Whether a goal is allowed at
-    all for the chosen strategy is settled earlier, in ``resolve_type``.)
-    """
-    if goal is None:
-        return None
-    try:
-        return Goal(goal)
-    except ValueError:
-        if goal in _GOAL_ALIASES:
-            return _GOAL_ALIASES[goal]
-        valid = ", ".join(g.value for g in Goal)
-        raise SolverError(f"Unknown goal: {goal!r}. Valid goals: {valid}.") from None
-
-
-def objective(value: Value, goal: Goal | None) -> Value:
-    """Transform the expression's Value into the quantity the search drives to its least (31.5).
-
-    The solver always MINIMISES this quantity, so the goal is folded into the value:
-      - solve (``goal`` is None) -> ``|expr|``; its least is zero, i.e. a root.
-      - minimise                 -> ``expr`` unchanged.
-      - maximise                 -> ``-expr``; the least of the negation is the
-                                    greatest of the value.
+    The solver always MINIMISES this quantity, so the objective is folded into the value:
+      - find-root    -> ``|expr|``; its least is zero, i.e. a root.
+      - find-minimum -> ``expr`` unchanged.
+      - find-maximum -> ``-expr``; the least of the negation is the greatest of the value.
     The transform stays in the active mode (``abs_`` / ``neg``), so the search
     compares candidates in the mode's own representation, not a float shadow.
     """
-    if goal is None:
+    if objective is Objective.FIND_ROOT:
         return value.abs_()
-    if goal is Goal.MAXIMISE:
+    if objective is Objective.FIND_MAXIMUM:
         return value.neg()
     return value
 
@@ -155,14 +136,16 @@ def validate_unknown(node: Node, variable: str) -> None:
 
 
 # --- the search engine (31.7) -------------------------------------------------
-# ONE minimizer drives every case: the objective folds solve/maximise into a
-# quantity whose LEAST is the answer (objective(), 31.5), so the engine only ever
+# ONE minimizer drives every case: the objective folds find-root/find-maximum into a
+# quantity whose LEAST is the answer (fold_objective(), 32.1), so the engine only ever
 # minimises. Golden-section search needs no derivative — it brackets the minimum
 # and shrinks the interval by the golden ratio each step, evaluating the program
 # once per new point. A real (float) search drives the abacus engine, which works
 # in the active mode: each candidate is materialised as a mode-faithful Value, the
 # program evaluated, and its Value reduced back to a float to compare.
 
+_ALGORITHM = "golden-section-search"  # the one search method today (32.3); the reply
+# reports it so a future second algorithm is distinguishable without a shape change.
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _MAX_ITERATIONS = 200  # cap: ~60 steps already shrink a unit bracket below 1e-12
 _TIME_LIMIT_SECONDS = 2.0  # hard wall-clock cap: a pathological program can make a
@@ -179,16 +162,16 @@ class SolverResult:
 
     ``solution`` is the unknown's found value as a mode-faithful Value (the search
     is approximate, so it is the best estimate within tolerance); ``value`` is the
-    EXPRESSION's Value evaluated at that solution (for a solve, near zero; for an
-    optimise, the extremum). ``type`` and ``goal`` echo the resolved strategy, and
-    ``iterations`` is how many interval-shrink steps the search took. The server
-    turns this into the reply dict; a failure (bad request, no solution) is a
-    SolverError instead, never a SolverResult.
+    EXPRESSION's Value evaluated at that solution (for find-root, near zero; for an
+    extremum, the extremum). ``objective`` echoes the resolved objective (32.1),
+    ``algorithm`` names the search method used (32.3), and ``iterations`` is how many
+    interval-shrink steps the search took. The server turns this into the reply dict;
+    a failure (bad request, no solution) is a SolverError instead, never a SolverResult.
     """
 
     variable: str
-    type: SolverType
-    goal: Goal | None
+    objective: Objective
+    algorithm: str
     solution: Value
     value: Value
     iterations: int
@@ -244,14 +227,13 @@ def search(
     upper: float,
     mode: Mode,
     floor: int,
-    type_: SolverType,
-    goal: Goal | None,
+    objective: Objective,
 ) -> SolverResult:
     """Golden-section search for the unknown over ``[lower, upper]`` (31.7).
 
-    Minimises the objective (objective(), 31.5) — ``|expr|`` for a solve, ``±expr``
-    for an optimise — by repeatedly evaluating the program with the unknown bound to
-    a candidate and shrinking the bracket toward the smaller end. Each candidate is
+    Minimises the objective (fold_objective(), 32.1) — ``|expr|`` for find-root,
+    ``±expr`` for an extremum — by repeatedly evaluating the program with the unknown
+    bound to a candidate and shrinking the bracket toward the smaller end. Each candidate is
     materialised in ``mode`` at the working scale, bound into a fresh seeded store,
     and the program evaluated; the resulting Value is reduced to a float to drive the
     search. A candidate that raises a DOMAIN error (e.g. sqrt of a negative) is
@@ -290,7 +272,7 @@ def search(
             if isinstance(exc.__cause__, UndefinedVariableError):
                 raise  # a constant the program never set — structural, surface it
             return math.inf  # a domain error at THIS candidate — steer the search away
-        obj = objective(raw, goal).to_float()
+        obj = fold_objective(raw, objective).to_float()
         if obj < best_obj:
             best_obj, best_solution, best_value = obj, candidate, raw
         return obj
@@ -338,7 +320,7 @@ def search(
             f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
             f"{limit} (every candidate for {variable!r} raised a domain error)."
         )
-    if type_ is SolverType.SOLVE and best_obj > residual_tol:
+    if objective is Objective.FIND_ROOT and best_obj > residual_tol:
         limit = (
             f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit."
             if timed_out
@@ -349,4 +331,4 @@ def search(
             f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
             f"at {variable} = {best_solution.to_string()}.{limit}"
         )
-    return SolverResult(variable, type_, goal, best_solution, best_value, iterations)
+    return SolverResult(variable, objective, _ALGORITHM, best_solution, best_value, iterations)

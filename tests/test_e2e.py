@@ -459,26 +459,26 @@ def _solve_in_one_session(cases):
 def test_solver_replies_are_observable_over_the_wire(capsys):
     # A spread of solver calls over real stdio, PRINTED so `pytest -s`
     # (./run-tests.sh --verbose) shows each request and its full reply. The five
-    # well-posed cases solve or optimise; the last is an honest no-solution. Each
-    # case is (arguments, human note).
+    # well-posed cases find a root or an extremum; the last is an honest no-solution.
+    # Each case is (arguments, human note).
     cases = [
         (
             {"expression": "x**2 - 2", "variable": "x", "lower": 0, "upper": 2, "mode": "double"},
-            "solve a root -> sqrt(2), value ~ 0",
+            "find-root -> sqrt(2), value ~ 0",
         ),
         (
             {
                 "expression": "(x - 3)**2", "variable": "x", "lower": 0, "upper": 5,
-                "goal": "minimise", "mode": "double",
+                "objective": "find-minimum", "mode": "double",
             },
-            "minimise a unimodal expr -> x = 3, value 0",
+            "find-minimum of a unimodal expr -> x = 3, value 0",
         ),
         (
             {
                 "expression": "5 - (x - 1)**2", "variable": "x", "lower": -2, "upper": 4,
-                "goal": "max", "mode": "double",
+                "objective": "max", "mode": "double",
             },
-            "maximise (alias 'max') -> x = 1, value 5",
+            "find-maximum (alias 'max') -> x = 1, value 5",
         ),
         (
             {
@@ -514,12 +514,13 @@ def test_solver_replies_are_observable_over_the_wire(capsys):
 
 def test_solver_finds_a_root_over_the_wire():
     # x**2 - 2 == 0 over [0, 2] in floating-point -> sqrt(2); the reply carries the
-    # solution, the (near-zero) expression value there, and the resolved strategy.
+    # solution, the (near-zero) expression value there, and the resolved objective.
     payload = _solve(
         {"expression": "x**2 - 2", "variable": "x", "lower": 0, "upper": 2, "mode": "double"}
     )
     assert payload["error"] is None
-    assert payload["type"] == "solve" and payload["goal"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "golden-section-search"
     assert payload["solution"].startswith("1.4142")
     assert "(approximate)" in payload["solution"]
     assert abs(float(payload["value"].split(" (")[0])) < 1e-6
@@ -527,21 +528,21 @@ def test_solver_finds_a_root_over_the_wire():
     assert payload["iterations"] > 0
 
 
-def test_solver_optimises_with_a_goal_over_the_wire():
-    # 5 - (x - 1)**2 peaks at x == 1 with value 5; maximise drives there, and the
-    # goal string "max" resolves like the canonical spelling.
+def test_solver_finds_a_maximum_over_the_wire():
+    # 5 - (x - 1)**2 peaks at x == 1 with value 5; find-maximum drives there, and the
+    # alias "max" resolves to the canonical find-maximum.
     payload = _solve(
         {
             "expression": "5 - (x - 1)**2",
             "variable": "x",
             "lower": -2,
             "upper": 4,
-            "goal": "max",
+            "objective": "max",
             "mode": "double",
         }
     )
     assert payload["error"] is None
-    assert payload["type"] == "optimise" and payload["goal"] == "maximise"
+    assert payload["objective"] == "find-maximum"
     assert float(payload["solution"].split(" (")[0]) == pytest.approx(1.0, abs=1e-4)
     assert float(payload["value"].split(" (")[0]) == pytest.approx(5.0, abs=1e-6)
 
@@ -606,10 +607,10 @@ def test_solver_rejects_min_fixed_point_precision_outside_fixed_point():
     assert "only valid in fixed-point mode" in payload["error"]
 
 
-def test_solver_rejects_a_solve_type_with_a_goal():
+def test_solver_rejects_an_unknown_objective():
+    # Bare "optimise" no longer names an objective (the direction lives in find-min/max).
     payload = _solve(
-        {"expression": "x - 1", "variable": "x", "lower": 0, "upper": 2, "type": "solve",
-         "goal": "min"}
+        {"expression": "x - 1", "variable": "x", "lower": 0, "upper": 2, "objective": "optimise"}
     )
     assert payload["solution"] is None
-    assert "does not take a goal" in payload["error"]
+    assert "Unknown objective" in payload["error"]

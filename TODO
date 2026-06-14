@@ -1446,6 +1446,32 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                _SECTIONS); README "What it gives you" bullet.
 
 
+[x] 32.  SOLVER VOCABULARY — make the reported strategy self-describing and report
+         the algorithm used (supersedes 31's `type`/`goal` naming). The solver
+         always "solves", so `type: solve` says nothing; split WHAT the search
+         looked for from HOW it searched.
+    [x] 32.1.  Field `objective` in {find-root, find-minimum, find-maximum}
+               replaces the `type`/`goal` pair, as both the (optional) argument and
+               the reported value: find-minimum / find-maximum carry the direction
+               the old `goal` held, find-root is the former solve. One field names
+               the whole intent. When omitted it still defaults to find-root.
+    [x] 32.2.  Drop the `goal` argument. Accept the old spellings as never-surfaced
+               aliases resolving to the canonical objective (the 23.6 alias rule):
+               solve -> find-root; optimise+minimise/minimize/min -> find-minimum;
+               optimise+maximise/maximize/max -> find-maximum. Fold
+               resolve_type/resolve_goal/objective into one objective resolver;
+               reword the type/goal disagreement errors to the new vocabulary.
+    [x] 32.3.  New reply field `algorithm` reporting the search method —
+               "golden-section search" (the one engine today, including the fixed-
+               point / rational grid-polish pass). Future-proofs the reply for a
+               second algorithm.
+    [x] 32.4.  Propagate everywhere: SolverResult + _solver_reply / _solver_error
+               (server.py), the solver docstring + `solver` help section
+               (reference.py), the README bullet, and the test fixtures / expected
+               replies (test_solver.py + over-the-wire). The `type` and `goal` keys
+               leave the reply; `objective` and `algorithm` take their place.
+
+
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
