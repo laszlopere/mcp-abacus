@@ -21,6 +21,7 @@ import json
 import sys
 from contextlib import asynccontextmanager
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -428,3 +429,114 @@ def test_unknown_mode_lists_the_valid_modes():
     error = _payload(result)["error"]
     assert "Unknown mode" in error
     assert "fixed-point" in error and "floating-point" in error and "rational" in error
+
+
+# --- solver over the wire (31.7 / 31.9) --------------------------------------
+
+
+def _solve(arguments):
+    """Invoke the `solver` tool against a fresh server; return its structured dict."""
+    return _payload(_call("solver", arguments))
+
+
+def test_solver_finds_a_root_over_the_wire():
+    # x**2 - 2 == 0 over [0, 2] in floating-point -> sqrt(2); the reply carries the
+    # solution, the (near-zero) expression value there, and the resolved strategy.
+    payload = _solve(
+        {"expression": "x**2 - 2", "variable": "x", "lower": 0, "upper": 2, "mode": "double"}
+    )
+    assert payload["error"] is None
+    assert payload["type"] == "solve" and payload["goal"] is None
+    assert payload["solution"].startswith("1.4142")
+    assert "(approximate)" in payload["solution"]
+    assert abs(float(payload["value"].split(" (")[0])) < 1e-6
+    assert payload["mode"] == "floating-point"
+    assert payload["iterations"] > 0
+
+
+def test_solver_optimises_with_a_goal_over_the_wire():
+    # 5 - (x - 1)**2 peaks at x == 1 with value 5; maximise drives there, and the
+    # goal string "max" resolves like the canonical spelling.
+    payload = _solve(
+        {
+            "expression": "5 - (x - 1)**2",
+            "variable": "x",
+            "lower": -2,
+            "upper": 4,
+            "goal": "max",
+            "mode": "double",
+        }
+    )
+    assert payload["error"] is None
+    assert payload["type"] == "optimise" and payload["goal"] == "maximise"
+    assert float(payload["solution"].split(" (")[0]) == pytest.approx(1.0, abs=1e-4)
+    assert float(payload["value"].split(" (")[0]) == pytest.approx(5.0, abs=1e-6)
+
+
+def test_solver_reads_constants_from_assignments_over_the_wire():
+    # The program sets r, p; n is the unknown. Newlines travel intact across the
+    # wire, so the multi-line program solves p*(1+r)**n == 2000 for n.
+    payload = _solve(
+        {
+            "expression": "r = 0.05\np = 1000\np * (1 + r)**n - 2000",
+            "variable": "n",
+            "lower": 0,
+            "upper": 100,
+            "mode": "double",
+        }
+    )
+    assert payload["error"] is None
+    assert float(payload["solution"].split(" (")[0]) == pytest.approx(14.2067, abs=1e-3)
+
+
+def test_solver_no_solution_reports_the_closest_residual():
+    # x**2 + 1 never reaches zero on [0, 2]; the error names it and the closest |expr|.
+    payload = _solve(
+        {"expression": "x**2 + 1", "variable": "x", "lower": 0, "upper": 2, "mode": "double"}
+    )
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No solution" in payload["error"] and "closest" in payload["error"]
+
+
+def test_solver_rejects_a_variable_absent_from_the_expression():
+    payload = _solve({"expression": "y + 1", "variable": "x", "lower": 0, "upper": 2})
+    assert payload["solution"] is None
+    assert "does not occur" in payload["error"]
+
+
+def test_solver_rejects_an_empty_bracket():
+    payload = _solve({"expression": "x - 1", "variable": "x", "lower": 2, "upper": 2})
+    assert payload["solution"] is None
+    assert "bracket is empty" in payload["error"]
+
+
+def test_solver_rejects_an_unknown_mode():
+    payload = _solve(
+        {"expression": "x - 1", "variable": "x", "lower": 0, "upper": 2, "mode": "int128"}
+    )
+    assert payload["solution"] is None
+    assert "Unknown mode" in payload["error"]
+
+
+def test_solver_rejects_min_fixed_point_precision_outside_fixed_point():
+    payload = _solve(
+        {
+            "expression": "x - 1",
+            "variable": "x",
+            "lower": 0,
+            "upper": 2,
+            "mode": "double",
+            "min_fixed_point_precision": 4,
+        }
+    )
+    assert payload["solution"] is None
+    assert "only valid in fixed-point mode" in payload["error"]
+
+
+def test_solver_rejects_a_solve_type_with_a_goal():
+    payload = _solve(
+        {"expression": "x - 1", "variable": "x", "lower": 0, "upper": 2, "type": "solve",
+         "goal": "min"}
+    )
+    assert payload["solution"] is None
+    assert "does not take a goal" in payload["error"]

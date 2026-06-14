@@ -1004,3 +1004,52 @@ def test_abs_returns_new_value_preserving_mode():
     r = v.abs_()
     assert r.mode is Mode.FLOATING_POINT
     assert r is not v
+
+
+# --- from_real / to_float: the solver's bridge to/from a float (31.7) --------
+
+
+def test_from_real_floating_point_is_the_nearest_double():
+    value = Value.from_real(0.5, Mode.FLOATING_POINT, scale=4)  # scale ignored for float
+    assert value.mode is Mode.FLOATING_POINT
+    assert value.payload == 0.5
+    assert value.exact is False
+
+
+def test_from_real_fixed_point_quantises_to_scale_and_is_exact():
+    value = Value.from_real(1.25, Mode.FIXED_POINT, scale=2)
+    assert value.payload == FixedPoint(125, 2)
+    assert value.exact is True
+
+
+def test_from_real_fixed_point_rounds_half_to_even():
+    # 0.125 at scale 2 -> 0.12 (round half to even, the engine-wide rule).
+    assert Value.from_real(0.125, Mode.FIXED_POINT, scale=2).payload == FixedPoint(12, 2)
+
+
+def test_from_real_rational_is_the_quantised_fraction():
+    value = Value.from_real(0.5, Mode.RATIONAL, scale=12)
+    assert value.payload == Fraction(1, 2)
+    assert value.exact is True
+
+
+def test_from_real_accepts_a_fraction_input():
+    value = Value.from_real(Fraction(3, 4), Mode.FIXED_POINT, scale=2)
+    assert value.payload == FixedPoint(75, 2)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (Value(Mode.FLOATING_POINT, 1.5, exact=False), 1.5),
+        (Value(Mode.FIXED_POINT, FixedPoint(125, 2), exact=True), 1.25),
+        (Value(Mode.RATIONAL, Fraction(1, 4), exact=True), 0.25),
+    ],
+)
+def test_to_float_reduces_each_mode(value, expected):
+    assert value.to_float() == expected
+
+
+def test_from_real_then_to_float_round_trips_on_the_grid():
+    # A value already on the fixed-point grid survives the round trip exactly.
+    assert Value.from_real(3.14, Mode.FIXED_POINT, scale=2).to_float() == 3.14
