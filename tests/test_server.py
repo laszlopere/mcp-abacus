@@ -6,7 +6,8 @@
 import asyncio
 import json
 
-from mcp_abacus.server import mcp
+from mcp_abacus.expr.value import Mode
+from mcp_abacus.server import _resolve_mode_and_precision, mcp
 
 
 def _content_blocks(call_tool_result):
@@ -22,9 +23,9 @@ def _calc(call_tool_result):
     return json.loads(_content_blocks(call_tool_result)[0].text)
 
 
-def test_exposed_tools_are_info_help_calculate_and_analyze():
+def test_exposed_tools_are_info_help_calculate_analyze_and_solver():
     tools = asyncio.run(mcp.list_tools())
-    assert sorted(t.name for t in tools) == ["analyze", "calculate", "help", "info"]
+    assert sorted(t.name for t in tools) == ["analyze", "calculate", "help", "info", "solver"]
 
 
 def test_tools_have_description_and_input_schema():
@@ -100,6 +101,32 @@ def test_calculate_min_fixed_point_precision_is_optional_in_the_schema():
     schema = tools["calculate"].inputSchema
     assert "min_fixed_point_precision" in schema["properties"]
     assert schema["required"] == ["expression"]  # the floor is optional
+
+
+def test_shared_front_end_resolves_a_mode_and_aliases():
+    # The shared mode/precision helper calculate, analyze, and solver all reuse.
+    assert _resolve_mode_and_precision("rational", None) == (Mode.RATIONAL, None)
+    assert _resolve_mode_and_precision("double", None) == (Mode.FLOATING_POINT, None)
+
+
+def test_shared_front_end_reports_unknown_mode_and_bad_precision():
+    mode, error = _resolve_mode_and_precision("int128", None)
+    assert mode is None and "Unknown mode" in error
+    mode, error = _resolve_mode_and_precision("rational", 4)
+    assert mode is None and "only valid in fixed-point mode" in error
+    mode, error = _resolve_mode_and_precision("fixed-point", -1)
+    assert mode is None and "non-negative integer" in error
+
+
+def test_solver_tool_signature_requires_expression_variable_and_bracket():
+    tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    schema = tools["solver"].inputSchema
+    properties = schema["properties"]
+    for name in ("expression", "variable", "lower", "upper", "goal", "type"):
+        assert name in properties
+    # The unknown and its search bracket are required; goal/type/mode are optional.
+    assert sorted(schema["required"]) == ["expression", "lower", "upper", "variable"]
+    assert properties["mode"]["default"] == "fixed-point"
 
 
 def test_calculate_floor_steers_inexact_division_to_more_fixed_point_decimals():

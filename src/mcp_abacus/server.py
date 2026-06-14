@@ -136,43 +136,52 @@ def _offered_precision(
     return previewed, floor
 
 
-def _evaluate_request(
-    expression: str, mode: str, min_fixed_point_precision: int | None
-) -> tuple[Node | None, Mode | None, Value | None, str | None]:
-    """Shared front-end for calculate/analyze: validate args, parse, evaluate.
+def _resolve_mode_and_precision(
+    mode: str, min_fixed_point_precision: int | None
+) -> tuple[Mode | None, str | None]:
+    """Resolve `mode` and validate `min_fixed_point_precision`, shared by every tool.
 
-    Resolves the mode, validates min_fixed_point_precision (fixed-point only, non-
-    negative), parses the expression, and evaluates the tree in that mode. Returns
-    ``(node, mode, value, None)`` on success — the evaluated root node, the resolved
-    mode, and the root Value — or ``(None, None, None, message)`` on the first
-    failure, so each tool can wrap that message in its own reply shape.
+    Returns ``(resolved_mode, None)`` on success or ``(None, message)`` on the first
+    bad argument. min_fixed_point_precision is valid ONLY in fixed-point mode (the
+    other modes have no decimal scale) and must be a non-negative integer. Factored
+    out of the parse/evaluate front-end so calculate, analyze, and solver share one
+    mode/precision contract — the same resolution, the same checks, and the same
+    error wording, whichever tool flags it.
     """
     try:
         selected = resolve_mode(mode)
     except ValueError:
         valid = ", ".join(m.value for m in Mode)
-        return None, None, None, f"Unknown mode: {mode!r}. Valid modes: {valid}."
+        return None, f"Unknown mode: {mode!r}. Valid modes: {valid}."
     if min_fixed_point_precision is not None:
         if selected is not Mode.FIXED_POINT:
-            return (
-                None,
-                None,
-                None,
-                (
-                    f"min_fixed_point_precision is only valid in fixed-point mode, "
-                    f"not {selected.value}."
-                ),
+            return None, (
+                f"min_fixed_point_precision is only valid in fixed-point mode, "
+                f"not {selected.value}."
             )
         if min_fixed_point_precision < 0:
-            return (
-                None,
-                None,
-                None,
-                (
-                    f"min_fixed_point_precision must be a non-negative integer, "
-                    f"got {min_fixed_point_precision}."
-                ),
+            return None, (
+                f"min_fixed_point_precision must be a non-negative integer, "
+                f"got {min_fixed_point_precision}."
             )
+    return selected, None
+
+
+def _evaluate_request(
+    expression: str, mode: str, min_fixed_point_precision: int | None
+) -> tuple[Node | None, Mode | None, Value | None, str | None]:
+    """Shared front-end for calculate/analyze: validate args, parse, evaluate.
+
+    Resolves the mode and validates min_fixed_point_precision via
+    ``_resolve_mode_and_precision``, parses the expression, and evaluates the tree in
+    that mode. Returns ``(node, mode, value, None)`` on success — the evaluated root
+    node, the resolved mode, and the root Value — or ``(None, None, None, message)``
+    on the first failure, so each tool can wrap that message in its own reply shape.
+    """
+    selected, error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
+    if error is not None:
+        return None, None, None, error
+    assert selected is not None  # error is None means a mode resolved
     try:
         node = parser.parse(expression)
         value = node.evaluate(selected, min_fixed_point_precision or 0)
@@ -333,6 +342,47 @@ def analyze(
         return {"tree": None, "error": error}
     assert node is not None  # error is None means the tree evaluated
     return {"tree": node.pretty(), "error": None}
+
+
+@mcp.tool()
+def solver(
+    expression: str,
+    variable: str,
+    lower: float,
+    upper: float,
+    goal: str | None = None,
+    type: str | None = None,
+    mode: str = "fixed-point",
+    min_fixed_point_precision: int | None = None,
+) -> dict:
+    """Find the value of one variable that solves or optimises an expression.
+
+    `solver` takes the SAME expression language as `calculate` — every operator,
+    function, literal form, and (crucially) multi-line programs with `name = expr`
+    assignments — but instead of evaluating the expression it SEARCHES for the value
+    of one named `variable` that drives the expression to a target:
+      - no `goal` (default): SOLVE — find where the expression equals zero. Write an
+        equation `f = g` as the expression `f - g` and solve for its root.
+      - `goal` "minimise" / "maximise": OPTIMISE — find where the expression reaches
+        its smallest / largest value.
+
+    `variable` is the single unknown the search drives; it must occur in the
+    expression and must NOT be assigned by it. Every OTHER name in the expression is
+    a constant, set by an assignment line in the program (e.g.
+    `"r = 0.05\\np = 1000\\np * (1 + r)**n - 2000"` solving for `n` with `r`, `p`
+    fixed); a name that is neither the unknown nor assigned is an error.
+
+    `lower` and `upper` give the required search bracket `[lower, upper]` the unknown
+    is searched within; `lower` must be below `upper`.
+
+    `type` (optional) names the strategy — "solve" or "optimise"; when omitted it is
+    inferred from `goal` (a goal means optimise, no goal means solve).
+
+    `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
+    search runs in that numeric type, and the found value is reported in it. See
+    `calculate` and `help` for the shared grammar, modes, and precision rules.
+    """
+    raise NotImplementedError("solver engine is not yet implemented (TODO 31.2-31.8)")
 
 
 def _error(message: str) -> dict:

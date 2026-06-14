@@ -225,7 +225,13 @@ def test_initialize_handshake_identifies_the_server():
             return await session.list_tools()
 
     tools = asyncio.run(go())
-    assert sorted(t.name for t in tools.tools) == ["analyze", "calculate", "help", "info"]
+    assert sorted(t.name for t in tools.tools) == [
+        "analyze",
+        "calculate",
+        "help",
+        "info",
+        "solver",
+    ]
 
 
 def test_calculate_is_advertised_with_optional_mode_over_the_wire():
