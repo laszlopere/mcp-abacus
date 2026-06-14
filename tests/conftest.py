@@ -28,7 +28,7 @@ import mcp_abacus.expr as expr_package
 import mcp_abacus.expr.lexer as lexer_module
 import mcp_abacus.expr.parser as parser_module
 from mcp_abacus.expr.lexer import EOF, Token
-from mcp_abacus.expr.nodes import Node
+from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.value import Value
 
 
@@ -348,6 +348,83 @@ def _compact_e2e_trace(request, monkeypatch):
             print(_indent(reply_json))
 
 
+def _compact_solver_trace(request, monkeypatch):
+    """For test_solver.py under -v: print each search() as a REQUEST / REPLY pair.
+
+    The engine tests call solver.search() directly with a parsed node, so there is
+    no wire round-trip to record like test_e2e has. Instead we trace parse() to
+    recover each node's source text and search() to capture its arguments and
+    outcome, then render the SAME request/reply JSON the solver TOOL produces — the
+    request rebuilt from search()'s arguments, the reply via the shared
+    _solver_reply / _solver_error builders — so the verbose view matches the wire
+    shape. A blank line follows each pair to separate the cases. Tests that never
+    search (the resolve_*/validate_* unit tests) record nothing, so only real solver
+    runs print.
+    """
+    import mcp_abacus.solver as solver_module
+    from mcp_abacus.server import _solver_error, _solver_reply
+    from mcp_abacus.solver import SolverError
+
+    rows: list[tuple[dict, dict]] = []  # (request args, reply payload)
+    sources: dict[int, str] = {}  # id(root node) -> the source text it was parsed from
+
+    original_parse = parser_module.parse
+    original_search = solver_module.search
+
+    @functools.wraps(original_parse)
+    def traced_parse(text):
+        node = original_parse(text)
+        sources[id(node)] = text
+        return node
+
+    @functools.wraps(original_search)
+    def traced_search(node, variable, lower, upper, mode, floor, type_, goal):
+        # floor is `min_fixed_point_precision or 0`; map 0 back to None to mirror the
+        # tool's argument (and its _annotate behaviour) when no floor was set.
+        request = {
+            "expression": sources.get(id(node), ""),
+            "variable": variable,
+            "lower": lower,
+            "upper": upper,
+            "mode": mode.value,
+            "min_fixed_point_precision": floor or None,
+            "type": type_.value,
+            "goal": goal.value if goal is not None else None,
+        }
+        try:
+            result = original_search(node, variable, lower, upper, mode, floor, type_, goal)
+            rows.append((request, _solver_reply(result, mode, floor or None)))
+            return result
+        except SolverError as exc:
+            rows.append((request, _solver_error(exc.message)))
+            raise
+        except EvalError as exc:  # a constant the program never set (structural, 31.7)
+            rows.append((request, _solver_error(f"error (line {exc.line}): {exc.message}")))
+            raise
+
+    monkeypatch.setattr(solver_module, "search", traced_search)
+    for module in (parser_module, expr_package, request.module):
+        if getattr(module, "parse", None) is original_parse:
+            monkeypatch.setattr(module, "parse", traced_parse)
+    if getattr(request.module, "search", None) is original_search:
+        monkeypatch.setattr(request.module, "search", traced_search)
+
+    yield
+
+    if rows:
+
+        def _indent(text: str) -> str:
+            return "\n".join("  " + line for line in text.splitlines())
+
+        print()  # step off pytest's "test-id" progress line
+        for request_args, reply in rows:
+            print("\nREQUEST:")
+            print(_indent(json.dumps(request_args, indent=2)))
+            print("\nREPLY:")
+            print(_indent(json.dumps(reply, indent=2)))
+            print("\n")  # blank line(s) between cases
+
+
 def _compact_functions_trace(request, monkeypatch):
     """For test_functions.py under -v: print each call as "expression [mode] = value".
 
@@ -492,6 +569,13 @@ def _verbose_trace(request, monkeypatch):
         # test_e2e.py gets the compact "expression = result" view, sourced from
         # the client seam since evaluation happens in a subprocess.
         yield from _compact_e2e_trace(request, monkeypatch)
+        return
+
+    if request.module.__name__ == "test_solver":
+        # test_solver.py gets the REQUEST / REPLY JSON view: it drives the engine
+        # directly, so the pair is rebuilt from search()'s arguments and the shared
+        # tool-reply builders rather than read off a wire seam.
+        yield from _compact_solver_trace(request, monkeypatch)
         return
 
     if request.module.__name__ == "test_functions":

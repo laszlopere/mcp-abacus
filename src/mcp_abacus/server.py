@@ -16,6 +16,7 @@ from mcp_abacus.expr.parser import ParseError
 from mcp_abacus.expr.value import FixedPoint, Mode, Value, resolve_mode
 from mcp_abacus.solver import (
     SolverError,
+    SolverResult,
     resolve_goal,
     resolve_type,
     search,
@@ -429,6 +430,18 @@ def solver(
         return _solver_error(exc.message)
     except EvalError as exc:  # a constant the program never set (structural, 31.7)
         return _solver_error(f"error (line {exc.line}): {exc.message}")
+    return _solver_reply(result, selected, min_fixed_point_precision)
+
+
+def _solver_reply(result: SolverResult, mode: Mode, min_fixed_point_precision: int | None) -> dict:
+    """Render a successful search into the solver tool's reply dict (31.8).
+
+    Factored from `solver` so the same success shape has ONE builder: the tool
+    returns it over the wire, and the verbose test trace renders it for an
+    engine-level `search()` call. `solution` is marked approximate; `value` (the
+    expression at the solution) is annotated with its precision verdict exactly as
+    `calculate`; `exact` / `precision` describe that value.
+    """
     value = result.value
     return {
         "variable": result.variable,
@@ -438,7 +451,7 @@ def solver(
             value.to_string(), value.exact, value.precision(), None, min_fixed_point_precision
         ),
         "value_hex_dump": value.hex_dump(),
-        "mode": selected.value,
+        "mode": mode.value,
         "exact": value.exact,
         "precision": value.precision(),
         "goal": result.goal.value if result.goal is not None else None,
