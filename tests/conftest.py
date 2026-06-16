@@ -78,6 +78,7 @@ def _human_readable_trace(request, monkeypatch):
 
     rows: list[tuple[str, str]] = []  # (program source, result line)
     sources: dict[int, str] = {}  # id(root node) -> the source text it was parsed from
+    state = {"muted": False}  # mute the raw evaluate seam while a tool/solver seam owns the row
 
     def _append(expression: str, result: str) -> None:
         rows.append((expression, result))
@@ -100,7 +101,11 @@ def _human_readable_trace(request, monkeypatch):
 
     @functools.wraps(original_mcp_call)
     async def traced_mcp_call(name, arguments=None, *args, **kwargs):
-        result = await original_mcp_call(name, arguments, *args, **kwargs)
+        state["muted"] = True  # the tool owns the row; mute its internal evaluate calls
+        try:
+            result = await original_mcp_call(name, arguments, *args, **kwargs)
+        finally:
+            state["muted"] = False
         if name == "solver":
             blocks = result[0] if isinstance(result, tuple) else result
             _record(arguments, json.loads(blocks[0].text))
@@ -110,7 +115,11 @@ def _human_readable_trace(request, monkeypatch):
 
     @functools.wraps(original_client_call)
     async def traced_client_call(self, name, arguments=None, *args, **kwargs):
-        result = await original_client_call(self, name, arguments, *args, **kwargs)
+        state["muted"] = True  # the tool owns the row; mute its internal evaluate calls
+        try:
+            result = await original_client_call(self, name, arguments, *args, **kwargs)
+        finally:
+            state["muted"] = False
         if name == "solver":
             _record(arguments, json.loads(result.content[0].text))
         return result
@@ -135,6 +144,7 @@ def _human_readable_trace(request, monkeypatch):
         @functools.wraps(original)
         def traced(node, *args, **kwargs):
             expression = sources.get(id(node), "")
+            state["muted"] = True  # mute the evaluate seam: the solver owns this row
             try:
                 result = original(node, *args, **kwargs)
                 _append(expression, _result_line(result))
@@ -145,6 +155,8 @@ def _human_readable_trace(request, monkeypatch):
             except Exception as exc:  # EvalError (unset constant) etc. — still worth showing
                 _append(expression, getattr(exc, "message", str(exc)))
                 raise
+            finally:
+                state["muted"] = False
 
         return traced
 
@@ -171,6 +183,28 @@ def _human_readable_trace(request, monkeypatch):
             monkeypatch.setattr(module, "search", traced_search)
         if getattr(module, "nelder_mead", None) is original_nelder_mead:
             monkeypatch.setattr(module, "nelder_mead", traced_nelder_mead)
+
+    # Calculate seam: Node.evaluate frames the computed value the same way. Only the
+    # PARSED ROOT (keyed by traced_parse) records — recursive child evaluates aren't
+    # in `sources`, so each calculate test yields exactly one block — and the `muted`
+    # guard keeps a tool/solver run's internal evaluations from adding stray rows.
+    original_evaluate = Node.evaluate
+
+    @functools.wraps(original_evaluate)
+    def traced_evaluate(self, *args, **kwargs):
+        record = not state["muted"] and id(self) in sources
+        try:
+            result = original_evaluate(self, *args, **kwargs)
+        except Exception as exc:  # EvalError etc. — frame the message like the engine seam
+            if record:
+                _append(sources[id(self)], getattr(exc, "message", str(exc)))
+            raise
+        if record:
+            verdict = "exact" if result.exact else "inexact"
+            _append(sources[id(self)], f"{result.to_string()} ({verdict})")
+        return result
+
+    monkeypatch.setattr(Node, "evaluate", traced_evaluate)
 
     # Mute the e2e subprocess's stderr request-logging so only the blocks print
     # (the same redirect the verbose e2e trace uses); skipped for in-process modules.
