@@ -1741,27 +1741,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                grammar stays the default so existing callers are unaffected.
 
 
-[ ] 39.  DEFAULT FIXED-POINT FLOOR = 9 DECIMALS  (decided 2026-06-16; reverses the
-         floor-0 default behind 25.3 / 27.2. The floor-0 default makes the flagship
-         a de-facto integer calculator: `1 / 3` -> 0, `0.1 + 0.2` -> 0, and only the
-         offered_precision steering rescues it. Set the default
-         min_fixed_point_precision to 9 so plain decimals compute as decimals out of
-         the box; 9 covers everyday money/ratio work and still leaves the explicit
-         arg for ERC-20-scale 18.)
-    [x] 39.1.  Change the default floor from 0 to 9 wherever the unset/None
-               min_fixed_point_precision resolves (calculate + analyze + solver share
-               one front end, cf. 31.3).
-    [x] 39.2.  Reconcile the offered_precision / inexact-steering machinery (25.3,
-               27.2): its gate is "no floor was passed" — with an implicit floor of 9
-               that path's trigger and the K = scale + 4 preview bump must be
-               rethought so it still helps past 9 decimals, not below it.
-    [ ] 39.3.  STILL TO PLAN: is 9 a hard floor or only a default the caller can
-               lower to 0; whether literals/operations that already carry a higher
-               scale are untouched (they should be — 9 is a floor, not a cap); the
-               docstring wording change so the new default is stated before the first
-               call; which tests/fixtures pin the old floor-0 outputs.
-
-
 [ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
          Python)
     [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
