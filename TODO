@@ -1555,10 +1555,8 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          and operations — not of any rounding mode. Every value already carries a
          binary exact/inexact flag; this section is about the RICHER information we
          can collect about exactness DURING the calculation, and what to do with it.)
-    [ ] 35.1.  CONTINUE AND REPORT — the current solution and the DEFAULT: never
-               reject; compute the result and surface its exact/inexact verdict so
-               the caller decides. The report can carry the richer information we
-               collect at compute time — the binary flag hides things KNOWABLE here:
+    [ ] 35.1.  INFORMATION WE CAN COLLECT — the binary exact/inexact flag hides
+               things a caller needs, all KNOWABLE at compute time:
         [ ] 35.1.1.  WHICH KIND of inexact — three fates the binary flag can't tell
                      apart: resolution-limited (terminating decimal, a larger scale
                      makes it exact: 1.5*1.5 @1 inexact -> 2.25 @2 exact); non-
