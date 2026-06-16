@@ -1540,95 +1540,102 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                self-describing.
     [ ] 34.4.  HELP + README: add a `rounding` note to the relevant help section
                and the calculate reply enrichment (27); a fixtures pass like 32.4.
-    [ ] 34.5.  ROUND ONLY AT DISPLAY (fixed-point) — decided this session: fixed-
+
+
+[ ] 35.  INEXACT CALCULATIONS  (split from 34 this session: rounding modes (34)
+         decide HOW to round; this section decides WHAT TO DO when the result still
+         can't be represented exactly at the display scale. Round-only-at-display is
+         the enabling mechanic — defer every rounding to ONE final bounded step — and
+         the open question is the policy for a still-inexact final result.)
+    [ ] 35.1.  ROUND ONLY AT DISPLAY (fixed-point) — decided this session: fixed-
                point must STOP rounding intermediates and quantise ONCE, at the
                final render. Today it rounds per-op (every `/`, product,
                transcendental snaps to the covering scale via _fp_quantize), so
                1/3+1/3+1/3 @ scale 2 = 0.99; deferred rounding makes it 1.00
                (exact). The open question is what to DO when that final rounding
-               is still inexact — three policies:
-        [ ] 34.5.1.  Reject all inexact calculations, report where the error was
-                     introduced. Exact-or-refuse: if any rounding entered, refuse
-                     and name the op/operand that introduced it. Strictest; the
-                     answer is never silently wrong.
-        [ ] 34.5.2.  Error calculation: compute how many decimals are trustworthy
-                     and reject only if the FINAL rounding makes the reported
-                     result inaccurate. Allows internal guard-digit rounding so
-                     long as every displayed digit is sound.
-                     NOTE: the binary exact/inexact flag hides two things a caller
-                     needs, both of which are KNOWABLE here:
-                     (1) WHICH KIND of inexact — three fates the flag can't tell
-                         apart: resolution-limited (terminating decimal, raising the
-                         scale makes it exact: 1.5*1.5 @1 inexact -> 2.25 @2 exact);
-                         non-terminating rational (no finite scale ever works:
-                         100/3, but EXACT in rational mode); irrational (no finite
-                         form at all: 2**0.5). Decidable: evaluate in rational mode
-                         — exact => rational, then it terminates iff the reduced
-                         denominator's only prime factors are 2 and 5; refuses =>
-                         irrational. So the verdict could name the class.
-                     (2) HOW inexact — the error magnitude. _fp_quantize already
-                         computes the exact remainder r/den and discards it, keeping
-                         only `lossless`. Each rounding is bounded by 1/2 ULP =
-                         0.5*10**-scale at the result scale; report the residual (or
-                         the bound) instead of just False. This IS "how many decimals
-                         are trustworthy". Round-only-at-display is what makes it
-                         computable: one final bounded rounding, not a compounding
-                         per-op chain whose bound is murky.
-                     CAVEAT (cross-type): the residual is a RATIONAL, not a fixed-
-                         point number — Fraction(stored) - Fraction(true), computed
-                         in exact rational arithmetic. It must be: the true value
-                         (e.g. 100/3) is often unrepresentable in fixed-point at any
-                         scale, so its distance isn't either; rendering the error in
-                         fixed-point would round it ("the error of the rounding,
-                         rounded"). So the CALCULATION stays fixed-point while the
-                         error DIAGNOSTIC borrows rational — same as the (1) oracle.
-                         First step already landed: Value.error + the analyze-tree
-                         "error <frac> ≈ <dec>" fragment, set at _fp_value.
-        [ ] 34.5.3.  Keep the current accurate/inaccurate (exact/inexact)
-                     reporting — flag and continue, never reject.
+               is still inexact — three policies (35.2-35.4):
+    [ ] 35.2.  Reject all inexact calculations, report where the error was
+               introduced. Exact-or-refuse: if any rounding entered, refuse
+               and name the op/operand that introduced it. Strictest; the
+               answer is never silently wrong.
+    [ ] 35.3.  Error calculation: compute how many decimals are trustworthy
+               and reject only if the FINAL rounding makes the reported
+               result inaccurate. Allows internal guard-digit rounding so
+               long as every displayed digit is sound.
+               NOTE: the binary exact/inexact flag hides two things a caller
+               needs, both of which are KNOWABLE here:
+               (1) WHICH KIND of inexact — three fates the flag can't tell
+                   apart: resolution-limited (terminating decimal, raising the
+                   scale makes it exact: 1.5*1.5 @1 inexact -> 2.25 @2 exact);
+                   non-terminating rational (no finite scale ever works:
+                   100/3, but EXACT in rational mode); irrational (no finite
+                   form at all: 2**0.5). Decidable: evaluate in rational mode
+                   — exact => rational, then it terminates iff the reduced
+                   denominator's only prime factors are 2 and 5; refuses =>
+                   irrational. So the verdict could name the class.
+               (2) HOW inexact — the error magnitude. _fp_quantize already
+                   computes the exact remainder r/den and discards it, keeping
+                   only `lossless`. Each rounding is bounded by 1/2 ULP =
+                   0.5*10**-scale at the result scale; report the residual (or
+                   the bound) instead of just False. This IS "how many decimals
+                   are trustworthy". Round-only-at-display is what makes it
+                   computable: one final bounded rounding, not a compounding
+                   per-op chain whose bound is murky.
+               CAVEAT (cross-type): the residual is a RATIONAL, not a fixed-
+                   point number — Fraction(stored) - Fraction(true), computed
+                   in exact rational arithmetic. It must be: the true value
+                   (e.g. 100/3) is often unrepresentable in fixed-point at any
+                   scale, so its distance isn't either; rendering the error in
+                   fixed-point would round it ("the error of the rounding,
+                   rounded"). So the CALCULATION stays fixed-point while the
+                   error DIAGNOSTIC borrows rational — same as the (1) oracle.
+                   First step already landed: Value.error + the analyze-tree
+                   "error <frac> ≈ <dec>" fragment, set at _fp_value.
+    [ ] 35.4.  Keep the current accurate/inaccurate (exact/inexact)
+               reporting — flag and continue, never reject.
 
 
-[ ] 35.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
+[ ] 36.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
          partially served by fixed-point already, but the NAMED error classes are
          basis-point confusion (25 bps read as 25%) and rate-period confusion (an
          annual rate applied monthly). A handful of named functions kill those
          classes directly and lean on the money-safe fixed-point story. Each is the
          two-step function add of 28 unless flagged; all COMPUTE, so they follow
          the active mode's `/` rule and rounding mode (34).)
-    [ ] 35.1.  pct(x, p) / pct_change(old, new) — p percent of x, and the signed
+    [ ] 36.1.  pct(x, p) / pct_change(old, new) — p percent of x, and the signed
                relative change (new-old)/old. The everyday percentage op LLMs get
                wrong; explicit so the caller never hand-rolls /100.
-    [ ] 35.2.  bps(x, b) — b basis points of x (b/10000 * x). Exists SOLELY to make
+    [ ] 36.2.  bps(x, b) — b basis points of x (b/10000 * x). Exists SOLELY to make
                the bps-vs-percent distinction un-confusable at the call site.
-    [ ] 35.3.  compound(principal, rate, periods) and the rate-period helpers —
+    [ ] 36.3.  compound(principal, rate, periods) and the rate-period helpers —
                make the period explicit so an annual rate can't silently act
                monthly; document that `rate` is per-period and `periods` counts the
                same unit.
-    [ ] 35.4.  pmt / fv / pv (amortisation: payment, future value, present value)
+    [ ] 36.4.  pmt / fv / pv (amortisation: payment, future value, present value)
                — the standard time-value-of-money trio, each a closed-form formula
                over the operand evaluator; the amortisation case named in the
                research. May need an internal pow over the active type (have it).
-    [ ] 35.5.  These are dollar-and-cents operations: recommend fixed-point in the
+    [ ] 36.5.  These are dollar-and-cents operations: recommend fixed-point in the
                docstrings, honour rounding mode (34), and keep the exact/inexact
                verdict so a rounded interest figure is never silently presented as
                exact.
 
 
-[ ] 36.  UNIT CONVERSION  (web research 2026-06-14: comprehensive competitors lead
+[ ] 37.  UNIT CONVERSION  (web research 2026-06-14: comprehensive competitors lead
          with "158 conversions / 15 categories" as a headline, and LLMs show error
          rates up to ~20% on large units. We have NONE. Add it the type-faithful
          way — a conversion is exact-rational where the factor is rational
          (in/cm, lb/kg defined factors) and inexact only where it isn't, so the
          verdict still tells the truth, unlike a bare float table.)
-    [ ] 36.1.  Decide the surface: a `convert` tool (value, from-unit, to-unit) vs
+    [ ] 37.1.  Decide the surface: a `convert` tool (value, from-unit, to-unit) vs
                a convert(x, "from", "to") function in the language. Lean tool — the
                unit names are strings, not numeric literals, and a tool keeps the
                grammar clean.
-    [ ] 36.2.  Seed the high-value categories first: length, mass, time, volume,
+    [ ] 37.2.  Seed the high-value categories first: length, mass, time, volume,
                temperature (affine — offset + scale, not a bare factor), data
                (KiB/KB binary-vs-decimal — a known LLM trap), angle. Store factors
                as exact rationals so the conversion is exact where the definition is.
-    [ ] 36.3.  Convert via the base unit: store each unit as an exact rational
+    [ ] 37.3.  Convert via the base unit: store each unit as an exact rational
                ratio to a per-category base (inch = 25.4 mm, metre = 1000 mm, ...)
                and compute as ONE composed rational op (value * from_ratio /
                to_ratio), not round-to-base-then-round-to-target — two rounded
@@ -1636,7 +1643,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                Temperature is affine (scale*x + offset, e.g. F = C*9/5 + 32), still
                exact-rational. Reuse the active numeric type so results compose with
                the rest of the engine.
-    [ ] 36.3a.  Exact/inexact verdict + printing. A rational p/q (lowest terms) has
+    [ ] 37.3a.  Exact/inexact verdict + printing. A rational p/q (lowest terms) has
                a finite decimal iff q factors into only 2s and 5s. Three cases:
                (a) terminates -> print all digits, verdict "exact" (5 in -> 12.7 cm;
                1 lb -> 0.45359237 kg). (b) non-terminating rational -> exact as a
@@ -1646,43 +1653,43 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                angle (deg<->rad via π) hits this in the seeded set. For (b)/(c)
                default precision reuses the engine's display-precision setting,
                don't invent a conversion-specific knob.
-    [ ] 36.4.  HELP section listing categories + units; README bullet; fixtures.
-    [ ] 36.5.  Distance units: millimeter (mm), centimeter (cm), metre (m),
+    [ ] 37.4.  HELP section listing categories + units; README bullet; fixtures.
+    [ ] 37.5.  Distance units: millimeter (mm), centimeter (cm), metre (m),
                kilometre (km), inch (in), foot (ft), yard (yd), mile (mi)
-    [ ] 36.6.  Temperature units: Celsius (°C, C), Fahrenheit (°F, F),
+    [ ] 37.6.  Temperature units: Celsius (°C, C), Fahrenheit (°F, F),
                Kelvin (K, kelvin)
-    [ ] 36.7.  Speed units: metres per second (m/s, mps), kilometres per hour
+    [ ] 37.7.  Speed units: metres per second (m/s, mps), kilometres per hour
                (km/h, kph), miles per hour (mph), knots (kn, knot)
-    [ ] 36.8.  Area units: square metre (sq m, m²), square kilometre (sq km, km²),
+    [ ] 37.8.  Area units: square metre (sq m, m²), square kilometre (sq km, km²),
                square foot (sq ft, ft²), square mile (sq mi, mi²), acre (ac, acre),
                hectare (ha, hectare)
-    [ ] 36.9.  Mass units: gram (g, gram), kilogram (kg, kilogram), ounce (oz, ounce),
+    [ ] 37.9.  Mass units: gram (g, gram), kilogram (kg, kilogram), ounce (oz, ounce),
                pound (lb, lbs, pound), stone (st, stone)
-    [ ] 36.10.  Volume units: millilitre (ml, millilitre), litre (l, litre),
+    [ ] 37.10.  Volume units: millilitre (ml, millilitre), litre (l, litre),
                teaspoon (tsp, teaspoon), tablespoon (tbsp, tablespoon), cup (cup),
                fluid ounce (fl oz, floz), quart (qt, quart), gallon (gal, gallon)
-    [ ] 36.11.  Time units: second (s, sec, second), minute (min, minute),
+    [ ] 37.11.  Time units: second (s, sec, second), minute (min, minute),
                hour (h, hr, hour), day (d, day)
-    [ ] 36.12.  Energy units: joule (J, joule), kilojoule (kJ, kilojoule),
+    [ ] 37.12.  Energy units: joule (J, joule), kilojoule (kJ, kilojoule),
                calorie (cal, calorie), kilocalorie (kcal, kilocalorie),
                kilowatt-hour (kWh, kilowatt-hour), BTU (btu, british thermal unit)
-    [ ] 36.13.  Power units: watt (W, watt), kilowatt (kW, kilowatt),
+    [ ] 37.13.  Power units: watt (W, watt), kilowatt (kW, kilowatt),
                horsepower (hp, horsepower)
-    [ ] 36.14.  Pressure units: pascal (Pa, pascal), kilopascal (kPa, kilopascal),
+    [ ] 37.14.  Pressure units: pascal (Pa, pascal), kilopascal (kPa, kilopascal),
                bar (bar), PSI (psi), atmosphere (atm, atmosphere)
-    [ ] 36.15.  Force units: newton (N, newton), pound-force (lbf),
+    [ ] 37.15.  Force units: newton (N, newton), pound-force (lbf),
                kilogram-force (kgf, kilogram-force)
-    [ ] 36.16.  Data units: bit (bit), byte (B, byte), kilobyte (KB, kilobyte),
+    [ ] 37.16.  Data units: bit (bit), byte (B, byte), kilobyte (KB, kilobyte),
                megabyte (MB, megabyte), gigabyte (GB, gigabyte), terabyte (TB, terabyte)
-    [ ] 36.17.  Fuel economy units: MPG US (mpg, miles per gallon),
+    [ ] 37.17.  Fuel economy units: MPG US (mpg, miles per gallon),
                MPG Imperial (mpg imp, miles per gallon (imperial)),
                L/100km (l/100km, liters per 100 km), km/L (km/l, kilometers per liter)
-    [ ] 36.18.  Angle units: degree (deg, °, degree), radian (rad, radian)
-    [ ] 36.19.  Frequency units: hertz (Hz, hertz), kilohertz (kHz, kilohertz),
+    [ ] 37.18.  Angle units: degree (deg, °, degree), radian (rad, radian)
+    [ ] 37.19.  Frequency units: hertz (Hz, hertz), kilohertz (kHz, kilohertz),
                megahertz (MHz, megahertz), gigahertz (GHz, gigahertz)
 
 
-[ ] 37.  HUMAN-SCALE NUMBER INGESTION  (web research 2026-06-14: the input side of
+[ ] 38.  HUMAN-SCALE NUMBER INGESTION  (web research 2026-06-14: the input side of
          the same failures — "3.2 billion", "25 bps", US-vs-EU decimal (12.345 as
          decimal vs thousands), and date tokens (Q3 2024 vs 2024-09-15) are named
          error classes because the model mis-tokenises them BEFORE any math. Let
@@ -1690,23 +1697,23 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          typed value, rather than pre-parsing it wrong itself. Scope carefully —
          our strict grammar (LANGUAGE help) is a feature; this is a deliberate,
          opt-in lenient front door, NOT a loosening of the core literal rules.)
-    [ ] 37.1.  Magnitude words: parse a trailing k/M/B/bn/billion/trillion suffix
+    [ ] 38.1.  Magnitude words: parse a trailing k/M/B/bn/billion/trillion suffix
                into the exact scaled value (3.2 billion -> 3200000000), in the
                active type. The single highest-value item — the ~20% large-unit
                error class.
-    [ ] 37.2.  Locale-aware decimal/grouping: an explicit US vs EU mode (or a
+    [ ] 38.2.  Locale-aware decimal/grouping: an explicit US vs EU mode (or a
                grouping/decimal-separator pair) so "12.345" and "12,345" are never
                guessed. Default to today's strict US form; this is an opt-in arg,
                never silent auto-detection (auto-detect is the bug, not the fix).
-    [ ] 37.3.  Percent / bps literal sugar on input ("25%", "25 bps") resolving to
-               the same values as 35.1/35.2 — input-side mirror of the financial
+    [ ] 38.3.  Percent / bps literal sugar on input ("25%", "25 bps") resolving to
+               the same values as 36.1/36.2 — input-side mirror of the financial
                helpers.
-    [ ] 37.4.  DATE/TIME ARITHMETIC (we have only time(), 28.1) — parse common date
+    [ ] 38.4.  DATE/TIME ARITHMETIC (we have only time(), 28.1) — parse common date
                forms to an epoch/ordinal so date differences and offsets are
                computable; normalise Q3 2024 / Sept 2024 / 2024-09-15 to one
-               representation. Larger than 37.1-37.3; may warrant its own section
+               representation. Larger than 38.1-38.3; may warrant its own section
                once scoped. Keep exact (a date is exactly rational, cf. 28.1).
-    [ ] 37.5.  KEEP IT OPT-IN: every lenient parse is a named mode/argument, the
+    [ ] 38.5.  KEEP IT OPT-IN: every lenient parse is a named mode/argument, the
                result still carries its exact/inexact verdict, and the strict
                grammar stays the default so existing callers are unaffected.
 
