@@ -106,6 +106,40 @@ _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
 }
 
 
+# One-line semantics per callable (21.2.3), the help-tool counterpart to the
+# registries above: the inline comments next to _FUNCS/_NULLARY_FUNCS are code,
+# not data, so the reference cannot render them — this table promotes them to
+# strings the `functions` section reads. Same single-source rule as the registries:
+# every name in _FUNCS and _NULLARY_FUNCS (incl. the `ln` alias) MUST appear here,
+# enforced by a reference test, so the help cannot drift from what is wired. Each
+# value is the descriptor AFTER the rendered signature — facts only, no signature
+# (the section prepends it); the model fills in the prose.
+FUNCTION_HELP: dict[str, str] = {
+    "abs": "absolute value; exact in every type",
+    "sqrt": "square root; refuses negatives, inexact except on the type's grid "
+    "(rational needs a perfect square)",
+    "pow": "x to the power y; the call form of the ** operator",
+    "sin": "sine, radians; inexact except sin(0)=0, rational refuses non-zero",
+    "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",
+    "tan": "tangent, radians; inexact except tan(0)=0, undefined at odd multiples of pi/2",
+    "cot": "cotangent, radians; always inexact, undefined at multiples of pi (incl. 0)",
+    "log": "natural log, base e; inexact except log(1)=0, refuses x<=0",
+    "ln": "natural log; alias of log",
+    "log10": "base-10 log; exact on powers of ten, inexact otherwise, refuses x<=0",
+    "sum": "total of the operands; exact in every type",
+    "product": "product of the operands; may round in fixed-point/float",
+    "avg": "arithmetic mean, sum/count; follows the type's / rule",
+    "max": "largest operand, returned verbatim; exact",
+    "min": "smallest operand, returned verbatim; exact",
+    "median": "middle operand by value; odd count exact, even averages the two middles",
+    "variance": "population variance, sum of squared deviations / n",
+    "stddev": "population standard deviation, sqrt of variance",
+    "pi": "circle constant pi; inexact in fixed-point/float, rational refuses",
+    "e": "Euler's number e; inexact in fixed-point/float, rational refuses",
+    "time": "current Unix epoch seconds; exact except in float",
+}
+
+
 def _arity_of(func: Callable[..., Value]) -> tuple[int, int | None]:
     """Allowed argument count (min, max) READ OFF a method's signature (22.2).
 

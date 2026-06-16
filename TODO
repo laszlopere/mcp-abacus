@@ -704,7 +704,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      forms incl. base prefixes and the M@D fixed-point
                      notation (20.1.3 / 20.5). Just the grammar, nothing
                      verbose.
-        [ ] 21.2.3.  `functions` — short list of the call functions the
+        [x] 21.2.3.  `functions` — short list of the call functions the
                      CURRENT build supports: each = name + signature/arity
                      + a one-liner (e.g. "sqrt(x) — square root; inexact in
                      fixed-point/binary64"). Sourced from the nodes._FUNCS

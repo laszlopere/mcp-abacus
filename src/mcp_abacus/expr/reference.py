@@ -17,7 +17,7 @@ a wrong guess is self-correcting.
 from collections.abc import Callable
 
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
-from mcp_abacus.expr.nodes import FUNCTION_ARITIES, UNARY_OPS
+from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
 from mcp_abacus.expr.value import MODE_HELP, Mode
 
@@ -101,9 +101,13 @@ def _signature(name: str, lo: int, hi: int | None) -> str:
 def _functions_section() -> str:
     # Built from FUNCTION_ARITIES, the same live registry the parser validates
     # against, so the list cannot drift from what the engine actually accepts. No
-    # precedence among functions, so list them alphabetically. Semantics are the
-    # model's to fill in — only the names and call shapes are stated here.
-    rows = [f"  {_signature(name, *FUNCTION_ARITIES[name])}" for name in sorted(FUNCTION_ARITIES)]
+    # precedence among functions, so list them alphabetically. Each row is the call
+    # shape plus its one-line semantics from FUNCTION_HELP (the parallel registry);
+    # the descriptions are aligned in a column for legibility.
+    names = sorted(FUNCTION_ARITIES)
+    signatures = {name: _signature(name, *FUNCTION_ARITIES[name]) for name in names}
+    width = max(len(sig) for sig in signatures.values())
+    rows = [f"  {signatures[name]:<{width}}  — {FUNCTION_HELP[name]}" for name in names]
     return "\n".join(
         [
             "functions (called as name(arg, ...); each argument evaluates in the active",

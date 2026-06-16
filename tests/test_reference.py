@@ -5,7 +5,7 @@
 
 from mcp_abacus.expr import reference
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
-from mcp_abacus.expr.nodes import FUNCTION_ARITIES, UNARY_OPS
+from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
 from mcp_abacus.expr.value import MODE_HELP, Mode
 
@@ -62,6 +62,21 @@ def test_functions_section_marks_variadic_functions():
     for name, (_lo, hi) in FUNCTION_ARITIES.items():
         if hi is None:  # variadic — its signature must show the "one or more" tail
             assert f"{name}(" in text and "…" in text
+
+
+def test_functions_section_gives_every_function_a_one_liner():
+    # The drift guard: each registered function (incl. nullaries and the ln alias)
+    # must have a FUNCTION_HELP entry, and that text must reach the rendered section.
+    text = reference.render("functions")
+    for name in FUNCTION_ARITIES:
+        assert name in FUNCTION_HELP
+        assert FUNCTION_HELP[name] in text
+
+
+def test_function_help_has_no_entries_beyond_the_registry():
+    # The mirror guard: no stale help for a function that was removed from the
+    # registry — FUNCTION_HELP and FUNCTION_ARITIES cover exactly the same names.
+    assert set(FUNCTION_HELP) == set(FUNCTION_ARITIES)
 
 
 def test_solver_section_lists_every_live_objective_and_alias():
