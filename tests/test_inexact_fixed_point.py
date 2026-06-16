@@ -172,14 +172,27 @@ def test_abort_headline_renders_a_function_call_over_its_argument_value():
     )
 
 
-# --- the why/how hint lines are deferred (35.3.2-35.3.5) -------------------
+# --- 35.3.2: the first hint line says how to LIFT the abort -----------------
 #
-# The headline (35.3.1) is now the WHOLE message. The follow-up hints — the policy
-# that would lift the abort (35.3.2), the residual / raise-precision steer (35.3.3),
-# the "this function can't be exact" note (35.3.4), and the rational-mode-is-exact
-# offer (35.3.5) — are not implemented yet, so the residual and the irrational/
-# rational verdict do NOT appear in the message. Value.explain_inexact still carries
-# that information (covered in test_value.py) for those points to format.
+# After the headline, an always-present hint names the policy that computes the
+# inexact result instead of rejecting it — continue-and-report.
+
+
+def test_abort_message_hints_how_to_enable_inexact_calculations():
+    message = _abort_fp("1.00 / 3.00").message
+    assert (
+        "\n - Pass inexact_handling='continue-and-report' to enable inexact calculations."
+        in message
+    )
+
+
+# --- the conditional hint lines are deferred (35.3.3-35.3.5) ----------------
+#
+# The remaining hints — the residual / raise-precision steer (35.3.3), the "this
+# function can't be exact" note (35.3.4), and the rational-mode-is-exact offer
+# (35.3.5) — are not implemented yet, so the residual and the irrational/rational
+# verdict do NOT appear in the message. Value.explain_inexact still carries that
+# information (covered in test_value.py) for those points to format.
 
 
 # --- min_fixed_point_precision interaction ---------------------------------

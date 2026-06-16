@@ -185,25 +185,31 @@ def _operand_value_string(node: "Node", scale: int | None) -> str:
 
 
 def _abort_message(node: "Node", value: Value) -> str:
-    """The abort-on-inexact headline for the node whose value first went inexact (35.3.1).
+    """The abort-on-inexact diagnostic for the node whose value first went inexact (35.3).
 
-    Always reads the same: ``Inexact calculation in line X: <operands> = <result> is
-    not exact.`` — the operands and result are the computed NUMBERS at the active
+    A headline followed by hint lines, one per line. The headline (35.3.1) always
+    reads the same: ``Inexact calculation in line X: <operands> = <result> is not
+    exact.`` — the operands and result are the computed NUMBERS at the active
     precision (the result's fixed-point scale), never the source lexemes, so a
     ``1 / 3`` written by the caller shows as ``1.00 / 3.00 = 0.33`` once the active
     precision is two decimals. Composed where EVERYTHING about the inexactness is in
     hand: the node lays out the operation (``_operand_form``) and carries, via the
     EvalError the caller wraps this in, the source line.
 
-    Only the headline. The why/how hints — the policy that would lift it, the
-    residual, the rational/irrational verdict (``explain_inexact`` has them ready) —
-    are deferred to 35.3.2-35.3.5, each its own line below this one.
+    The first hint (35.3.2) always follows: how to LIFT the abort — switch to the
+    ``continue-and-report`` policy that computes the inexact result instead of
+    rejecting it. The remaining, CONDITIONAL hints — the residual / raise-precision
+    steer, the inexact-function note, the rational-mode-is-exact offer
+    (``explain_inexact`` has them ready) — are deferred to 35.3.3-35.3.5.
     """
     scale = value.precision()  # the active fixed-point precision; None outside fixed-point
-    return (
+    headline = (
         f"Inexact calculation in line {node.line}: "
         f"{node._operand_form(scale)} = {value.to_string(scale)} is not exact."
     )
+    enable = InexactHandling.CONTINUE_AND_REPORT.value  # the policy that lifts the abort
+    hints = [f" - Pass inexact_handling='{enable}' to enable inexact calculations."]
+    return "\n".join([headline, *hints])
 
 
 class Node(ABC):
