@@ -280,6 +280,24 @@ def _hex_bytes(magnitude: int) -> str:
     return digits.zfill(len(digits) + len(digits) % 2)
 
 
+def _approx_decimal(frac: Fraction) -> str:
+    """A bounded-precision decimal approximation of an exact fraction (26.7).
+
+    ~24 significant digits; a trailing '…' marks a decimal the precision could not
+    recover exactly (1/3 → 0.333...3…), so the approximation never poses as the
+    exact value the fraction itself already shows. A terminating fraction (1/2 →
+    0.5) gets no ellipsis. Shared by a rational's own approximation and the
+    fixed-point error fragment (34.5.2).
+    """
+    with localcontext() as ctx:
+        ctx.prec = 24
+        approx = Decimal(frac.numerator) / Decimal(frac.denominator)
+    text = str(approx)
+    if Fraction(approx) != frac:
+        text += "…"
+    return text
+
+
 def _fp_quantize(num: int, den: int, scale: int) -> tuple[int, bool]:
     """Round the exact rational ``num/den`` to a mantissa at ``scale`` decimals.
 
@@ -319,10 +337,15 @@ def _fp_value(num: int, den: int, a: FixedPoint, b: FixedPoint, exact_in: bool) 
     covers both operands (19.1.2). exactness propagates only if the inputs were
     exact AND the quantization lost nothing (an add/sub never loses; a mul/div
     that does not fit the scale rounds and is flagged inexact).
+
+    When this quantization DOES round, the exact signed residual stored - true is
+    carried on the Value's ``error`` (34.5.2) — bounded by half a ULP, the "how
+    inexact" the analyze tree shows. A lossless quantization carries no error.
     """
     scale = max(a.decimals, b.decimals)
     mantissa, lossless = _fp_quantize(num, den, scale)
-    return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=exact_in and lossless)
+    error = None if lossless else Fraction(mantissa, 10**scale) - Fraction(num, den)
+    return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=exact_in and lossless, error=error)
 
 
 # --- internal high-precision pi (28.10.1) -------------------------------------
@@ -676,8 +699,26 @@ class Value:
     # per-mode storage: FLOATING_POINT float, FIXED_POINT FixedPoint, RATIONAL Fraction
     payload: Fraction | float | FixedPoint
     exact: bool
+    # "How inexact" (34.5.2): the EXACT signed quantization residual stored - true
+    # that THIS value's own rounding introduced, as a Fraction — None when nothing
+    # rounded here (an exact value) or when the residual is not a clean rational
+    # (an irrational-root / transcendental rounding, where the "true" value is the
+    # series approximation, not the real number). Set only at the fixed-point
+    # algebraic chokepoint (_fp_value). Pure annotation: excluded from equality and
+    # hashing so a value's identity stays (mode, payload, exact).
+    #
+    # NOTE the residual is a Fraction, NOT a fixed-point number, computed in exact
+    # rational arithmetic (Fraction(mantissa, 10**scale) - Fraction(num, den)). It
+    # has to be: the true value it measures the distance to (e.g. 100/3) is often
+    # not representable in fixed-point at any scale, so the error isn't either.
+    # Expressing it in fixed-point would round it — "the error of the rounding,
+    # rounded" — defeating the field. So the CALCULATION stays fixed-point; this
+    # DIAGNOSTIC about it borrows rational, the engine's exact ground-truth type.
+    error: Fraction | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
+        if self.error is not None and type(self.error) is not Fraction:
+            raise ValueError("Value error must be a Fraction or None")
         # Per-mode storage validation — one case per type, grows with the enum.
         match self.mode:
             case Mode.FLOATING_POINT:
@@ -1820,6 +1861,8 @@ class Value:
         type_part = self.mode.value + (f"[{scale}]" if scale is not None else "")
         verdict = "exact" if self.exact else "inexact"
         parts = [f"{self.to_string()} ({type_part}, {verdict})", *self.details()]
+        if self.error is not None:  # "how inexact": the exact residual this rounding introduced
+            parts.append(f"error {self.error} ≈ {_approx_decimal(self.error)}")
         return " · ".join(parts)
 
     def hex_dump(self) -> str | None:
@@ -1872,19 +1915,6 @@ class Value:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
     def _rational_approx(self) -> str:
-        """A bounded-precision decimal approximation of the exact fraction (26.7).
-
-        ~24 significant digits; a trailing '…' marks a decimal the precision could
-        not recover exactly (1/3 → 0.333...3…), so the approximation never poses as
-        the exact value the fraction itself already shows. A terminating fraction
-        (1/2 → 0.5) gets no ellipsis.
-        """
+        """A bounded-precision decimal approximation of the rational payload (26.7)."""
         assert isinstance(self.payload, Fraction)
-        frac = self.payload
-        with localcontext() as ctx:
-            ctx.prec = 24
-            approx = Decimal(frac.numerator) / Decimal(frac.denominator)
-        text = str(approx)
-        if Fraction(approx) != frac:
-            text += "…"
-        return text
+        return _approx_decimal(self.payload)

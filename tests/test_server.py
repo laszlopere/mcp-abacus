@@ -354,13 +354,15 @@ def test_analyze_tool_has_optional_mode_and_floor_defaulting_to_fixed_point():
 def test_analyze_returns_the_evaluated_tree_revealing_where_rounding_happened():
     # The point of analyze: (1 + 1/2) * 3 is 3, not 4.5, in fixed-point — and the
     # tree shows WHY, at the `1/2 = 0` leaf that rounded the half away at scale 0.
+    # That leaf names HOW inexact too (34.5.2): error -1/2, the discarded half; the
+    # nodes above it inherit the inexactness but introduce no rounding of their own.
     result = _calc(asyncio.run(mcp.call_tool("analyze", {"expression": "(1 + 1/2) * 3"})))
     assert result["error"] is None
     assert result["tree"] == (
         "BINARY_MUL Value = 3 (fixed-point[0], inexact) · hex 0x03\n"
         "  BINARY_ADD Value = 1 (fixed-point[0], inexact) · hex 0x01\n"
         '    LITERAL "1" Value = 1 (fixed-point[0], exact) · hex 0x01\n'
-        "    BINARY_DIV Value = 0 (fixed-point[0], inexact) · hex 0x00\n"
+        "    BINARY_DIV Value = 0 (fixed-point[0], inexact) · hex 0x00 · error -1/2 ≈ -0.5\n"
         '      LITERAL "1" Value = 1 (fixed-point[0], exact) · hex 0x01\n'
         '      LITERAL "2" Value = 2 (fixed-point[0], exact) · hex 0x02\n'
         '  LITERAL "3" Value = 3 (fixed-point[0], exact) · hex 0x03'
