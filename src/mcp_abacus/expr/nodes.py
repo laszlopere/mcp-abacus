@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from mcp_abacus.expr.value import (
     EvalContext,
+    InexactHandling,
     Mode,
     UndefinedVariableError,
     Value,
@@ -159,6 +160,32 @@ def _validate_line(line: int) -> None:
         raise ValueError(f"line must be >= 1, got {line}")
 
 
+def _parenthesize(node: "Node") -> str:
+    """A child node's source, wrapped in parens when it could re-associate (35.2.2).
+
+    Used by the source() unparse to keep a reconstructed sub-expression
+    unambiguous: a binary op or an assignment nested inside another op gets
+    parentheses (``a * (b + c)``), an atom (a literal, a variable, a call) does not.
+    """
+    rendered = node.source()
+    return f"({rendered})" if isinstance(node, (BinOp, Assign)) else rendered
+
+
+def _abort_message(node: "Node", value: Value) -> str:
+    """The abort-on-inexact diagnostic for the node whose value first went inexact (35.2.2).
+
+    Composed where EVERYTHING about the inexactness is in hand: the node gives the
+    offending sub-expression (``source()``) and — via the EvalError the caller wraps
+    this in — the source line, while the Value explains the kind and magnitude
+    (``explain_inexact``). Kept terse on purpose: it names the policy, the offending
+    sub-expression, and the certain why, with no padding.
+    """
+    return (
+        f"inexact result not authorized (inexact_handling='abort-on-inexact'): "
+        f"'{node.source()}' — {value.explain_inexact()}"
+    )
+
+
 class Node(ABC):
     """Abstract base of all AST nodes."""
 
@@ -172,6 +199,17 @@ class Node(ABC):
     @abstractmethod
     def _label(self) -> str:
         """One-line node header: kind + op/quoted-lexeme (no line number — 26.4)."""
+
+    @abstractmethod
+    def source(self) -> str:
+        """Reconstruct this node as a readable infix source string (35.2.2).
+
+        An unparse — not necessarily byte-identical to the original text (spacing is
+        normalised, redundant grouping may differ), but a faithful, re-parseable
+        rendering of the sub-expression. Used by the abort-on-inexact diagnostic to
+        name the offending calculation; nested binary ops/assignments are
+        parenthesized via ``_parenthesize`` so the reading stays unambiguous.
+        """
 
     @abstractmethod
     def _children(self) -> tuple["Node", ...]:
@@ -191,6 +229,7 @@ class Node(ABC):
         min_fixed_point_precision: int = 0,
         now_ns: int | None = None,
         variables: VariableStore | None = None,
+        inexact_handling: InexactHandling = InexactHandling.CONTINUE_AND_REPORT,
     ) -> Value:
         """Evaluate the subtree in ONE mode; store and return this node's Value.
 
@@ -207,6 +246,13 @@ class Node(ABC):
         sampled ONCE here so every ``time()`` in the run sees one instant. Defaults
         to the real clock (``time.time_ns()``); tests pass a fixed epoch to assert
         exact per-mode/scale renders.
+
+        ``inexact_handling`` (35.2) is the caller's policy when a result is inexact:
+        the default CONTINUE_AND_REPORT computes and lets the verdict surface, while
+        ABORT_ON_INEXACT raises an EvalError — tagged with the offending node's line
+        and naming the sub-expression and the kind/magnitude of the inexactness — the
+        moment any value in the walk is inexact. It rides the EvalContext like
+        ``mode``; see ``_walk`` for the check.
 
         ``variables`` (31.7) SEEDS the run's VariableStore with bindings set before
         the walk — the solver pre-binds the unknown to a candidate value so the
@@ -234,6 +280,7 @@ class Node(ABC):
             nullary_precision=nullary_precision,
             now_ns=time.time_ns() if now_ns is None else now_ns,
             variables=variables if variables is not None else VariableStore(),
+            inexact_handling=inexact_handling,
         )
         return self._walk(ctx)
 
@@ -278,6 +325,14 @@ class Node(ABC):
             # untouched — the line stays the innermost failing node's (18.4).
             raise EvalError(str(exc), line=self.line) from exc
         object.__setattr__(self, "value", result)  # designated slot on a frozen node (18.5)
+        if ctx.inexact_handling is InexactHandling.ABORT_ON_INEXACT and not result.exact:
+            # ABORT_ON_INEXACT (35.2.2): unwind the moment a value is inexact. Because
+            # the walk is depth-first (children walk before the parent), THIS is the
+            # FIRST inexact node — any inexactness in a child would already have raised
+            # here — so it IS the introduction site, and its operands were all exact.
+            # The EvalError is not an ArithmeticError, so it threads up untouched and
+            # keeps this node's line, exactly like a child error (18.4).
+            raise EvalError(_abort_message(self, result), line=self.line)
         return result
 
     def pretty(self) -> str:
@@ -313,6 +368,10 @@ class Number(Node):
         # 26.2/26.8: "LITERAL" with the source lexeme quoted, so it reads as the text.
         return f'LITERAL "{self.lexeme}"'
 
+    def source(self) -> str:
+        # The literal is kept verbatim, so its source IS the lexeme (35.2.2).
+        return self.lexeme
+
     def _children(self) -> tuple[Node, ...]:
         return ()
 
@@ -344,6 +403,10 @@ class UnaryOp(Node):
     def _label(self) -> str:
         return _UNARY_OPCODES[self.op]
 
+    def source(self) -> str:
+        # Prefix operator against its operand, e.g. -x or -(a + b) (35.2.2).
+        return f"{self.op}{_parenthesize(self.operand)}"
+
     def _children(self) -> tuple[Node, ...]:
         return (self.operand,)
 
@@ -368,6 +431,11 @@ class BinOp(Node):
 
     def _label(self) -> str:
         return _BINARY_OPCODES[self.op]
+
+    def source(self) -> str:
+        # Infix operator with each operand parenthesized when it could re-associate
+        # (35.2.2): "1.00 / 3.00", "a * (b + c)".
+        return f"{_parenthesize(self.left)} {self.op} {_parenthesize(self.right)}"
 
     def _children(self) -> tuple[Node, ...]:
         return (self.left, self.right)
@@ -409,6 +477,10 @@ class FuncCall(Node):
         # 26.8: the call reads as CALL with the function name quoted, paralleling LITERAL.
         return f'CALL "{self.name}"'
 
+    def source(self) -> str:
+        # Call syntax with comma-separated arguments; a nullary renders as name() (35.2.2).
+        return f"{self.name}({', '.join(arg.source() for arg in self.args)})"
+
     def _children(self) -> tuple[Node, ...]:
         return self.args
 
@@ -447,6 +519,10 @@ class Assign(Node):
     def _label(self) -> str:
         # 26.8: ASSIGN with the target name quoted, paralleling LITERAL / CALL.
         return f'ASSIGN "{self.name}"'
+
+    def source(self) -> str:
+        # The binding form: target = right-hand side (35.2.2).
+        return f"{self.name} = {self.expr.source()}"
 
     def _children(self) -> tuple[Node, ...]:
         return (self.expr,)
@@ -490,6 +566,10 @@ class Var(Node):
         # 26.8: VAR with the name quoted, paralleling LITERAL / CALL / ASSIGN.
         return f'VAR "{self.name}"'
 
+    def source(self) -> str:
+        # A bare reference is just the name (35.2.2).
+        return self.name
+
     def _children(self) -> tuple[Node, ...]:
         return ()
 
@@ -530,6 +610,10 @@ class Sequence(Node):
     def _label(self) -> str:
         # 26.8: SEQUENCE with the statement count, paralleling LITERAL / CALL.
         return f"SEQUENCE ({len(self.statements)})"
+
+    def source(self) -> str:
+        # The statements rejoined; "; " stands in for the newline separators (35.2.2).
+        return "; ".join(statement.source() for statement in self.statements)
 
     def _children(self) -> tuple[Node, ...]:
         return self.statements

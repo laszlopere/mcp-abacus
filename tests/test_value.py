@@ -20,7 +20,9 @@ from fractions import Fraction
 import pytest
 
 from mcp_abacus.expr.value import (
+    INEXACT_HANDLING_HELP,
     FixedPoint,
+    InexactHandling,
     Mode,
     NotRepresentableError,
     Value,
@@ -28,6 +30,7 @@ from mcp_abacus.expr.value import (
     _ln2_scaled,
     _ln10_scaled,
     _pi_scaled,
+    resolve_inexact_handling,
 )
 
 # Named methods, no operator overloading (decision 2026-06-12) — so the ops are
@@ -1053,3 +1056,57 @@ def test_to_float_reduces_each_mode(value, expected):
 def test_from_real_then_to_float_round_trips_on_the_grid():
     # A value already on the fixed-point grid survives the round trip exactly.
     assert Value.from_real(3.14, Mode.FIXED_POINT, scale=2).to_float() == 3.14
+
+
+# --- inexact-handling enum (35.2) -----------------------------------------
+# The caller-supplied policy for an inexact result, resolved by name/alias like
+# Mode, with its own per-member explanation behind the abort diagnostic.
+
+
+def test_inexact_handling_members_and_values():
+    assert InexactHandling.CONTINUE_AND_REPORT.value == "continue-and-report"
+    assert InexactHandling.ABORT_ON_INEXACT.value == "abort-on-inexact"
+
+
+def test_resolve_inexact_handling_canonical_and_aliases():
+    assert resolve_inexact_handling("continue-and-report") is InexactHandling.CONTINUE_AND_REPORT
+    assert resolve_inexact_handling("report") is InexactHandling.CONTINUE_AND_REPORT
+    assert resolve_inexact_handling("abort-on-inexact") is InexactHandling.ABORT_ON_INEXACT
+    assert resolve_inexact_handling("abort") is InexactHandling.ABORT_ON_INEXACT
+    assert resolve_inexact_handling("strict") is InexactHandling.ABORT_ON_INEXACT
+
+
+def test_resolve_inexact_handling_unknown_raises():
+    with pytest.raises(ValueError):
+        resolve_inexact_handling("whenever")
+
+
+def test_inexact_handling_help_covers_every_member():
+    # The single-source guard: no member may ship without a help description.
+    assert set(INEXACT_HANDLING_HELP) == set(InexactHandling)
+
+
+def test_explain_inexact_fixed_point_rounding_reports_the_residual():
+    # An algebraic fixed-point rounding carries the exact residual (35.1.2), and
+    # the explanation surfaces it plus the precision / rational steer.
+    rounded = Value(
+        Mode.FIXED_POINT, FixedPoint(33, 2), exact=False, error=Fraction(-1, 300)
+    )
+    text = rounded.explain_inexact()
+    assert "-1/300" in text  # the exact residual
+    assert "rational mode is exact" in text  # the one CERTAIN fix
+    assert "min_fixed_point_precision" not in text  # never promised — may not help
+
+
+def test_explain_inexact_fixed_point_irrational_has_no_residual():
+    # An irrational fixed-point result (no recorded error) is named inexact in every
+    # type, with no error figure and no promised fix.
+    irrational = Value(Mode.FIXED_POINT, FixedPoint(141, 2), exact=False)
+    text = irrational.explain_inexact()
+    assert "irrational" in text
+    assert "no exact value" in text
+
+
+def test_explain_inexact_floating_point_steers_off_float():
+    text = Value(Mode.FLOATING_POINT, 1.5, exact=False).explain_inexact()
+    assert "floating-point" in text and "fixed-point or rational" in text

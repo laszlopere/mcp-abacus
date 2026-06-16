@@ -118,6 +118,56 @@ def test_shared_front_end_reports_unknown_mode_and_bad_precision():
     assert mode is None and "non-negative integer" in error
 
 
+def test_calculate_inexact_handling_is_optional_defaulting_to_continue():
+    tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    schema = tools["calculate"].inputSchema
+    assert schema["properties"]["inexact_handling"]["default"] == "continue-and-report"
+    assert schema["required"] == ["expression"]  # the policy is optional
+
+
+def test_calculate_abort_on_inexact_fails_with_a_diagnostic():
+    # 35.2.2: the caller asked for exact-only, so a rounded division is rejected and
+    # the error names the line, the sub-expression, and how inexact it is.
+    result = _calc(
+        asyncio.run(
+            mcp.call_tool(
+                "calculate",
+                {"expression": "1.00 / 3.00", "inexact_handling": "abort-on-inexact"},
+            )
+        )
+    )
+    assert result["value"] is None and result["exact"] is None
+    error = result["error"]
+    assert "line 1" in error
+    assert "1.00 / 3.00" in error
+    assert "abort-on-inexact" in error
+    assert "-1/300" in error  # the exact residual (35.1.2)
+
+
+def test_calculate_abort_on_inexact_passes_an_exact_result_through():
+    # An exact calculation under the abort policy returns normally.
+    result = _calc(
+        asyncio.run(
+            mcp.call_tool(
+                "calculate", {"expression": "1 + 2", "inexact_handling": "abort"}
+            )
+        )
+    )
+    assert result["value"] == "3 (exact)" and result["exact"] is True and result["error"] is None
+
+
+def test_calculate_unknown_inexact_handling_lists_valid_values():
+    result = _calc(
+        asyncio.run(
+            mcp.call_tool("calculate", {"expression": "1", "inexact_handling": "maybe"})
+        )
+    )
+    assert result["value"] is None
+    error = result["error"]
+    assert "Unknown inexact_handling" in error
+    assert "continue-and-report" in error and "abort-on-inexact" in error
+
+
 def test_solver_tool_signature_exposes_both_unknown_forms():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     schema = tools["solver"].inputSchema

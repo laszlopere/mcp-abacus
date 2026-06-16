@@ -207,6 +207,31 @@ def test_pretty_golden():
     assert _example_tree().pretty() == expected
 
 
+def test_source_unparse_round_trips_the_core_tree():
+    # source() reconstructs a readable, re-parseable infix string (35.2.2). Nested
+    # binary ops are parenthesized unconditionally, so the reading is unambiguous
+    # without re-deriving precedence.
+    assert _example_tree().source() == "1 + (2 * (10 ** 3))"
+
+
+def test_source_parenthesizes_nested_binops_and_unary():
+    from mcp_abacus.expr.parser import parse
+
+    assert parse("(1 + 2) * 3").source() == "(1 + 2) * 3"
+    assert parse("-(a + b)").source() == "-(a + b)"
+    assert parse("sqrt(2) + 1").source() == "sqrt(2) + 1"
+    assert parse("max(1, 2, 3)").source() == "max(1, 2, 3)"
+    assert parse("pi()").source() == "pi()"
+
+
+def test_source_renders_variables_assignments_and_sequences():
+    from mcp_abacus.expr.parser import parse
+
+    assert parse("x = 2 + 3").source() == "x = 2 + 3"
+    assert parse("x").source() == "x"
+    assert parse("x = 1\ny = x * 2\ny + 1").source() == "x = 1; y = x * 2; y + 1"
+
+
 def test_op_sets():
     assert UNARY_OPS == frozenset({"+", "-", "~"})
     assert BINARY_OPS == frozenset({"+", "-", "*", "/", "//", "%", "**", "&", "|", "^"})

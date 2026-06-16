@@ -157,6 +157,65 @@ def resolve_mode(name: str) -> Mode:
         raise
 
 
+class InexactHandling(Enum):
+    """What a calculation does the moment an operation's result is inexact (35.2).
+
+    Supplied by the CALLER, carried on the EvalContext and threaded down the whole
+    evaluate walk, so it selects a run-wide policy rather than a per-operation one.
+    Two members today:
+
+    CONTINUE_AND_REPORT (default, 35.2.1) is the historical behaviour — compute,
+    never reject, and let the exact/inexact verdict surface in the reply. ABORT_ON_
+    INEXACT (35.2.2) instead unwinds the calculation as soon as any value is
+    inexact, raising a diagnostic that names WHERE (the source line + the offending
+    sub-expression) and WHY (the magnitude and class of the inexactness) so the
+    caller who asked for it learns precisely what went inexact.
+    """
+
+    CONTINUE_AND_REPORT = "continue-and-report"  # 35.2.1 — compute and report (default)
+    ABORT_ON_INEXACT = "abort-on-inexact"  # 35.2.2 — raise the moment a value is inexact
+
+
+# One terse line per InexactHandling member, the single source for its human
+# description (mirrors MODE_HELP). A missing entry is a hard KeyError wherever the
+# help renders, so the text can never drift from the supported set.
+INEXACT_HANDLING_HELP: dict[InexactHandling, str] = {
+    InexactHandling.CONTINUE_AND_REPORT: "compute and report the verdict; never reject (default)",
+    InexactHandling.ABORT_ON_INEXACT: "abort with a diagnostic the moment any result is inexact",
+}
+
+
+# Forgiving input spellings the caller may use, each resolved to a canonical
+# member (mirrors MODE_ALIASES): the names an AI is likely to type as a first
+# guess, so a plausible value resolves in turn one instead of erroring into a retry.
+INEXACT_HANDLING_ALIASES: dict[str, InexactHandling] = {
+    "continue": InexactHandling.CONTINUE_AND_REPORT,
+    "report": InexactHandling.CONTINUE_AND_REPORT,
+    "continue-and-report": InexactHandling.CONTINUE_AND_REPORT,
+    "default": InexactHandling.CONTINUE_AND_REPORT,
+    "abort": InexactHandling.ABORT_ON_INEXACT,
+    "abort-on-inexact": InexactHandling.ABORT_ON_INEXACT,
+    "strict": InexactHandling.ABORT_ON_INEXACT,
+    "exact-only": InexactHandling.ABORT_ON_INEXACT,
+    "require-exact": InexactHandling.ABORT_ON_INEXACT,
+}
+
+
+def resolve_inexact_handling(name: str) -> InexactHandling:
+    """Resolve an inexact-handling name or alias to its member; raise ValueError if neither.
+
+    Tries the canonical names first (the enum's own values), then the aliases; the
+    ValueError from an unknown name carries through unchanged so callers can list
+    the valid choices — the same shape as ``resolve_mode``.
+    """
+    try:
+        return InexactHandling(name)
+    except ValueError:
+        if name in INEXACT_HANDLING_ALIASES:
+            return INEXACT_HANDLING_ALIASES[name]
+        raise
+
+
 class UndefinedVariableError(LookupError):
     """A variable was read before any assignment bound it (30.1).
 
@@ -232,6 +291,11 @@ class EvalContext:
     store per run by default (assignments do not leak across ``evaluate`` calls);
     being mutable it is the one field whose contents change during the walk, the
     frozen context holding it by reference.
+
+    ``inexact_handling`` (35.2) is the caller-supplied policy for an inexact result:
+    CONTINUE_AND_REPORT (the default) computes and lets the verdict surface, while
+    ABORT_ON_INEXACT makes the walk raise the moment a value is inexact. Carried
+    here so the policy reaches the node walk that knows the line and sub-expression.
     """
 
     mode: Mode
@@ -239,6 +303,7 @@ class EvalContext:
     nullary_precision: int = 0
     now_ns: int | None = None
     variables: VariableStore = field(default_factory=VariableStore)
+    inexact_handling: InexactHandling = InexactHandling.CONTINUE_AND_REPORT
 
 
 @dataclass(frozen=True, slots=True)
@@ -1864,6 +1929,40 @@ class Value:
         if self.error is not None:  # "how inexact": the exact residual this rounding introduced
             parts.append(f"error {self.error} ≈ {_approx_decimal(self.error)}")
         return " · ".join(parts)
+
+    def explain_inexact(self) -> str:
+        """A SHORT account of WHY this value is inexact, for the abort message (35.2.2).
+
+        The "why" half of the abort-on-inexact diagnostic — the node walk supplies the
+        WHERE (line + sub-expression), this the kind (35.1.1) and magnitude (35.1.2).
+        It states only what is CERTAIN at the abort's introduction site (where, by
+        construction, every operand was exact), and never guesses:
+
+        - floating-point flags every result inexact, so the only true steer is to a
+          type that CAN be exact.
+        - fixed-point with a recorded ``error`` rounded an algebraic result (`/`, `*`,
+          integer `**`). Its true value is therefore rational, so RATIONAL MODE IS
+          EXACT for it — a guaranteed fix we can promise. Whether more fixed-point
+          precision would help instead depends on whether the value terminates in
+          decimal (10/3 never does), which we do NOT decide here — so we don't claim it.
+        - fixed-point with NO error is irrational (a root, trig, or log value): no
+          exact representation exists in ANY type, so we promise no fix.
+
+        Only ever called on an inexact value — explaining an exact one is meaningless.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                return "every floating-point result is inexact; use fixed-point or rational"
+            case Mode.FIXED_POINT:
+                scale = self.precision()
+                unit = "decimal" if scale == 1 else "decimals"
+                if self.error is not None:
+                    return f"rounded to {scale} {unit}, off by {self.error}; rational mode is exact"
+                return "irrational; no exact value in any numeric type"
+            case Mode.RATIONAL:
+                return "inherited from an inexact input"
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
 
     def hex_dump(self) -> str | None:
         """The value's stored bits as a hex string, or None when there is no single

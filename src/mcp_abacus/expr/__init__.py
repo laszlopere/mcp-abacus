@@ -20,11 +20,13 @@ from mcp_abacus.expr.nodes import (
 from mcp_abacus.expr.parser import ParseError, parse
 from mcp_abacus.expr.value import (
     EvalContext,
+    InexactHandling,
     Mode,
     NotRepresentableError,
     UndefinedVariableError,
     Value,
     VariableStore,
+    resolve_inexact_handling,
 )
 
 __all__ = [
@@ -35,6 +37,7 @@ __all__ = [
     "EvalContext",
     "EvalError",
     "FuncCall",
+    "InexactHandling",
     "LexError",
     "Mode",
     "Node",
@@ -49,5 +52,6 @@ __all__ = [
     "Var",
     "VariableStore",
     "parse",
+    "resolve_inexact_handling",
     "tokenize",
 ]

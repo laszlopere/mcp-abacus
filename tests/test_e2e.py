@@ -400,6 +400,39 @@ def test_precision_verdict_and_fields_travel_over_the_wire():
     assert rat["mode"] == "rational" and rat["value_hex_dump"] is None
 
 
+def test_inexact_handling_abort_on_fixed_point_travels_over_the_wire():
+    # 35.2.2 end-to-end over real stdio: with inexact_handling=abort-on-inexact a
+    # rounded fixed-point division is REJECTED — the call still succeeds at the
+    # protocol level (error as ordinary text), and the diagnostic names the line,
+    # the offending sub-expression, the policy, and the exact residual (35.1.2).
+    aborted = _payload(
+        _call(
+            "calculate",
+            {"expression": "1.00 / 3.00", "inexact_handling": "abort-on-inexact"},
+        )
+    )
+    assert aborted["value"] is None and aborted["exact"] is None
+    error = aborted["error"]
+    assert error.startswith("error (line 1):")
+    assert "1.00 / 3.00" in error
+    assert "abort-on-inexact" in error
+    assert "-1/300" in error  # the exact discarded residual
+
+    # An EXACT fixed-point calculation passes through unchanged under the same policy.
+    exact = _payload(
+        _call("calculate", {"expression": "1 + 2", "inexact_handling": "abort"})
+    )
+    assert exact["value"] == "3 (exact)" and exact["exact"] is True and exact["error"] is None
+
+    # An unknown policy name lists the valid choices rather than failing the protocol.
+    unknown = _payload(
+        _call("calculate", {"expression": "1", "inexact_handling": "perhaps"})
+    )
+    assert unknown["value"] is None
+    assert "Unknown inexact_handling" in unknown["error"]
+    assert "continue-and-report" in unknown["error"] and "abort-on-inexact" in unknown["error"]
+
+
 def test_floating_point_aliases_resolve_to_the_canonical_mode():
     # The AI may spell the floating-point mode "float64" or "double" (23.6);
     # all three resolve to the same IEEE-754 double arithmetic, where the

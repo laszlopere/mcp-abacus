@@ -13,7 +13,14 @@ from mcp_abacus.expr import parser, reference
 from mcp_abacus.expr.lexer import LexError
 from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.parser import ParseError
-from mcp_abacus.expr.value import FixedPoint, Mode, Value, resolve_mode
+from mcp_abacus.expr.value import (
+    FixedPoint,
+    InexactHandling,
+    Mode,
+    Value,
+    resolve_inexact_handling,
+    resolve_mode,
+)
 from mcp_abacus.solver import (
     Algorithm,
     SolverError,
@@ -180,8 +187,26 @@ def _resolve_mode_and_precision(
     return selected, None
 
 
+def _resolve_inexact_handling(name: str) -> tuple[InexactHandling | None, str | None]:
+    """Resolve the calculate `inexact_handling` argument (35.2), shared error shape.
+
+    Returns ``(handling, None)`` on success or ``(None, message)`` on an unknown
+    name, listing the valid choices — the same self-correcting shape an unknown mode
+    gets. Only ``calculate`` takes this argument today; analyze/solver always run the
+    default CONTINUE_AND_REPORT (they are diagnostics that must not abort).
+    """
+    try:
+        return resolve_inexact_handling(name), None
+    except ValueError:
+        valid = ", ".join(h.value for h in InexactHandling)
+        return None, f"Unknown inexact_handling: {name!r}. Valid values: {valid}."
+
+
 def _evaluate_request(
-    expression: str, mode: str, min_fixed_point_precision: int | None
+    expression: str,
+    mode: str,
+    min_fixed_point_precision: int | None,
+    inexact_handling: InexactHandling = InexactHandling.CONTINUE_AND_REPORT,
 ) -> tuple[Node | None, Mode | None, Value | None, str | None]:
     """Shared front-end for calculate/analyze: validate args, parse, evaluate.
 
@@ -190,6 +215,11 @@ def _evaluate_request(
     that mode. Returns ``(node, mode, value, None)`` on success — the evaluated root
     node, the resolved mode, and the root Value — or ``(None, None, None, message)``
     on the first failure, so each tool can wrap that message in its own reply shape.
+
+    ``inexact_handling`` (35.2) rides into ``node.evaluate``; under ABORT_ON_INEXACT
+    an inexact result raises an EvalError caught here like any other evaluation
+    failure, so its diagnostic flows back through the ``error`` channel. Defaults to
+    CONTINUE_AND_REPORT, so analyze (which omits it) is unaffected.
     """
     selected, error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
     if error is not None:
@@ -197,7 +227,9 @@ def _evaluate_request(
     assert selected is not None  # error is None means a mode resolved
     try:
         node = parser.parse(expression)
-        value = node.evaluate(selected, min_fixed_point_precision or 0)
+        value = node.evaluate(
+            selected, min_fixed_point_precision or 0, inexact_handling=inexact_handling
+        )
     except (LexError, ParseError, EvalError) as exc:
         return None, None, None, f"error (line {exc.line}): {exc.message}"
     return node, selected, value, None
@@ -205,7 +237,10 @@ def _evaluate_request(
 
 @mcp.tool()
 def calculate(
-    expression: str, mode: str = "fixed-point", min_fixed_point_precision: int | None = None
+    expression: str,
+    mode: str = "fixed-point",
+    min_fixed_point_precision: int | None = None,
+    inexact_handling: str = "continue-and-report",
 ) -> dict:
     """Evaluate an expression (or short program) in one numeric type; return value + precision.
 
@@ -268,6 +303,21 @@ def calculate(
     non-negative integer; either violation is an `error`. Omit it (null) for no
     floor.
 
+    `inexact_handling` chooses what happens when a result is INEXACT:
+      continue-and-report  (default) evaluate normally and let the verdict surface
+                           in `value`/`exact`; never reject. Aliases: continue, report.
+      abort-on-inexact     stop and FAIL the moment any sub-result is inexact. The
+                           call returns no value — `error` instead carries a terse
+                           diagnostic naming the source line, the exact sub-
+                           expression that went inexact (e.g. `1.00 / 3.00`), and the
+                           CERTAIN why (how much was rounded, and the mode that would
+                           be exact). Use it when an approximate answer is
+                           unacceptable and you want to be told precisely what and
+                           where, rather than silently trusting a rounded figure.
+                           Aliases: abort, strict, exact-only.
+    An unknown value is an `error` listing the valid choices. Note floating-point
+    reports every result inexact, so abort-on-inexact there fails on the first value.
+
     `offered_precision` is a what-if nudge, present (non-null) ONLY on an inexact
     fixed-point result when you did NOT pass min_fixed_point_precision: it shows the
     SAME expression at a few more decimals so you see the digits the rounding hid.
@@ -280,7 +330,13 @@ def calculate(
     call you made (that stays in the top-level `value`); it is null whenever there
     is nothing to offer.
     """
-    node, selected, value, error = _evaluate_request(expression, mode, min_fixed_point_precision)
+    handling, handling_error = _resolve_inexact_handling(inexact_handling)
+    if handling_error is not None:
+        return _error(handling_error)
+    assert handling is not None  # handling_error is None means a handling resolved
+    node, selected, value, error = _evaluate_request(
+        expression, mode, min_fixed_point_precision, handling
+    )
     if error is not None:
         return _error(error)
     assert node is not None and selected is not None and value is not None  # error is None

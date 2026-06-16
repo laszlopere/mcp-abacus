@@ -9,7 +9,7 @@ import pytest
 
 from mcp_abacus.expr.nodes import BinOp, EvalError, FuncCall, Number, UnaryOp
 from mcp_abacus.expr.parser import parse
-from mcp_abacus.expr.value import Mode
+from mcp_abacus.expr.value import InexactHandling, Mode
 
 
 def _example_tree(line: int = 1) -> BinOp:
@@ -236,3 +236,33 @@ def test_floor_does_not_disturb_modes_without_a_scale():
     # Passing a floor under floating-point / rational is inert — same value.
     assert _division("1", "2").evaluate(Mode.FLOATING_POINT, 9).payload == 0.5
     assert _division("1", "3").evaluate(Mode.RATIONAL, 9).payload == Fraction(1, 3)
+
+
+# --- abort on inexact: the cross-mode mechanism (35.2.2) -------------------
+# The caller-supplied InexactHandling threads down the walk in EVERY mode;
+# ABORT_ON_INEXACT unwinds the moment a value is inexact. The fixed-point DEPTH
+# (the diagnostic's where/kind/magnitude, the introduction site, the floor
+# interaction) lives in test_inexact_fixed_point.py; these pin the bits that are
+# specific to float and rational, where exactness behaves differently.
+
+ABORT = InexactHandling.ABORT_ON_INEXACT
+
+
+def test_abort_on_inexact_default_is_continue_and_report():
+    # The default never rejects — an inexact fixed-point division still returns.
+    result = _division("10", "3").evaluate(Mode.FIXED_POINT)
+    assert result.to_string() == "3" and not result.exact
+
+
+def test_abort_in_floating_point_fires_on_the_first_inexact_value():
+    # Float reports every value inexact, so abort trips on the first literal and
+    # steers toward a type that can be exact, not toward more float.
+    with pytest.raises(EvalError) as excinfo:
+        Number("1.5", line=1).evaluate(Mode.FLOATING_POINT, inexact_handling=ABORT)
+    assert "floating-point" in excinfo.value.message
+
+
+def test_abort_never_trips_in_rational_mode_for_an_exact_program():
+    # Rational arithmetic does not round, so 1/3 stays exact and the abort is inert.
+    result = _division("1", "3").evaluate(Mode.RATIONAL, inexact_handling=ABORT)
+    assert result.payload == Fraction(1, 3) and result.exact
