@@ -403,8 +403,8 @@ def test_precision_verdict_and_fields_travel_over_the_wire():
 def test_inexact_handling_abort_on_fixed_point_travels_over_the_wire():
     # 35.2.2 end-to-end over real stdio: with inexact_handling=abort-on-inexact a
     # rounded fixed-point division is REJECTED — the call still succeeds at the
-    # protocol level (error as ordinary text), and the diagnostic names the line,
-    # the offending sub-expression, the policy, and the exact residual (35.1.2).
+    # protocol level (error as ordinary text), and the headline names the line and
+    # lays the operation out in VALUES at the active precision (35.3.1).
     aborted = _payload(
         _call(
             "calculate",
@@ -414,9 +414,7 @@ def test_inexact_handling_abort_on_fixed_point_travels_over_the_wire():
     assert aborted["value"] is None and aborted["exact"] is None
     error = aborted["error"]
     assert error.startswith("error (line 1):")
-    assert "1.00 / 3.00" in error
-    assert "abort-on-inexact" in error
-    assert "-1/300" in error  # the exact discarded residual
+    assert "1.00 / 3.00 = 0.33 is not exact" in error
 
     # An EXACT fixed-point calculation passes through unchanged under the same policy.
     exact = _payload(

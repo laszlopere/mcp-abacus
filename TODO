@@ -1601,7 +1601,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      by how much, and where, rather than a bare failure.
 
     [ ] 35.3.  INEXACT ABORT MESSAGES — tested in tests/test_inexact_fixed_point.py.
-        [ ] 35.3.1.  The first part should always look the same: "Inexact
+        [x] 35.3.1.  The first part should always look the same: "Inexact
                      calculation in line X: 1.00 / 3.00 = 1.33 is not exact."
                      The numbers are NOT lexemes, they are the VALUES: the user
                      may have written 1 / 3, but we show 1.00 and 3.00 with the
@@ -1613,6 +1613,9 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      was xxxxx, maybe raising min_precision..."
         [ ] 35.3.4.  If we know the given function can't be precisely calculated:
                      " - The sin(x) function can not be exactly calculated."
+        [ ] 35.3.5.  If we know the rational mode would be exact we can add a new
+                     hint: " - In rational mode this calculation would be exact
+                     (the exact value)."
 
 
 [ ] 36.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and

@@ -16,8 +16,6 @@ Those cross-mode contrasts live in test_evaluate.py; the tool/e2e layers in
 test_server.py and test_e2e.py.
 """
 
-from fractions import Fraction
-
 import pytest
 
 from mcp_abacus.expr.nodes import EvalError
@@ -87,7 +85,7 @@ def test_continue_is_the_default_when_no_policy_is_passed():
 def test_abort_on_inexact_rejects_a_rounded_result(expression):
     error = _abort_fp(expression)
     assert error.line == 1
-    assert "abort-on-inexact" in error.message
+    assert "is not exact" in error.message
 
 
 # --- abort leaves an exact result untouched --------------------------------
@@ -133,46 +131,55 @@ def test_abort_fires_at_the_introduction_site_not_the_outer_expression():
 
 def test_abort_carries_the_failing_line_in_a_multi_line_program():
     # The rounding happens on the second statement; the EvalError line is that line.
+    # The headline shows the operands as their VALUES (35.3.1), so the variable x
+    # reads as the 10 it holds, not the lexeme "x".
     error = _abort_fp("x = 10\ny = x / 3\ny")
     assert error.line == 2
-    assert "x / 3" in error.message
+    assert "10 / 3" in error.message
 
 
-# --- KIND + HOW MUCH: an algebraic rounding reports its residual (35.1.2) ---
+# --- 35.3.1: the headline always reads "<operands> = <result> is not exact" ----
 #
-# A `/`, `*`, or integer `**` that overflows the scale carries the EXACT discarded
-# residual; the message shows it and steers toward more precision or rational mode.
+# The first part is invariant and shows the computed NUMBERS at the active
+# precision, never the source lexemes: a caller's `1 / 3` reads as `1.00 / 3.00 =
+# 0.33` once the active precision is two decimals.
 
 
-@pytest.mark.parametrize(
-    "expression, residual",
-    [
-        ("100.00 / 3", Fraction(-1, 300)),  # 33.33 - 100/3
-        ("10 / 3", Fraction(-1, 3)),  # 3 - 10/3
-        ("1.5 * 1.5", Fraction(-1, 20)),  # 2.2 - 2.25, exactly -1/2 ULP at scale 1
-    ],
-)
-def test_abort_on_algebraic_rounding_reports_the_residual(expression, residual):
-    message = _abort_fp(expression).message
-    assert str(residual) in message  # the exact discarded amount
-    assert "rational mode is exact" in message  # the one CERTAIN fix
-    # We do NOT promise more precision helps — a non-terminating quotient never
-    # becomes exact, so the message must not mention the floor.
-    assert "min_fixed_point_precision" not in message
+def test_abort_headline_renders_operands_as_values_at_active_precision():
+    # min_fixed_point_precision=2 makes the active precision two decimals, so the
+    # bare literals 1 and 3 show padded — exactly the user-facing example.
+    error = _abort_fp("1 / 3", floor=2)
+    assert error.message.startswith(
+        "Inexact calculation in line 1: 1.00 / 3.00 = 0.33 is not exact."
+    )
 
 
-# --- KIND: an irrational result is named inexact in EVERY type (35.1.1) -----
+def test_abort_headline_pads_an_operand_to_the_result_precision():
+    # 100.00 / 3 — the literal 3 has its own scale 0, but the quotient is carried at
+    # scale 2, so the headline shows 3.00 (the operand at the ACTIVE precision), not
+    # the lexeme 3.
+    error = _abort_fp("100.00 / 3")
+    assert error.message.startswith(
+        "Inexact calculation in line 1: 100.00 / 3.00 = 33.33 is not exact."
+    )
+
+
+def test_abort_headline_renders_a_function_call_over_its_argument_value():
+    # A function abort lays the call out over its argument's value, not a binary form.
+    error = _abort_fp("sqrt(2)")
+    assert error.message.startswith(
+        "Inexact calculation in line 1: sqrt(2) = 1 is not exact."
+    )
+
+
+# --- the why/how hint lines are deferred (35.3.2-35.3.5) -------------------
 #
-# A root / transcendental has no exact-rational residual (its "true" value is the
-# series limit), so the message names the class instead of an error figure, and
-# promises no fix.
-
-
-@pytest.mark.parametrize("expression", ["2 ** 0.5", "sqrt(2)"])
-def test_abort_on_irrational_names_the_class_not_a_residual(expression):
-    message = _abort_fp(expression).message
-    assert "irrational" in message
-    assert "no exact value" in message
+# The headline (35.3.1) is now the WHOLE message. The follow-up hints — the policy
+# that would lift the abort (35.3.2), the residual / raise-precision steer (35.3.3),
+# the "this function can't be exact" note (35.3.4), and the rational-mode-is-exact
+# offer (35.3.5) — are not implemented yet, so the residual and the irrational/
+# rational verdict do NOT appear in the message. Value.explain_inexact still carries
+# that information (covered in test_value.py) for those points to format.
 
 
 # --- min_fixed_point_precision interaction ---------------------------------

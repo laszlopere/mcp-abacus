@@ -126,8 +126,8 @@ def test_calculate_inexact_handling_is_optional_defaulting_to_continue():
 
 
 def test_calculate_abort_on_inexact_fails_with_a_diagnostic():
-    # 35.2.2: the caller asked for exact-only, so a rounded division is rejected and
-    # the error names the line, the sub-expression, and how inexact it is.
+    # 35.2.2 / 35.3.1: the caller asked for exact-only, so a rounded division is
+    # rejected and the headline names the line and the operation in VALUES.
     result = _calc(
         asyncio.run(
             mcp.call_tool(
@@ -139,9 +139,7 @@ def test_calculate_abort_on_inexact_fails_with_a_diagnostic():
     assert result["value"] is None and result["exact"] is None
     error = result["error"]
     assert "line 1" in error
-    assert "1.00 / 3.00" in error
-    assert "abort-on-inexact" in error
-    assert "-1/300" in error  # the exact residual (35.1.2)
+    assert "1.00 / 3.00 = 0.33 is not exact" in error
 
 
 def test_calculate_abort_on_inexact_passes_an_exact_result_through():

@@ -255,11 +255,12 @@ def test_abort_on_inexact_default_is_continue_and_report():
 
 
 def test_abort_in_floating_point_fires_on_the_first_inexact_value():
-    # Float reports every value inexact, so abort trips on the first literal and
-    # steers toward a type that can be exact, not toward more float.
+    # Float reports every value inexact, so abort trips on the first literal. The
+    # steer toward an exact type is a deferred hint (35.3.2/35.3.4); the headline
+    # (35.3.1) just names the line and the value that went inexact.
     with pytest.raises(EvalError) as excinfo:
         Number("1.5", line=1).evaluate(Mode.FLOATING_POINT, inexact_handling=ABORT)
-    assert "floating-point" in excinfo.value.message
+    assert excinfo.value.message == "Inexact calculation in line 1: 1.5 = 1.5 is not exact."
 
 
 def test_abort_never_trips_in_rational_mode_for_an_exact_program():

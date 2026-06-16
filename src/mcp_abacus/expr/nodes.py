@@ -171,18 +171,38 @@ def _parenthesize(node: "Node") -> str:
     return f"({rendered})" if isinstance(node, (BinOp, Assign)) else rendered
 
 
-def _abort_message(node: "Node", value: Value) -> str:
-    """The abort-on-inexact diagnostic for the node whose value first went inexact (35.2.2).
+def _operand_value_string(node: "Node", scale: int | None) -> str:
+    """An already-evaluated node rendered as its VALUE at the active precision (35.3.1).
 
-    Composed where EVERYTHING about the inexactness is in hand: the node gives the
-    offending sub-expression (``source()``) and — via the EvalError the caller wraps
-    this in — the source line, while the Value explains the kind and magnitude
-    (``explain_inexact``). Kept terse on purpose: it names the policy, the offending
-    sub-expression, and the certain why, with no padding.
+    The abort headline shows operands as the NUMBERS they evaluated to, not the
+    lexemes the user typed: ``scale`` is the result's fixed-point precision, so a
+    literal ``3`` beside a scale-2 quotient reads as ``3.00``. Only ever called from
+    the abort path, after the walk has stored every operand's value — so the value is
+    present; the assert records that invariant.
     """
+    assert node.value is not None
+    return node.value.to_string(scale)
+
+
+def _abort_message(node: "Node", value: Value) -> str:
+    """The abort-on-inexact headline for the node whose value first went inexact (35.3.1).
+
+    Always reads the same: ``Inexact calculation in line X: <operands> = <result> is
+    not exact.`` — the operands and result are the computed NUMBERS at the active
+    precision (the result's fixed-point scale), never the source lexemes, so a
+    ``1 / 3`` written by the caller shows as ``1.00 / 3.00 = 0.33`` once the active
+    precision is two decimals. Composed where EVERYTHING about the inexactness is in
+    hand: the node lays out the operation (``_operand_form``) and carries, via the
+    EvalError the caller wraps this in, the source line.
+
+    Only the headline. The why/how hints — the policy that would lift it, the
+    residual, the rational/irrational verdict (``explain_inexact`` has them ready) —
+    are deferred to 35.3.2-35.3.5, each its own line below this one.
+    """
+    scale = value.precision()  # the active fixed-point precision; None outside fixed-point
     return (
-        f"inexact result not authorized (inexact_handling='abort-on-inexact'): "
-        f"'{node.source()}' — {value.explain_inexact()}"
+        f"Inexact calculation in line {node.line}: "
+        f"{node._operand_form(scale)} = {value.to_string(scale)} is not exact."
     )
 
 
@@ -206,10 +226,23 @@ class Node(ABC):
 
         An unparse — not necessarily byte-identical to the original text (spacing is
         normalised, redundant grouping may differ), but a faithful, re-parseable
-        rendering of the sub-expression. Used by the abort-on-inexact diagnostic to
-        name the offending calculation; nested binary ops/assignments are
-        parenthesized via ``_parenthesize`` so the reading stays unambiguous.
+        rendering of the sub-expression. Nested binary ops/assignments are
+        parenthesized via ``_parenthesize`` so the reading stays unambiguous. The
+        abort-on-inexact headline lays the operation out in VALUES instead (see
+        ``_operand_form``); this stays the lexeme-level view for the analyze tree.
         """
+
+    def _operand_form(self, scale: int | None) -> str:
+        """This node's operation with each operand shown as its computed VALUE (35.3.1).
+
+        The abort headline reads ``<operands> = <result>`` in the NUMBERS the walk
+        produced, not source lexemes — ``scale`` is the result's active fixed-point
+        precision, so a literal ``3`` beside a scale-2 result shows as ``3.00``.
+        Compound nodes override to interleave their operator / call syntax with the
+        children's values; the default — an atom (a literal or a variable) — has no
+        operands to lay out, so it is just its own value.
+        """
+        return _operand_value_string(self, scale)
 
     @abstractmethod
     def _children(self) -> tuple["Node", ...]:
@@ -407,6 +440,10 @@ class UnaryOp(Node):
         # Prefix operator against its operand, e.g. -x or -(a + b) (35.2.2).
         return f"{self.op}{_parenthesize(self.operand)}"
 
+    def _operand_form(self, scale: int | None) -> str:
+        # The operator against the operand's VALUE, e.g. -3.00 (35.3.1).
+        return f"{self.op}{_operand_value_string(self.operand, scale)}"
+
     def _children(self) -> tuple[Node, ...]:
         return (self.operand,)
 
@@ -434,8 +471,16 @@ class BinOp(Node):
 
     def source(self) -> str:
         # Infix operator with each operand parenthesized when it could re-associate
-        # (35.2.2): "1.00 / 3.00", "a * (b + c)".
+        # (35.2.2): "1 / 3", "a * (b + c)".
         return f"{_parenthesize(self.left)} {self.op} {_parenthesize(self.right)}"
+
+    def _operand_form(self, scale: int | None) -> str:
+        # Infix operator between the operands' VALUES at the active precision (35.3.1):
+        # "1.00 / 3.00". Each operand is a single number, so no parenthesizing is needed.
+        return (
+            f"{_operand_value_string(self.left, scale)} {self.op} "
+            f"{_operand_value_string(self.right, scale)}"
+        )
 
     def _children(self) -> tuple[Node, ...]:
         return (self.left, self.right)
@@ -480,6 +525,11 @@ class FuncCall(Node):
     def source(self) -> str:
         # Call syntax with comma-separated arguments; a nullary renders as name() (35.2.2).
         return f"{self.name}({', '.join(arg.source() for arg in self.args)})"
+
+    def _operand_form(self, scale: int | None) -> str:
+        # Call syntax over the arguments' VALUES at the active precision (35.3.1):
+        # "sqrt(2.00)"; a nullary like pi() renders with empty parentheses.
+        return f"{self.name}({', '.join(_operand_value_string(arg, scale) for arg in self.args)})"
 
     def _children(self) -> tuple[Node, ...]:
         return self.args

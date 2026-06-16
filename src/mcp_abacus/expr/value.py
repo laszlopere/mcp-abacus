@@ -1880,11 +1880,18 @@ class Value:
 
     # --- formatting (19.4) ----------------------------------------------
 
-    def to_string(self) -> str:
+    def to_string(self, scale: int | None = None) -> str:
         """Render in the mode's normal string format (19.4, 10.3).
 
         Named (not __str__) so it can take formatting options later, per the
         no-overloading rationale; __str__ can delegate here if convenient.
+
+        ``scale``, when given, renders a FIXED_POINT value padded to that many
+        fractional digits — the "active precision" the abort diagnostic shows its
+        operands at (35.3.1), so an operand written ``3`` reads as ``3.00`` beside a
+        scale-2 result. It only ever WIDENS (it takes the max with the value's own
+        scale), so the extra digits are zeros an exact value already implies; it is
+        ignored outside fixed-point, where there is no decimal scale.
         """
         match self.mode:
             case Mode.FLOATING_POINT:
@@ -1894,15 +1901,19 @@ class Value:
                 # Render the mantissa as a plain integer string, then place the
                 # decimal point `decimals` digits from the right by pure string
                 # manipulation (10.3). Trailing zeros are kept (the declared
-                # scale is significant): FixedPoint(150, 2) -> "1.50".
+                # scale is significant): FixedPoint(150, 2) -> "1.50". A wider
+                # requested scale pads the mantissa (exact zero-padding) so the
+                # operand shows at the active precision (35.3.1).
                 assert isinstance(self.payload, FixedPoint)
                 fp = self.payload
-                sign = "-" if fp.mantissa < 0 else ""
-                digits = str(abs(fp.mantissa))
-                if fp.decimals == 0:
+                decimals = fp.decimals if scale is None else max(scale, fp.decimals)
+                mantissa = fp.mantissa * 10 ** (decimals - fp.decimals)
+                sign = "-" if mantissa < 0 else ""
+                digits = str(abs(mantissa))
+                if decimals == 0:
                     return sign + digits
-                digits = digits.zfill(fp.decimals + 1)  # ensure a leading 0 if needed
-                return f"{sign}{digits[: -fp.decimals]}.{digits[-fp.decimals :]}"
+                digits = digits.zfill(decimals + 1)  # ensure a leading 0 if needed
+                return f"{sign}{digits[: -decimals]}.{digits[-decimals :]}"
             case Mode.RATIONAL:
                 # Fraction renders as "n" when integral, else "n/d" (10.3).
                 return str(self.payload)
