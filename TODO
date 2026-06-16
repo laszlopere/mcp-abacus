@@ -1555,6 +1555,35 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      and reject only if the FINAL rounding makes the reported
                      result inaccurate. Allows internal guard-digit rounding so
                      long as every displayed digit is sound.
+                     NOTE: the binary exact/inexact flag hides two things a caller
+                     needs, both of which are KNOWABLE here:
+                     (1) WHICH KIND of inexact — three fates the flag can't tell
+                         apart: resolution-limited (terminating decimal, raising the
+                         scale makes it exact: 1.5*1.5 @1 inexact -> 2.25 @2 exact);
+                         non-terminating rational (no finite scale ever works:
+                         100/3, but EXACT in rational mode); irrational (no finite
+                         form at all: 2**0.5). Decidable: evaluate in rational mode
+                         — exact => rational, then it terminates iff the reduced
+                         denominator's only prime factors are 2 and 5; refuses =>
+                         irrational. So the verdict could name the class.
+                     (2) HOW inexact — the error magnitude. _fp_quantize already
+                         computes the exact remainder r/den and discards it, keeping
+                         only `lossless`. Each rounding is bounded by 1/2 ULP =
+                         0.5*10**-scale at the result scale; report the residual (or
+                         the bound) instead of just False. This IS "how many decimals
+                         are trustworthy". Round-only-at-display is what makes it
+                         computable: one final bounded rounding, not a compounding
+                         per-op chain whose bound is murky.
+                     CAVEAT (cross-type): the residual is a RATIONAL, not a fixed-
+                         point number — Fraction(stored) - Fraction(true), computed
+                         in exact rational arithmetic. It must be: the true value
+                         (e.g. 100/3) is often unrepresentable in fixed-point at any
+                         scale, so its distance isn't either; rendering the error in
+                         fixed-point would round it ("the error of the rounding,
+                         rounded"). So the CALCULATION stays fixed-point while the
+                         error DIAGNOSTIC borrows rational — same as the (1) oracle.
+                         First step already landed: Value.error + the analyze-tree
+                         "error <frac> ≈ <dec>" fragment, set at _fp_value.
         [ ] 34.5.3.  Keep the current accurate/inaccurate (exact/inexact)
                      reporting — flag and continue, never reject.
 
