@@ -795,6 +795,80 @@ def test_acos_refuses_a_rational_other_than_one_with_a_line_tagged_error():
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # atan(0) = 0 is the one exact case in every mode (transcendental otherwise).
+        ("atan(0)", None, "0 (exact)"),
+        ("atan(0)", "rational", "0 (exact)"),
+        ("atan(0)", "floating-point", "0.0 (inexact)"),
+        # binary64 uses math.atan and is unconditionally inexact.
+        ("atan(0.5)", "floating-point", "0.4636476090008061 (inexact)"),
+        ("atan(1)", "floating-point", "0.7853981633974483 (inexact)"),  # pi/4
+        ("atan(2)", "floating-point", "1.1071487177940904 (inexact)"),  # over-1 argument
+        # atan is odd: atan(-x) = -atan(x).
+        ("atan(-0.5)", "floating-point", "-0.4636476090008061 (inexact)"),
+        ("atan(-2)", "floating-point", "-1.1071487177940904 (inexact)"),
+        # No domain limit — a large argument just approaches pi/2 from below.
+        ("atan(1000)", "floating-point", "1.5697963271282298 (inexact)"),
+        # Fixed-point sums the arctan series and flags inexact; atan(1) = pi/4 ~ 0.7854
+        # rounds to 1 at scale 0 (atan(1) is irrational, the only exact case is x = 0).
+        (
+            "atan(1)",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 0.7854)",
+        ),
+        # atan(1/2); the inexact result carries the precision-offer hint.
+        (
+            "atan(0.500000)",
+            None,
+            "0.463648 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 0.4636476090)",
+        ),
+        # An over-1 argument exercises the atan(x) = pi/2 - atan(1/x) reduction.
+        (
+            "atan(2.000000)",
+            None,
+            "1.107149 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.1071487178)",
+        ),
+        # Negative argument (atan is odd) — exercises the sign handling.
+        (
+            "atan(-0.500000)",
+            None,
+            "-0.463648 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → -0.4636476090)",
+        ),
+        (
+            "atan(-2.000000)",
+            None,
+            "-1.107149 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → -1.1071487178)",
+        ),
+        # A large argument nears pi/2 ~ 1.5708 without ever reaching it (no domain cap).
+        (
+            "atan(1000.000000)",
+            None,
+            "1.569796 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.5697963271)",
+        ),
+        # atan(0) = 0 stays EXACT at a non-zero scale (the mantissa == 0 path).
+        ("atan(0.000000)", None, "0.000000 (exact)"),
+    ],
+)
+def test_atan(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+def test_atan_refuses_a_non_zero_rational_with_a_line_tagged_error():
+    # atan of a rational is irrational except atan(0) = 0; any non-zero rational refuses
+    # (exact-or-refuse). NB no domain refusal — atan accepts every real.
+    payload = _calc("atan(2)", "rational")
+    assert payload["error"] == "arctangent of a non-zero rational is irrational"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # log(1) = 0 is the one exact case in every mode (transcendental otherwise);
         # `ln` is the alias, so ln(1) matches.
         ("log(1)", None, "0 (exact)"),

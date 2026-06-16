@@ -606,6 +606,27 @@ def _fp_asin(mantissa: int, decimals: int) -> int:
     return out
 
 
+def _fp_atan(mantissa: int, decimals: int) -> int:
+    """Arctangent of a NON-NEGATIVE ``x == mantissa/10**decimals`` (``x >= 0``, NO
+    upper bound — atan's domain is all reals) as a scaled-int mantissa at ``decimals``
+    (28.16). The caller folds the sign (atan is odd).
+
+    The arctan series (``_fp_arctan_series``) only converges on arguments in [0, 1],
+    so arguments above 1 reduce with ``atan(x) == pi/2 - atan(1/x)`` (and
+    ``1/x < 1``), the same identity asin uses for its over-unit arctan argument.
+    Computed at ``decimals + _PI_GUARD`` guard digits, then rounded half-to-even back.
+    """
+    working = decimals + _PI_GUARD
+    unity = 10**working
+    x = mantissa * 10 ** (working - decimals)  # x scaled, in [0, inf)
+    if x <= unity:  # x <= 1: the series argument is in range
+        atan = _fp_arctan_series(x, unity)
+    else:  # x > 1: atan(x) = pi/2 - atan(1/x), with 1/x = unity/x < 1
+        atan = _pi_scaled(working) // 2 - _fp_arctan_series(unity * unity // x, unity)
+    out, _ = _fp_quantize(atan, 10 ** (working - decimals), 0)
+    return out
+
+
 # --- internal high-precision natural log (28.17) ------------------------------
 # The log family's analogue of the trig family above: where sin/cos range-reduce
 # mod 2*pi and sum a Taylor series, log range-reduces in base 10 and sums an
@@ -1882,6 +1903,44 @@ class Value:
                 acos_scaled = _pi_scaled(working) // 2 - asin_scaled
                 mantissa, _ = _fp_quantize(acos_scaled, 10 ** (working - fp.decimals), 0)
                 return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def atan(self) -> "Value":
+        """Arctangent, result in radians within (-pi/2, pi/2) (28.16) — transcendental,
+        so inexact except the trivial atan(0) = 0. UNRESTRICTED domain: every real has
+        an arctangent, so unlike asin/acos (28.14/28.15) no argument is ever refused
+        for being out of domain.
+
+        atan is the primitive the inverse trig reduces to — the Machin-type arctan
+        series behind pi (28.10.1), lifted to a general argument for asin (28.14), IS
+        atan, so exposing it is nearly free.
+        fixed-point: SUPPORTED. The internal arctan series at the operand's scale plus
+            guard digits, rounded half-to-even back; arguments above 1 reduce with
+            ``atan(x) == pi/2 - atan(1/x)``. Always inexact except atan(0) = 0.
+        floating-point: math.atan; unconditionally inexact.
+        rational: atan of a rational is irrational except atan(0) = 0; a non-zero
+            argument therefore raises NotRepresentableError, the exact-or-refuse stance
+            shared with asin/sin.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.atan(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # atan(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("arctangent of a non-zero rational is irrational")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # atan(0) = 0, the only exact fixed-point case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                sign = -1 if fp.mantissa < 0 else 1  # atan is odd; compute on |x|
+                magnitude = _fp_atan(abs(fp.mantissa), fp.decimals)
+                result = FixedPoint(sign * magnitude, fp.decimals)
+                return Value(Mode.FIXED_POINT, result, exact=False)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

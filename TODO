@@ -1075,7 +1075,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 == pi/2 - asin(x) (28.14), so it also needs the internal pi helper
                 (28.10.1) for pi/2. Same inexact / refuse story; rational exact only
                 at the trivial acos(1) = 0.
-    [ ] 28.16.  atan(x) — arctangent, result in radians within (-pi/2, pi/2). UNARY,
+    [x] 28.16.  atan(x) — arctangent, result in radians within (-pi/2, pi/2). UNARY,
                 domain ALL reals (NO restriction, unlike asin/acos). It is the
                 PRIMITIVE the inverse trig reduces to: the internal Machin-type
                 arctan series behind the pi helper (28.10.1) IS atan, so once that

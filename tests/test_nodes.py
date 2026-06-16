@@ -147,6 +147,7 @@ def test_function_arities_match_the_registry():
         "cot": (1, 1),
         "asin": (1, 1),
         "acos": (1, 1),
+        "atan": (1, 1),
         "log": (1, 1),
         "ln": (1, 1),
         "log10": (1, 1),
