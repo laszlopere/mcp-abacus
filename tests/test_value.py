@@ -1089,9 +1089,7 @@ def test_inexact_handling_help_covers_every_member():
 def test_explain_inexact_fixed_point_rounding_reports_the_residual():
     # An algebraic fixed-point rounding carries the exact residual (35.1.2), and
     # the explanation surfaces it plus the precision / rational steer.
-    rounded = Value(
-        Mode.FIXED_POINT, FixedPoint(33, 2), exact=False, error=Fraction(-1, 300)
-    )
+    rounded = Value(Mode.FIXED_POINT, FixedPoint(33, 2), exact=False, error=Fraction(-1, 300))
     text = rounded.explain_inexact()
     assert "-1/300" in text  # the exact residual
     assert "rational mode is exact" in text  # the one CERTAIN fix

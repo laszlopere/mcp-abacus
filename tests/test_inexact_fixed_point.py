@@ -167,9 +167,7 @@ def test_abort_headline_pads_an_operand_to_the_result_precision():
 def test_abort_headline_renders_a_function_call_over_its_argument_value():
     # A function abort lays the call out over its argument's value, not a binary form.
     error = _abort_fp("sqrt(2)")
-    assert error.message.startswith(
-        "Inexact calculation in line 1: sqrt(2) = 1 is not exact."
-    )
+    assert error.message.startswith("Inexact calculation in line 1: sqrt(2) = 1 is not exact.")
 
 
 # --- 35.3.2: the first hint line says how to LIFT the abort -----------------

@@ -410,7 +410,9 @@ def _fp_value(num: int, den: int, a: FixedPoint, b: FixedPoint, exact_in: bool) 
     scale = max(a.decimals, b.decimals)
     mantissa, lossless = _fp_quantize(num, den, scale)
     error = None if lossless else Fraction(mantissa, 10**scale) - Fraction(num, den)
-    return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=exact_in and lossless, error=error)
+    return Value(
+        Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=exact_in and lossless, error=error
+    )
 
 
 # --- internal high-precision pi (28.10.1) -------------------------------------
@@ -2130,7 +2132,7 @@ class Value:
                 if decimals == 0:
                     return sign + digits
                 digits = digits.zfill(decimals + 1)  # ensure a leading 0 if needed
-                return f"{sign}{digits[: -decimals]}.{digits[-decimals :]}"
+                return f"{sign}{digits[:-decimals]}.{digits[-decimals:]}"
             case Mode.RATIONAL:
                 # Fraction renders as "n" when integral, else "n/d" (10.3).
                 return str(self.payload)

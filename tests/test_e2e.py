@@ -416,15 +416,11 @@ def test_inexact_handling_abort_on_fixed_point_travels_over_the_wire():
     assert error.startswith("Inexact calculation in line 1: 1.00 / 3.00 = 0.33 is not exact.")
 
     # An EXACT fixed-point calculation passes through unchanged under the same policy.
-    exact = _payload(
-        _call("calculate", {"expression": "1 + 2", "inexact_handling": "abort"})
-    )
+    exact = _payload(_call("calculate", {"expression": "1 + 2", "inexact_handling": "abort"}))
     assert exact["value"] == "3 (exact)" and exact["exact"] is True and exact["error"] is None
 
     # An unknown policy name lists the valid choices rather than failing the protocol.
-    unknown = _payload(
-        _call("calculate", {"expression": "1", "inexact_handling": "perhaps"})
-    )
+    unknown = _payload(_call("calculate", {"expression": "1", "inexact_handling": "perhaps"}))
     assert unknown["value"] is None
     assert "Unknown inexact_handling" in unknown["error"]
     assert "continue-and-report" in unknown["error"] and "abort-on-inexact" in unknown["error"]

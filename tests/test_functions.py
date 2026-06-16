@@ -998,9 +998,7 @@ def test_log10(expression, mode, value):
     assert _value(expression, mode) == value
 
 
-_RATIONAL_LOG10_REFUSAL = (
-    "base-10 logarithm of a non-power-of-ten rational is irrational"
-)
+_RATIONAL_LOG10_REFUSAL = "base-10 logarithm of a non-power-of-ten rational is irrational"
 
 
 @pytest.mark.parametrize(

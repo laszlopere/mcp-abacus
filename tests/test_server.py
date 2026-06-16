@@ -146,9 +146,7 @@ def test_calculate_abort_on_inexact_passes_an_exact_result_through():
     # An exact calculation under the abort policy returns normally.
     result = _calc(
         asyncio.run(
-            mcp.call_tool(
-                "calculate", {"expression": "1 + 2", "inexact_handling": "abort"}
-            )
+            mcp.call_tool("calculate", {"expression": "1 + 2", "inexact_handling": "abort"})
         )
     )
     assert result["value"] == "3 (exact)" and result["exact"] is True and result["error"] is None
@@ -156,9 +154,7 @@ def test_calculate_abort_on_inexact_passes_an_exact_result_through():
 
 def test_calculate_unknown_inexact_handling_lists_valid_values():
     result = _calc(
-        asyncio.run(
-            mcp.call_tool("calculate", {"expression": "1", "inexact_handling": "maybe"})
-        )
+        asyncio.run(mcp.call_tool("calculate", {"expression": "1", "inexact_handling": "maybe"}))
     )
     assert result["value"] is None
     error = result["error"]

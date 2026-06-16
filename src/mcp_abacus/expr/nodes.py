@@ -81,7 +81,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "cot": Value.cot,  # 28.13 — cos/sin; mirror of tan, undefined where sin = 0, else inexact
     "asin": Value.asin,  # 28.14 — arcsine; atan(x/sqrt(1-x^2)), domain |x|<=1, else inexact/refuse
     "acos": Value.acos,  # 28.15 — arccosine; pi/2 - asin(x), domain |x|<=1, else inexact/refuse
-    "atan": Value.atan,  # 28.16 — arctangent; the arctan series itself, all reals, else inexact/refuse
+    "atan": Value.atan,  # 28.16 — arctangent; the arctan series itself, all reals, else inexact
     "log": Value.log,  # 28.17 — NATURAL log; base-10 reduce + atanh series, else inexact/refuse
     "ln": Value.log,  # 28.17 — alias of log (the canonical natural-log spelling)
     "log10": Value.log10,  # 28.18 — base-10 log; ln(x)/ln(10), exact on powers of ten
