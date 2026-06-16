@@ -464,9 +464,13 @@ def solver(
     "nelder-mead". (`golden`, `brent`, `simplex` and a few other spellings are accepted
     too.)
 
-    `mode` and `min_fixed_point_precision` behave exactly as in `calculate`: the
-    search runs in that numeric type, and the found value is reported in it. See
-    `calculate` and `help` for the shared grammar, modes, and precision rules.
+    `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
+    in that numeric type and the found value is reported in it — with ONE solver-only
+    rule: in fixed-point mode (the default) min_fixed_point_precision is REQUIRED.
+    Without it the search would run at scale 0, flooring the variable to whole numbers
+    and missing any non-integer solution, so the call is refused; pass it (e.g. 9), or
+    switch to floating-point / rational, which resolve sub-unit values natively and
+    need no floor. See `calculate` and `help` for the shared grammar and modes.
 
     The search is bounded by a hard 2-second time limit. If it has not converged by
     then it stops and reports the best value reached so far (a find-root that has not
@@ -508,6 +512,18 @@ def solver(
         for name, lo, hi in unknowns:
             validate_bracket(lo, hi)
             validate_unknown(node, name)
+        if selected is Mode.FIXED_POINT and min_fixed_point_precision is None:
+            # 39: an otherwise well-formed fixed-point search at scale 0 floors the
+            # variable to whole numbers and misses every non-integer solution, then
+            # reports a silently-wrong integer guess. Require the floor instead, only
+            # where it bites — checked AFTER the structural validations above so a
+            # malformed request still surfaces its own error first.
+            raise SolverError(
+                "min_fixed_point_precision is required in fixed-point mode: without "
+                "it the search runs at scale 0, flooring the variable to whole numbers "
+                "and missing any non-integer solution. Pass min_fixed_point_precision "
+                "(e.g. 9), or use mode='floating-point'."
+            )
         if resolved_algorithm is Algorithm.NELDER_MEAD:
             result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
         elif resolved_algorithm is Algorithm.BRENT_PARABOLIC:

@@ -112,6 +112,46 @@ def test_find_root_finds_an_exact_root_on_the_fixed_point_grid():
     assert payload["exact"] is True
 
 
+def test_fixed_point_solver_requires_min_fixed_point_precision():
+    # 39: fixed-point is the default mode, but a search at scale 0 floors the variable
+    # to whole numbers and would miss a non-integer root, so the bare fixed-point call
+    # is refused — naming the argument and a concrete value to pass. The request is
+    # otherwise well-formed (x occurs, bracket non-empty), so it reaches this check.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] in fixed-point with NO precision\n"
+        "refused: the search would floor x to integers and miss sqrt(2)",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, mode="fixed-point")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "min_fixed_point_precision is required in fixed-point mode" in payload["error"]
+    assert "e.g. 9" in payload["error"]
+
+
+def test_fixed_point_solver_with_precision_converges_on_a_non_integer_root():
+    # The same search WITH a floor gives the variable sub-integer resolution and
+    # converges on sqrt(2) — the floor is exactly what the refusal above asks for.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] in fixed-point at scale 9\nexpect x ~ 1.414213562",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, mode="fixed-point", floor=9)
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+
+
+def test_rational_solver_needs_no_precision():
+    # 39.2: other modes resolve sub-unit values natively, so the floor stays optional
+    # there — a rational search without precision is NOT refused and solves exactly.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] in rational, no precision\nexpect x = 3/2 exactly",
+        "2*x - 3",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=3, mode="rational")
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "3/2"
+
+
 def test_find_minimum_finds_the_low_point():
     program = _annotated(
         "find-minimum of (x - 3)**2 over [0, 5]\nunimodal; expect x = 3, value 0 (the low point)",
