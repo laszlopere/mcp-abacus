@@ -274,7 +274,7 @@ def test_stddev_rational_refuses_an_irrational_root():
     # In rational mode stddev inherits sqrt's exact-or-refuse pitch: variance 2 has
     # no rational root, so it raises rather than fabricate digits (line-tagged).
     payload = _calc("stddev(1, 2, 3, 4, 5)", "rational")
-    assert payload["error"] == "error (line 1): rational square root is irrational"
+    assert payload["error"] == "rational square root is irrational"
     assert payload["value"] is None
 
 
@@ -314,11 +314,11 @@ def test_sqrt(expression, mode, value):
     ("expression", "mode", "error"),
     [
         # No real root for a negative operand in any mode...
-        ("sqrt(-4)", None, "error (line 1): square root of a negative value"),
-        ("sqrt(-4)", "floating-point", "error (line 1): square root of a negative value"),
-        ("sqrt(-1)", "rational", "error (line 1): square root of a negative value"),
+        ("sqrt(-4)", None, "square root of a negative value"),
+        ("sqrt(-4)", "floating-point", "square root of a negative value"),
+        ("sqrt(-1)", "rational", "square root of a negative value"),
         # ...and rational refuses an irrational root (no scale to round to).
-        ("sqrt(2)", "rational", "error (line 1): rational square root is irrational"),
+        ("sqrt(2)", "rational", "rational square root is irrational"),
     ],
 )
 def test_sqrt_refuses_with_a_line_tagged_error(expression, mode, error):
@@ -358,13 +358,13 @@ def test_pow(expression, mode, value):
     ("expression", "mode", "error"),
     [
         # A non-integer exponent is irrational for a rational base (no scale).
-        ("pow(2, 0.5)", "rational", "error (line 1): rational power requires an integer exponent"),
+        ("pow(2, 0.5)", "rational", "rational power requires an integer exponent"),
         # An even root of a negative base is complex — no real value.
-        ("pow(-4, 0.5)", None, "error (line 1): even root of a negative value"),
+        ("pow(-4, 0.5)", None, "even root of a negative value"),
         # An odd irrational root of a negative base cannot go through ln — refuse.
-        ("pow(-2, 0.2)", None, "error (line 1): fractional power of a negative base is irrational"),
+        ("pow(-2, 0.2)", None, "fractional power of a negative base is irrational"),
         # Zero to a negative power divides by zero.
-        ("pow(0, -2)", None, "error (line 1): fixed-point zero to a negative power"),
+        ("pow(0, -2)", None, "fixed-point zero to a negative power"),
     ],
 )
 def test_pow_refuses_with_a_line_tagged_error(expression, mode, error):
@@ -433,7 +433,7 @@ def test_sin(expression, mode, value):
 
 def test_sin_refuses_a_non_zero_rational_with_a_line_tagged_error():
     payload = _calc("sin(1)", "rational")
-    assert payload["error"] == "error (line 1): sine of a non-zero rational is irrational"
+    assert payload["error"] == "sine of a non-zero rational is irrational"
     assert payload["value"] is None
 
 
@@ -489,7 +489,7 @@ def test_cos(expression, mode, value):
 
 def test_cos_refuses_a_non_zero_rational_with_a_line_tagged_error():
     payload = _calc("cos(1)", "rational")
-    assert payload["error"] == "error (line 1): cosine of a non-zero rational is irrational"
+    assert payload["error"] == "cosine of a non-zero rational is irrational"
     assert payload["value"] is None
 
 
@@ -560,7 +560,7 @@ def test_tan(expression, mode, value):
 
 def test_tan_refuses_a_non_zero_rational_with_a_line_tagged_error():
     payload = _calc("tan(1)", "rational")
-    assert payload["error"] == "error (line 1): tangent of a non-zero rational is irrational"
+    assert payload["error"] == "tangent of a non-zero rational is irrational"
     assert payload["value"] is None
 
 
@@ -632,9 +632,9 @@ def test_cot(expression, mode, value):
     [
         # cot(0) = cos/sin = 1/0 is undefined in every mode (the mirror of tan(0) = 0,
         # which IS defined): sin = 0 there, so each mode raises its division/domain error.
-        (None, "error (line 1): fixed-point cotangent of a multiple of pi"),
-        ("rational", "error (line 1): cotangent of zero is undefined"),
-        ("floating-point", "error (line 1): float division by zero"),
+        (None, "fixed-point cotangent of a multiple of pi"),
+        ("rational", "cotangent of zero is undefined"),
+        ("floating-point", "float division by zero"),
     ],
 )
 def test_cot_of_zero_is_undefined_with_a_line_tagged_error(mode, error):
@@ -645,7 +645,7 @@ def test_cot_of_zero_is_undefined_with_a_line_tagged_error(mode, error):
 
 def test_cot_refuses_a_non_zero_rational_with_a_line_tagged_error():
     payload = _calc("cot(1)", "rational")
-    assert payload["error"] == "error (line 1): cotangent of a non-zero rational is irrational"
+    assert payload["error"] == "cotangent of a non-zero rational is irrational"
     assert payload["value"] is None
 
 
@@ -714,18 +714,18 @@ def test_log(expression, mode, value):
     assert _value(expression, mode) == value
 
 
-_RATIONAL_LOG_REFUSAL = "error (line 1): logarithm of a non-unit rational is transcendental"
+_RATIONAL_LOG_REFUSAL = "logarithm of a non-unit rational is transcendental"
 
 
 @pytest.mark.parametrize(
     ("expression", "mode", "error"),
     [
         # No real log for a non-positive operand in any mode (x = 0 is -inf)...
-        ("log(0)", None, "error (line 1): logarithm of a non-positive value"),
-        ("log(-1)", None, "error (line 1): logarithm of a non-positive value"),
-        ("log(0)", "floating-point", "error (line 1): logarithm of a non-positive value"),
-        ("log(-2)", "floating-point", "error (line 1): logarithm of a non-positive value"),
-        ("log(0)", "rational", "error (line 1): logarithm of a non-positive value"),
+        ("log(0)", None, "logarithm of a non-positive value"),
+        ("log(-1)", None, "logarithm of a non-positive value"),
+        ("log(0)", "floating-point", "logarithm of a non-positive value"),
+        ("log(-2)", "floating-point", "logarithm of a non-positive value"),
+        ("log(0)", "rational", "logarithm of a non-positive value"),
         # ...and rational refuses a transcendental log (no scale to round to).
         ("log(2)", "rational", _RATIONAL_LOG_REFUSAL),
         ("ln(2)", "rational", _RATIONAL_LOG_REFUSAL),
@@ -782,7 +782,7 @@ def test_log10(expression, mode, value):
 
 
 _RATIONAL_LOG10_REFUSAL = (
-    "error (line 1): base-10 logarithm of a non-power-of-ten rational is irrational"
+    "base-10 logarithm of a non-power-of-ten rational is irrational"
 )
 
 
@@ -790,10 +790,10 @@ _RATIONAL_LOG10_REFUSAL = (
     ("expression", "mode", "error"),
     [
         # Same non-positive refusal as log, in every mode...
-        ("log10(0)", None, "error (line 1): logarithm of a non-positive value"),
-        ("log10(-5)", None, "error (line 1): logarithm of a non-positive value"),
-        ("log10(0)", "floating-point", "error (line 1): logarithm of a non-positive value"),
-        ("log10(0)", "rational", "error (line 1): logarithm of a non-positive value"),
+        ("log10(0)", None, "logarithm of a non-positive value"),
+        ("log10(-5)", None, "logarithm of a non-positive value"),
+        ("log10(0)", "floating-point", "logarithm of a non-positive value"),
+        ("log10(0)", "rational", "logarithm of a non-positive value"),
         # ...and rational refuses anything that is not an integer power of ten.
         ("log10(2)", "rational", _RATIONAL_LOG10_REFUSAL),
         ("log10(1/3)", "rational", _RATIONAL_LOG10_REFUSAL),
@@ -830,9 +830,9 @@ def test_nullary_floating_point(expression, mode, value):
     ("expression", "mode", "error"),
     [
         # rational refuses: an irrational constant has no finite fraction (like sqrt(2)).
-        ("pi()", "rational", "error (line 1): pi is irrational; no rational value"),
-        ("e()", "rational", "error (line 1): e is irrational; no rational value"),
-        ("2 * pi()", "rational", "error (line 1): pi is irrational; no rational value"),
+        ("pi()", "rational", "pi is irrational; no rational value"),
+        ("e()", "rational", "e is irrational; no rational value"),
+        ("2 * pi()", "rational", "pi is irrational; no rational value"),
     ],
 )
 def test_nullary_rational_refuses(expression, mode, error):

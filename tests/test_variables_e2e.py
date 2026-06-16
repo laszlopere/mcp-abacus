@@ -155,20 +155,21 @@ def test_min_fixed_point_precision_threads_through_variables():
     assert floored == "0.66666 (inexact, rounded to 5 decimals)"
 
 
-# --- undefined-variable refusal carries the line ---------------------------
+# --- undefined-variable refusal is a plain, self-contained message ----------
+#
+# The diagnostic names the missing variable and stands on its own — no machine-style
+# "error (line N):" prefix (only the inexact-abort headline names a line, 35.3.1).
 
 
 @pytest.mark.parametrize(
     ("expression", "error"),
     [
-        # A bare unset name on the first line.
-        ("z + 1", "error (line 1): undefined variable: z"),
-        # An unset reference on a LATER line — the error carries that line, not 1.
-        ("x = 1\nz", "error (line 2): undefined variable: z"),
-        ("a = 5\nb = a + 1\nc", "error (line 3): undefined variable: c"),
+        ("z + 1", "undefined variable: z"),  # a bare unset name
+        ("x = 1\nz", "undefined variable: z"),  # an unset reference on a later line
+        ("a = 5\nb = a + 1\nc", "undefined variable: c"),
     ],
 )
-def test_undefined_variable_refuses_with_a_line_tagged_error(expression, error):
+def test_undefined_variable_refuses_with_a_plain_message(expression, error):
     payload = _calc(expression)
     assert payload["error"] == error
     assert payload["value"] is None

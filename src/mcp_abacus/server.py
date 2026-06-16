@@ -231,7 +231,10 @@ def _evaluate_request(
             selected, min_fixed_point_precision or 0, inexact_handling=inexact_handling
         )
     except (LexError, ParseError, EvalError) as exc:
-        return None, None, None, f"error (line {exc.line}): {exc.message}"
+        # The message stands on its own (no machine-style "error (line N):" prefix);
+        # the source line is named in prose only where it matters — the inexact-abort
+        # headline (35.3.1) — not bolted onto every diagnostic.
+        return None, None, None, exc.message
     return node, selected, value, None
 
 
@@ -291,10 +294,11 @@ def calculate(
     true value) and `precision` (the fixed-point decimal scale, or null when the
     mode has none). NOTE: floating-point conservatively reports `exact: false` for
     every result today, including ones a double holds exactly. On failure `value`/
-    `value_hex_dump`/`mode`/`exact`/`precision` are null and `error` carries the
-    message (the 1-based source line for a malformed expression / domain error, or
-    the valid mode list for an unknown mode); on success `error` is null. For the
-    full reference call `help`.
+    `value_hex_dump`/`mode`/`exact`/`precision` are null and `error` carries a plain,
+    self-contained message — what went wrong (a malformed expression, a domain error,
+    or an unknown mode with the valid list). It reads as prose, not a log line; only
+    the inexact-abort diagnostic names its source line, and in prose. On success
+    `error` is null. For the full reference call `help`.
 
     `min_fixed_point_precision` floors the fixed-point result at that many decimal
     places: every operand is held at no fewer than that many fractional digits, so
@@ -307,14 +311,14 @@ def calculate(
       continue-and-report  (default) evaluate normally and let the verdict surface
                            in `value`/`exact`; never reject. Aliases: continue, report.
       abort-on-inexact     stop and FAIL the moment any sub-result is inexact. The
-                           call returns no value — `error` instead carries a terse
-                           diagnostic naming the source line, the exact sub-
-                           expression that went inexact (e.g. `1.00 / 3.00`), and the
-                           CERTAIN why (how much was rounded, and the mode that would
-                           be exact). Use it when an approximate answer is
-                           unacceptable and you want to be told precisely what and
-                           where, rather than silently trusting a rounded figure.
-                           Aliases: abort, strict, exact-only.
+                           call returns no value — `error` instead carries a
+                           diagnostic naming the source line and laying out the
+                           operation that went inexact in computed VALUES (e.g.
+                           `1.00 / 3.00 = 0.33`), then how to enable inexact
+                           calculations if you do want the rounded answer. Use it
+                           when an approximate answer is unacceptable and you want to
+                           be told precisely what and where, rather than silently
+                           trusting a rounded figure. Aliases: abort, strict, exact-only.
     An unknown value is an `error` listing the valid choices. Note floating-point
     reports every result inexact, so abort-on-inexact there fails on the first value.
 
@@ -498,7 +502,7 @@ def solver(
     try:
         node = parser.parse(expression)
     except (LexError, ParseError) as exc:
-        return _solver_error(f"error (line {exc.line}): {exc.message}")
+        return _solver_error(exc.message)
     floor = min_fixed_point_precision or 0
     try:
         for name, lo, hi in unknowns:
@@ -516,7 +520,7 @@ def solver(
     except SolverError as exc:
         return _solver_error(exc.message)
     except EvalError as exc:  # a constant the program never set (structural, 31.7)
-        return _solver_error(f"error (line {exc.line}): {exc.message}")
+        return _solver_error(exc.message)
     return _solver_reply(result, selected, min_fixed_point_precision)
 
 

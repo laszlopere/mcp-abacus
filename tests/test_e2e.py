@@ -208,14 +208,14 @@ def test_analyze_renders_bitwise_trees_over_the_wire(capsys):
         assert payload["tree"] == expected_tree, f"{expr!r} tree mismatch:\n{payload['tree']}"
 
 
-def test_analyze_rational_bitwise_zero_denominator_errors_with_a_line_over_the_wire():
+def test_analyze_rational_bitwise_zero_denominator_errors_over_the_wire():
     # Componentwise rational bitwise (24.3.2) can drive a denominator to zero:
-    # 5 ^ 3 is (5 ^ 3) / (1 ^ 1) = 6 / 0. It must surface as a line-tagged domain
-    # error with a null tree, NOT a protocol failure — the price the all-types-bits
-    # decision accepted for rational's faithful numerator/denominator componentwise.
+    # 5 ^ 3 is (5 ^ 3) / (1 ^ 1) = 6 / 0. It must surface as a domain error with a
+    # null tree, NOT a protocol failure — the price the all-types-bits decision
+    # accepted for rational's faithful numerator/denominator componentwise.
     ((_arguments, payload),) = _analyze_in_one_session([("5 ^ 3", "rational", None)])
     assert payload["tree"] is None
-    assert payload["error"].startswith("error (line 1):")
+    assert payload["error"]  # a plain diagnostic, no "error (line N):" prefix
 
 
 def test_initialize_handshake_identifies_the_server():
@@ -413,8 +413,7 @@ def test_inexact_handling_abort_on_fixed_point_travels_over_the_wire():
     )
     assert aborted["value"] is None and aborted["exact"] is None
     error = aborted["error"]
-    assert error.startswith("error (line 1):")
-    assert "1.00 / 3.00 = 0.33 is not exact" in error
+    assert error.startswith("Inexact calculation in line 1: 1.00 / 3.00 = 0.33 is not exact.")
 
     # An EXACT fixed-point calculation passes through unchanged under the same policy.
     exact = _payload(
@@ -447,12 +446,12 @@ def test_floating_point_aliases_resolve_to_the_canonical_mode():
     assert dict(zip(expected, texts, strict=True)) == expected
 
 
-def test_malformed_expression_returns_an_error_line_not_a_protocol_failure():
+def test_malformed_expression_returns_an_error_not_a_protocol_failure():
     result = _call("calculate", {"expression": "1 +"})
-    # The tool reports user errors as ordinary text (with the 1-based source
-    # line), so the call itself succeeds at the protocol level.
+    # The tool reports user errors as ordinary text (a plain, self-contained
+    # message), so the call itself succeeds at the protocol level.
     assert result.isError is False
-    assert _payload(result)["error"].startswith("error (line 1):")
+    assert _payload(result)["error"] == "expected a number, name, or '(', got end of input"
 
 
 def test_unknown_mode_lists_the_valid_modes():
