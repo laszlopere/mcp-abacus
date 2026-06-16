@@ -1540,6 +1540,23 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                self-describing.
     [ ] 34.4.  HELP + README: add a `rounding` note to the relevant help section
                and the calculate reply enrichment (27); a fixtures pass like 32.4.
+    [ ] 34.5.  ROUND ONLY AT DISPLAY (fixed-point) — decided this session: fixed-
+               point must STOP rounding intermediates and quantise ONCE, at the
+               final render. Today it rounds per-op (every `/`, product,
+               transcendental snaps to the covering scale via _fp_quantize), so
+               1/3+1/3+1/3 @ scale 2 = 0.99; deferred rounding makes it 1.00
+               (exact). The open question is what to DO when that final rounding
+               is still inexact — three policies:
+        [ ] 34.5.1.  Reject all inexact calculations, report where the error was
+                     introduced. Exact-or-refuse: if any rounding entered, refuse
+                     and name the op/operand that introduced it. Strictest; the
+                     answer is never silently wrong.
+        [ ] 34.5.2.  Error calculation: compute how many decimals are trustworthy
+                     and reject only if the FINAL rounding makes the reported
+                     result inaccurate. Allows internal guard-digit rounding so
+                     long as every displayed digit is sound.
+        [ ] 34.5.3.  Keep the current accurate/inaccurate (exact/inexact)
+                     reporting — flag and continue, never reject.
 
 
 [ ] 35.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
