@@ -571,26 +571,37 @@ def _fp_arctan_series(z: int, unity: int) -> int:
     return 2 * total
 
 
-def _fp_asin(mantissa: int, decimals: int) -> int:
-    """Arcsine of ``x == mantissa/10**decimals`` for ``0 < mantissa <= 10**decimals``
-    (so ``0 < x <= 1``), as a scaled-int mantissa at ``decimals`` (28.14).
+def _fp_asin_scaled(mantissa: int, decimals: int) -> tuple[int, int]:
+    """Arcsine of ``x == mantissa/10**decimals`` for ``0 <= mantissa <= 10**decimals``
+    (so ``0 <= x <= 1``), as ``(asin_scaled, working)`` at ``working == decimals +
+    _PI_GUARD`` (28.14). The caller quantizes back (asin) or offsets it by pi/2
+    before rounding (acos, 28.15) — returning the un-rounded working-scale value lets
+    acos round only once. NON-NEGATIVE argument only: asin is odd, so callers fold
+    the sign off and restore it on the result.
 
     ``asin(x) == atan(x / sqrt(1 - x**2))`` — the plain arcsine series converges
     badly near ``x == 1``, so route through arctan instead, reusing the integer
     sqrt and the arctan series. The arctan argument ``u == x/sqrt(1-x**2)`` exceeds
     1 once ``x > 1/sqrt(2)``, beyond the series' domain, so reduce it there with
-    ``atan(u) == pi/2 - atan(1/u)`` (and ``1/u == sqrt(1-x**2)/x <= 1``). Computed at
-    ``decimals + _PI_GUARD`` guard digits, then rounded half-to-even back; the caller
-    folds the sign (asin is odd) and handles the exact ``asin(0) = 0``.
+    ``atan(u) == pi/2 - atan(1/u)`` (and ``1/u == sqrt(1-x**2)/x <= 1``).
     """
     working = decimals + _PI_GUARD
     unity = 10**working
-    x = mantissa * 10 ** (working - decimals)  # |x| scaled, in (0, unity]
-    root = math.isqrt((unity - x * x // unity) * unity)  # sqrt(1 - x**2) scaled, in [0, unity)
-    if x <= root:  # |x| <= 1/sqrt(2): the arctan argument u = x/sqrt(1-x**2) is <= 1
+    x = mantissa * 10 ** (working - decimals)  # x scaled, in [0, unity]
+    root = math.isqrt((unity - x * x // unity) * unity)  # sqrt(1 - x**2) scaled, in [0, unity]
+    if x <= root:  # x <= 1/sqrt(2): the arctan argument u = x/sqrt(1-x**2) is <= 1
         atan = _fp_arctan_series(x * unity // root, unity)
     else:  # u > 1 (root may be 0 at x = 1): asin(x) = pi/2 - arctan(1/u)
         atan = _pi_scaled(working) // 2 - _fp_arctan_series(root * unity // x, unity)
+    return atan, working
+
+
+def _fp_asin(mantissa: int, decimals: int) -> int:
+    """Arcsine of a NON-NEGATIVE ``x == mantissa/10**decimals`` (``0 <= x <= 1``) as a
+    scaled-int mantissa at ``decimals`` (28.14) — the ``_fp_asin_scaled`` core rounded
+    half-to-even back to the operand's scale. The caller folds the sign (asin is odd).
+    """
+    atan, working = _fp_asin_scaled(mantissa, decimals)
     out, _ = _fp_quantize(atan, 10 ** (working - decimals), 0)
     return out
 
@@ -1826,6 +1837,51 @@ class Value:
                 magnitude = _fp_asin(abs(fp.mantissa), fp.decimals)
                 result = FixedPoint(sign * magnitude, fp.decimals)
                 return Value(Mode.FIXED_POINT, result, exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def acos(self) -> "Value":
+        """Arccosine, result in radians within [0, pi] (28.15) — transcendental, so
+        inexact except the trivial acos(1) = 0. DOMAIN-RESTRICTED to |x| <= 1, like
+        asin (28.14): an argument outside [-1, 1] raises NotRepresentableError in
+        every mode.
+
+        ``acos(x) == pi/2 - asin(x)``, so it reuses asin's arctan machinery and the
+        internal pi helper (28.10.1) for pi/2; the per-mode story is asin's.
+        fixed-point: SUPPORTED. Subtract the un-rounded working-scale asin from pi/2
+            and round once. Always inexact except acos(1) = 0, which is exact (asin(1)
+            = pi/2 cancels exactly). NB acos's exact landmark is x = 1, NOT x = 0
+            (acos(0) = pi/2 is irrational) — the mirror of asin's.
+        floating-point: math.acos; unconditionally inexact.
+        rational: acos of a rational is irrational except acos(1) = 0; any other
+            in-domain argument raises NotRepresentableError.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if abs(self.payload) > 1:
+                    raise NotRepresentableError("arccosine argument outside the domain [-1, 1]")
+                return Value(Mode.FLOATING_POINT, math.acos(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if abs(self.payload) > 1:
+                    raise NotRepresentableError("arccosine argument outside the domain [-1, 1]")
+                if self.payload == 1:  # acos(1) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("arccosine of a rational other than 1 is irrational")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if abs(fp.mantissa) > 10**fp.decimals:  # |x| > 1 -> outside the domain
+                    raise NotRepresentableError("arccosine argument outside the domain [-1, 1]")
+                if fp.mantissa == 10**fp.decimals:  # acos(1) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                asin_scaled, working = _fp_asin_scaled(abs(fp.mantissa), fp.decimals)
+                if fp.mantissa < 0:  # asin is odd; acos(-x) = pi/2 + asin(|x|)
+                    asin_scaled = -asin_scaled
+                acos_scaled = _pi_scaled(working) // 2 - asin_scaled
+                mantissa, _ = _fp_quantize(acos_scaled, 10 ** (working - fp.decimals), 0)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

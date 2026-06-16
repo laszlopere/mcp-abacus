@@ -1071,7 +1071,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 Machin-type arctan already behind the pi helper (28.10.1), worth
                 factoring out as a shared engine primitive. rational: irrational
                 except the trivial asin(0) = 0, else refuse.
-    [ ] 28.15.  acos(x) — arccosine, result in [0, pi]. UNARY, same domain |x| <= 1.
+    [x] 28.15.  acos(x) — arccosine, result in [0, pi]. UNARY, same domain |x| <= 1.
                 == pi/2 - asin(x) (28.14), so it also needs the internal pi helper
                 (28.10.1) for pi/2. Same inexact / refuse story; rational exact only
                 at the trivial acos(1) = 0.

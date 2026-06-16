@@ -725,6 +725,76 @@ def test_asin_refuses_a_non_zero_rational_with_a_line_tagged_error():
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # acos(1) = 0 is the one exact case in every mode (acos = pi/2 - asin, and
+        # asin(1) = pi/2 cancels). NB the exact landmark is x = 1, not x = 0.
+        ("acos(1)", None, "0 (exact)"),
+        ("acos(1)", "rational", "0 (exact)"),
+        ("acos(1)", "floating-point", "0.0 (inexact)"),
+        # binary64 uses math.acos and is unconditionally inexact; acos(0) = pi/2.
+        ("acos(0)", "floating-point", "1.5707963267948966 (inexact)"),
+        ("acos(0.5)", "floating-point", "1.0471975511965979 (inexact)"),
+        # acos is NOT odd: acos(-x) = pi - acos(x), so a negative argument lands in
+        # (pi/2, pi]. acos(-1) = pi is the far endpoint.
+        ("acos(-0.5)", "floating-point", "2.0943951023931957 (inexact)"),
+        ("acos(-1)", "floating-point", "3.141592653589793 (inexact)"),
+        # Fixed-point subtracts asin from pi/2 and flags inexact; acos(0) = pi/2 ~
+        # 1.5708 rounds to 2 at scale 0 (acos(0) is irrational, unlike asin(0) = 0).
+        (
+            "acos(0)",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 1.5708)",
+        ),
+        # acos(1/2) = pi/3; the inexact result carries the precision-offer hint.
+        (
+            "acos(0.500000)",
+            None,
+            "1.047198 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.0471975512)",
+        ),
+        # Negative argument (acos(-1/2) = 2*pi/3) — exercises the sign handling.
+        (
+            "acos(-0.500000)",
+            None,
+            "2.094395 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 2.0943951024)",
+        ),
+        # acos(-1) = pi, the far domain endpoint.
+        (
+            "acos(-1.000000)",
+            None,
+            "3.141593 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 3.1415926536)",
+        ),
+        # acos(1) = 0 stays EXACT at a non-zero scale (the mantissa == 10**decimals path).
+        ("acos(1.000000)", None, "0.000000 (exact)"),
+    ],
+)
+def test_acos(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [None, "floating-point", "rational"],
+)
+def test_acos_refuses_outside_the_domain_with_a_line_tagged_error(mode):
+    # |x| > 1 has no real arccosine: every mode refuses with the same domain message.
+    payload = _calc("acos(2)", mode)
+    assert payload["error"] == "arccosine argument outside the domain [-1, 1]"
+    assert payload["value"] is None
+
+
+def test_acos_refuses_a_rational_other_than_one_with_a_line_tagged_error():
+    # In-domain but irrational: any rational != 1 arccosine refuses (exact-or-refuse).
+    payload = _calc("acos(0.5)", "rational")
+    assert payload["error"] == "arccosine of a rational other than 1 is irrational"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # log(1) = 0 is the one exact case in every mode (transcendental otherwise);
         # `ln` is the alias, so ln(1) matches.
         ("log(1)", None, "0 (exact)"),
