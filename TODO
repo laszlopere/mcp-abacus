@@ -1061,7 +1061,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     NAMING (28.12/28.13): canonical spellings are tan/cot (the usual programming
     ones — math.tan, C), DECIDED over the European tg/ctg. Offering tg/ctg as
     aliases (cf. the mode aliases) is optional, still to plan.
-    [ ] 28.14.  asin(x) — arcsine, result in radians within [-pi/2, pi/2]. UNARY
+    [x] 28.14.  asin(x) — arcsine, result in radians within [-pi/2, pi/2]. UNARY
                 operand-method. DOMAIN-RESTRICTED: |x| <= 1, else
                 NotRepresentableError (float math.asin raises outside [-1,1] ->
                 map to it). Transcendental -> inexact in float/fixed-point. The

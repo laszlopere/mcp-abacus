@@ -538,6 +538,63 @@ def _fp_cos_series(reduced: int, unity: int) -> int:
     return total
 
 
+# --- internal fixed-point inverse trig (28.14) --------------------------------
+# The trig family's inverses, built on the SAME pi primitives above: where sin/cos
+# range-reduce mod 2*pi and sum a forward Taylor series, asin reduces to a general-
+# argument arctan series — the Machin-type arctan behind _pi_scaled (28.10.1) lifted
+# from its unit-fraction _arctan_inv to an arbitrary scaled argument. ENGINE
+# primitives shared by the inverse-trig family (asin/acos/atan, 28.14-28.16).
+
+
+def _fp_arctan_series(z: int, unity: int) -> int:
+    """``arctan(z/unity)`` scaled by ``unity``, for ``0 <= z <= unity``, as an int.
+
+    The general-argument, alternating sibling of ``_fp_atanh_series`` (all-plus) and
+    of ``_arctan_inv`` (unit-fraction argument). The bare Gregory series
+    ``z - z**3/3 + z**5/5 - ...`` converges slowly as the argument nears 1, so ONE
+    half-angle reduction ``arctan(z) == 2*arctan(z / (1 + sqrt(1 + z**2)))`` first
+    pulls any argument in ``[0, 1]`` down to ``<= sqrt(2)-1`` (~0.414) for fast
+    convergence, and the result is doubled back. ``z`` must be NON-NEGATIVE (the
+    integer recurrence floors toward -inf); arctan is odd, so callers fold the sign
+    off first. Shared by the inverse-trig family (asin/acos/atan, 28.14-28.16).
+    """
+    root = math.isqrt((unity + z * z // unity) * unity)  # sqrt(1 + (z/unity)**2) * unity
+    z = z * unity // (unity + root)  # the half-angle argument, now <= ~0.414 * unity
+    z_sq = z * z
+    term = z
+    total = z
+    k = 1
+    while term != 0:
+        term = term * z_sq // (unity * unity)
+        total += -(term // (2 * k + 1)) if k % 2 else term // (2 * k + 1)
+        k += 1
+    return 2 * total
+
+
+def _fp_asin(mantissa: int, decimals: int) -> int:
+    """Arcsine of ``x == mantissa/10**decimals`` for ``0 < mantissa <= 10**decimals``
+    (so ``0 < x <= 1``), as a scaled-int mantissa at ``decimals`` (28.14).
+
+    ``asin(x) == atan(x / sqrt(1 - x**2))`` — the plain arcsine series converges
+    badly near ``x == 1``, so route through arctan instead, reusing the integer
+    sqrt and the arctan series. The arctan argument ``u == x/sqrt(1-x**2)`` exceeds
+    1 once ``x > 1/sqrt(2)``, beyond the series' domain, so reduce it there with
+    ``atan(u) == pi/2 - atan(1/u)`` (and ``1/u == sqrt(1-x**2)/x <= 1``). Computed at
+    ``decimals + _PI_GUARD`` guard digits, then rounded half-to-even back; the caller
+    folds the sign (asin is odd) and handles the exact ``asin(0) = 0``.
+    """
+    working = decimals + _PI_GUARD
+    unity = 10**working
+    x = mantissa * 10 ** (working - decimals)  # |x| scaled, in (0, unity]
+    root = math.isqrt((unity - x * x // unity) * unity)  # sqrt(1 - x**2) scaled, in [0, unity)
+    if x <= root:  # |x| <= 1/sqrt(2): the arctan argument u = x/sqrt(1-x**2) is <= 1
+        atan = _fp_arctan_series(x * unity // root, unity)
+    else:  # u > 1 (root may be 0 at x = 1): asin(x) = pi/2 - arctan(1/u)
+        atan = _pi_scaled(working) // 2 - _fp_arctan_series(root * unity // x, unity)
+    out, _ = _fp_quantize(atan, 10 ** (working - decimals), 0)
+    return out
+
+
 # --- internal high-precision natural log (28.17) ------------------------------
 # The log family's analogue of the trig family above: where sin/cos range-reduce
 # mod 2*pi and sum a Taylor series, log range-reduces in base 10 and sums an
@@ -1724,6 +1781,51 @@ class Value:
                 # cot == cos/sin; the unity scale cancels, so quantize the bare ratio.
                 mantissa, _ = _fp_quantize(cos_total * 10**fp.decimals, sin_total, 0)
                 return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def asin(self) -> "Value":
+        """Arcsine, result in radians within [-pi/2, pi/2] (28.14) — transcendental,
+        so inexact except the trivial asin(0) = 0. DOMAIN-RESTRICTED to |x| <= 1: an
+        argument outside [-1, 1] has no real arcsine and raises NotRepresentableError
+        in every mode (the domain refusal mirrors sqrt's on a negative operand).
+
+        fixed-point: SUPPORTED. ``asin(x) == atan(x / sqrt(1 - x**2))`` — the plain
+            arcsine series converges badly near |x| = 1, so it routes through an
+            internal Machin-family arctan series (the unit-fraction ``_arctan_inv``
+            behind pi, lifted to a general argument, with one half-angle reduction
+            for fast convergence) reusing the fixed-point sqrt, at the operand's
+            scale plus guard digits and rounded half-to-even back. Always inexact
+            except asin(0) = 0, which is exact.
+        floating-point: math.asin; unconditionally inexact.
+        rational: asin of a rational is irrational except asin(0) = 0; an in-domain
+            non-zero argument therefore raises NotRepresentableError, the same
+            exact-or-refuse stance as sqrt/sin.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if abs(self.payload) > 1:
+                    raise NotRepresentableError("arcsine argument outside the domain [-1, 1]")
+                return Value(Mode.FLOATING_POINT, math.asin(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if abs(self.payload) > 1:
+                    raise NotRepresentableError("arcsine argument outside the domain [-1, 1]")
+                if self.payload == 0:  # asin(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("arcsine of a non-zero rational is irrational")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if abs(fp.mantissa) > 10**fp.decimals:  # |x| > 1 -> outside the domain
+                    raise NotRepresentableError("arcsine argument outside the domain [-1, 1]")
+                if fp.mantissa == 0:  # asin(0) = 0, the only exact fixed-point case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                sign = -1 if fp.mantissa < 0 else 1  # asin is odd; compute on |x|
+                magnitude = _fp_asin(abs(fp.mantissa), fp.decimals)
+                result = FixedPoint(sign * magnitude, fp.decimals)
+                return Value(Mode.FIXED_POINT, result, exact=False)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

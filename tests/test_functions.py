@@ -652,6 +652,79 @@ def test_cot_refuses_a_non_zero_rational_with_a_line_tagged_error():
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # asin(0) = 0 is the one exact case in every mode (transcendental otherwise).
+        ("asin(0)", None, "0 (exact)"),
+        ("asin(0)", "rational", "0 (exact)"),
+        ("asin(0)", "floating-point", "0.0 (inexact)"),
+        # binary64 uses math.asin and is unconditionally inexact; asin(1) = pi/2.
+        ("asin(1)", "floating-point", "1.5707963267948966 (inexact)"),
+        ("asin(0.5)", "floating-point", "0.5235987755982989 (inexact)"),
+        # asin is odd — a negative argument negates the result (the sign-fold).
+        ("asin(-0.5)", "floating-point", "-0.5235987755982989 (inexact)"),
+        # Fixed-point routes through the arctan series and flags inexact; asin(1) =
+        # pi/2 ~ 1.5708 rounds to 2 at scale 0 (nearest whole number).
+        (
+            "asin(1)",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 1.5708)",
+        ),
+        # asin(1/2) = pi/6; the inexact result carries the precision-offer hint.
+        (
+            "asin(0.500000)",
+            None,
+            "0.523599 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 0.5235987756)",
+        ),
+        # Negative argument (asin is odd) — exercises the fixed-point sign-fold.
+        (
+            "asin(-0.500000)",
+            None,
+            "-0.523599 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → -0.5235987756)",
+        ),
+        # |x| > 1/sqrt(2): the arctan argument exceeds 1, so asin reduces via
+        # pi/2 - atan(1/u). asin(sqrt(3)/2) ~ pi/3 (0.866025 is just shy of it).
+        (
+            "asin(0.866025)",
+            None,
+            "1.047197 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.0471967436)",
+        ),
+        # The domain endpoint asin(1) = pi/2 at a non-zero scale (root = 0 path).
+        (
+            "asin(1.000000)",
+            None,
+            "1.570796 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.5707963268)",
+        ),
+    ],
+)
+def test_asin(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [None, "floating-point", "rational"],
+)
+def test_asin_refuses_outside_the_domain_with_a_line_tagged_error(mode):
+    # |x| > 1 has no real arcsine: every mode refuses with the same domain message.
+    payload = _calc("asin(2)", mode)
+    assert payload["error"] == "arcsine argument outside the domain [-1, 1]"
+    assert payload["value"] is None
+
+
+def test_asin_refuses_a_non_zero_rational_with_a_line_tagged_error():
+    # In-domain but irrational: a non-zero rational arcsine refuses (exact-or-refuse).
+    payload = _calc("asin(0.5)", "rational")
+    assert payload["error"] == "arcsine of a non-zero rational is irrational"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # log(1) = 0 is the one exact case in every mode (transcendental otherwise);
         # `ln` is the alias, so ln(1) matches.
         ("log(1)", None, "0 (exact)"),

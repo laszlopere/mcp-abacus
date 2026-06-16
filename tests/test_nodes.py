@@ -145,6 +145,7 @@ def test_function_arities_match_the_registry():
         "cos": (1, 1),
         "tan": (1, 1),
         "cot": (1, 1),
+        "asin": (1, 1),
         "log": (1, 1),
         "ln": (1, 1),
         "log10": (1, 1),

@@ -79,6 +79,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "cos": Value.cos,  # 28.11 — sin's machinery; even Taylor series, else inexact/refuse
     "tan": Value.tan,  # 28.12 — sin/cos; fixed-point divides the two series, else inexact/refuse
     "cot": Value.cot,  # 28.13 — cos/sin; mirror of tan, undefined where sin = 0, else inexact
+    "asin": Value.asin,  # 28.14 — arcsine; atan(x/sqrt(1-x^2)), domain |x|<=1, else inexact/refuse
     "log": Value.log,  # 28.17 — NATURAL log; base-10 reduce + atanh series, else inexact/refuse
     "ln": Value.log,  # 28.17 — alias of log (the canonical natural-log spelling)
     "log10": Value.log10,  # 28.18 — base-10 log; ln(x)/ln(10), exact on powers of ten
@@ -123,6 +124,7 @@ FUNCTION_HELP: dict[str, str] = {
     "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",
     "tan": "tangent, radians; inexact except tan(0)=0, undefined at odd multiples of pi/2",
     "cot": "cotangent, radians; always inexact, undefined at multiples of pi (incl. 0)",
+    "asin": "arcsine, radians in [-pi/2, pi/2]; domain |x|<=1, inexact except asin(0)=0",
     "log": "natural log, base e; inexact except log(1)=0, refuses x<=0",
     "ln": "natural log; alias of log",
     "log10": "base-10 log; exact on powers of ten, inexact otherwise, refuses x<=0",
