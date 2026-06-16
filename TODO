@@ -1600,6 +1600,20 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      asked for this mode — then learns precisely what went inexact,
                      by how much, and where, rather than a bare failure.
 
+    [ ] 35.3.  INEXACT ABORT MESSAGES — tested in tests/test_inexact_fixed_point.py.
+        [ ] 35.3.1.  The first part should always look the same: "Inexact
+                     calculation in line X: 1.00 / 3.00 = 1.33 is not exact."
+                     The numbers are NOT lexemes, they are the VALUES: the user
+                     may have written 1 / 3, but we show 1.00 and 3.00 with the
+                     active precision.
+        [ ] 35.3.2.  The second part of the message: a new line, the first hint
+                     " - Pass inexact_handling='xxx' to enable inexact
+                     calculations."
+        [ ] 35.3.3.  The error hint, only if we know the error: " - The error
+                     was xxxxx, maybe raising min_precision..."
+        [ ] 35.3.4.  If we know the given function can't be precisely calculated:
+                     " - The sin(x) function can not be exactly calculated."
+
 
 [ ] 36.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
          partially served by fixed-point already, but the NAMED error classes are
