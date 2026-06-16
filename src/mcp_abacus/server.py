@@ -36,6 +36,12 @@ from mcp_abacus.solver import (
 
 mcp = FastMCP("mcp-abacus")
 
+# The fixed-point decimal floor applied when the caller leaves
+# min_fixed_point_precision unset (39.1): plain decimals then compute as decimals
+# out of the box (1/3 -> 0.333333333), instead of the bare-integer floor a 0 default
+# gives. 9 covers everyday money/ratio work; ERC-20-scale callers still pass 18.
+DEFAULT_FIXED_POINT_PRECISION = 9
+
 
 @mcp.tool()
 def info() -> dict:
@@ -86,13 +92,21 @@ def _annotate(
     "(inexact)" gets no steer — the argument is invalid there and float is the
     wrong direction.
 
-    The steer is shown ONLY when no floor is in effect for this rendering
-    (``floor_given is None``). Once a floor is engaged — the caller passed
-    min_fixed_point_precision, or this is the offered_precision what-if which is a
-    floor by definition — the caller already knows the knob, so repeating "pass
-    min_fixed_point_precision for more" is noise; the verdict shrinks to
-    "(inexact, rounded to N decimals)". This mirrors the offered_precision field,
-    which is likewise suppressed once a floor is given.
+    ``floor_given`` is the caller's RAW min_fixed_point_precision argument — the
+    "did the caller engage the precision knob" signal — NOT the effective floor the
+    value was computed at. When the caller passes nothing the value still floors at
+    DEFAULT_FIXED_POINT_PRECISION (39.1), but ``floor_given`` stays None, and that
+    None is what gates the steer. So pass the RAW argument here, never the resolved
+    floor: handing this the default (9) would read as "knob engaged" and wrongly
+    suppress the nudge (39.2 keeps nudging the unaware caller past the default).
+
+    The steer is shown ONLY when the caller engaged no floor (``floor_given is
+    None``). Once a floor is engaged — the caller passed min_fixed_point_precision
+    (any value, including the default 9 explicitly, or 0), or this is the
+    offered_precision what-if which is a floor by definition — the caller already
+    knows the knob, so repeating "pass min_fixed_point_precision for more" is noise;
+    the verdict shrinks to "(inexact, rounded to N decimals)". This mirrors the
+    offered_precision field, which is likewise suppressed once a floor is given.
 
     When an ``offer`` (the offered_precision what-if, 25.3.3/27) was computed the
     steer carries a concrete worked example inline — "e.g. =K → 395883.8247" — so
@@ -133,11 +147,18 @@ def _offered_precision(
     structured ``offered_precision`` field (annotated value + hex dump, 27.3-27.5)
     and into the inline worked example in the top-level value string (27.6). Gated
     to the one case the argument helps — fixed-point mode, an inexact result, and
-    the caller did NOT already pass min_fixed_point_precision (None, not 0; an
-    explicit floor means they have already engaged the knob, so no nudge). Re-
-    evaluating is safe and cannot newly fail: a higher scale only pads decimals, so
-    an expression that already evaluated keeps evaluating (18.5 lets the node be
-    re-run).
+    the caller did NOT already pass min_fixed_point_precision (``floor_given`` is the
+    RAW argument: None, not 0; an explicit floor — even the default 9 spelled out —
+    means they have already engaged the knob, so no nudge). Re-evaluating is safe and
+    cannot newly fail: a higher scale only pads decimals, so an expression that
+    already evaluated keeps evaluating (18.5 lets the node be re-run).
+
+    The bump rides on the result's ACTUAL scale, not a fixed constant: the offered
+    floor is ``precision + _OFFERED_BUMP``. With the default floor at
+    DEFAULT_FIXED_POINT_PRECISION (39.1) an unfloored inexact result already carries
+    at least that many decimals, so the offer always lands strictly PAST the default
+    (e.g. 9 -> 13), never below it (39.2) — it reveals more digits than the caller
+    already has, never restates them.
 
     Returns None when a gate fails, or when the extra precision does not actually
     change the value (the "27.0000" case — every revealed digit is zero), so an
@@ -187,6 +208,19 @@ def _resolve_mode_and_precision(
     return selected, None
 
 
+def _resolve_floor(min_fixed_point_precision: int | None) -> int:
+    """Resolve the fixed-point decimal scale floor, shared by every tool (31.3, 39.1).
+
+    An unset (None) min_fixed_point_precision floors at DEFAULT_FIXED_POINT_PRECISION;
+    any explicit value — including 0, to opt back into integer arithmetic — is honoured
+    verbatim. Validation (non-negative, fixed-point only) has already run in
+    ``_resolve_mode_and_precision``; this only fills in the default.
+    """
+    if min_fixed_point_precision is None:
+        return DEFAULT_FIXED_POINT_PRECISION
+    return min_fixed_point_precision
+
+
 def _resolve_inexact_handling(name: str) -> tuple[InexactHandling | None, str | None]:
     """Resolve the calculate `inexact_handling` argument (35.2), shared error shape.
 
@@ -228,7 +262,7 @@ def _evaluate_request(
     try:
         node = parser.parse(expression)
         value = node.evaluate(
-            selected, min_fixed_point_precision or 0, inexact_handling=inexact_handling
+            selected, _resolve_floor(min_fixed_point_precision), inexact_handling=inexact_handling
         )
     except (LexError, ParseError, EvalError) as exc:
         # The message stands on its own (no machine-style "error (line N):" prefix);
@@ -503,7 +537,7 @@ def solver(
         node = parser.parse(expression)
     except (LexError, ParseError) as exc:
         return _solver_error(exc.message)
-    floor = min_fixed_point_precision or 0
+    floor = _resolve_floor(min_fixed_point_precision)
     try:
         for name, lo, hi in unknowns:
             validate_bracket(lo, hi)
