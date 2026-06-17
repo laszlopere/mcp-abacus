@@ -248,6 +248,26 @@ def test_initialize_handshake_identifies_the_server():
     ]
 
 
+def test_initialize_carries_server_instructions_over_the_wire():
+    # TODO 41.3: the server provides an MCP-level `instructions` string, so a client
+    # gets a server overview (the mental model: type-faithful modes + precision
+    # verdict) from the initialize handshake, not only from per-tool docstrings.
+    async def go():
+        async with stdio_client(SERVER) as (read, write):
+            async with ClientSession(read, write) as session:
+                return await session.initialize()
+
+    instructions = asyncio.run(go()).instructions
+    assert instructions  # present and non-empty
+    # The overview names the three modes and the precision-verdict contract.
+    for mode in ("fixed-point", "floating-point", "rational"):
+        assert mode in instructions
+    assert "precision verdict" in instructions
+    # ...and the five tools the server exposes.
+    for tool in ("calculate", "analyze", "solver", "help", "info"):
+        assert tool in instructions
+
+
 def test_calculate_is_advertised_with_optional_mode_over_the_wire():
     async def go():
         async with _client() as session:
@@ -281,6 +301,38 @@ def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
         assert not undocumented, f"{name} has parameters with no schema description: {undocumented}"
     # `info` takes no arguments, so it has nothing to document.
     assert tools["info"].inputSchema.get("properties", {}) == {}
+
+
+def test_calculate_description_points_to_its_sibling_tools_over_the_wire():
+    # TODO 41.5: calculate's description must steer the model to the right tool —
+    # `analyze` to see WHERE an answer rounded, `solver` to find an unknown — so the
+    # cross-references are no longer one-directional. Asserted on the wire.
+    async def go():
+        async with _client() as session:
+            return await session.list_tools()
+
+    description = {t.name: t for t in asyncio.run(go()).tools}["calculate"].description
+    assert "analyze" in description and "solver" in description
+    assert "Use `calculate`" in description  # the explicit when-to-use guidance
+
+
+def test_solver_param_descriptions_encode_the_single_vs_multiple_coupling():
+    # TODO 41.6: the schema shows variable/lower/upper and variables as independent
+    # optionals (no oneOf), so the "give exactly one form" coupling must live in the
+    # per-parameter descriptions. Asserted on the wire for both forms' anchors.
+    async def go():
+        async with _client() as session:
+            return await session.list_tools()
+
+    props = {t.name: t for t in asyncio.run(go()).tools}["solver"].inputSchema["properties"]
+    variable_desc = props["variable"]["description"]
+    variables_desc = props["variables"]["description"]
+    # Each anchor names the OTHER form and states the exactly-one rule.
+    assert "variables" in variable_desc and "EXACTLY ONE" in variable_desc
+    assert "variable" in variables_desc and "EXACTLY ONE" in variables_desc
+    # The bracket bounds tie themselves to the single-form trio.
+    assert "variables" in props["lower"]["description"]
+    assert "variables" in props["upper"]["description"]
 
 
 def test_help_section_is_advertised_as_an_enum_over_the_wire():

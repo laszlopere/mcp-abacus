@@ -36,7 +36,25 @@ from mcp_abacus.solver import (
     validate_unknown,
 )
 
-mcp = FastMCP("mcp-abacus")
+mcp = FastMCP(
+    "mcp-abacus",
+    instructions=(
+        "A calculator for language models: type-faithful arithmetic you can trust "
+        "and reason about. Pick a numeric type/mode and the WHOLE expression "
+        "behaves exactly as that type would in real code -- it rounds where the "
+        "type rounds and stays exact where the type is exact. Modes: fixed-point "
+        "(default; exact scaled integer, money / ERC-20-safe), floating-point "
+        "(IEEE-754 double; aliases float64, double), and rational (exact "
+        "numerator/denominator). Every answer is labelled with its own precision "
+        "verdict (exact vs inexact, rounded to N decimals), so a result that "
+        "merely looks precise can never be mistaken for the true value. Tools: "
+        "`calculate` evaluates an expression; `analyze` returns the parse tree "
+        "with each node's value, showing WHERE an answer rounded or overflowed; "
+        "`solver` finds the variable value(s) driving an expression to a root or "
+        "extremum; `help` serves the grammar/type reference; `info` reports "
+        "version and environment. Offline and deterministic."
+    ),
+)
 
 
 @mcp.tool()
@@ -368,6 +386,12 @@ def calculate(
 ) -> dict:
     """Evaluate an expression (or short program) in one numeric type; return value + precision.
 
+    Use `calculate` when you want the VALUE of an expression. To instead see WHERE a
+    surprising answer rounded or overflowed — the per-node parse tree with each
+    sub-result — use `analyze`; to find the variable value(s) that drive an
+    expression to a root or extremum, use `solver`. All three share this expression
+    language and `mode`/`min_fixed_point_precision` arguments.
+
     `mode` is the numeric type the WHOLE calculation runs in — every intermediate
     result behaves exactly as that type would, so float rounding, fixed-point
     scale, and rational exactness each show through. Modes:
@@ -601,8 +625,9 @@ def solver(
         str | None,
         Field(
             description=(
-                "SINGLE-unknown form: name of the one variable to search for. Use "
-                "with `lower`+`upper`; mutually exclusive with `variables`."
+                "SINGLE-unknown form: name of the one variable to search for, used "
+                "together with `lower`+`upper`. Give EXACTLY ONE input form: this "
+                "trio, OR `variables` (never both, never neither)."
             )
         ),
     ] = None,
@@ -611,7 +636,8 @@ def solver(
         Field(
             description=(
                 "SINGLE form: lower bound of the search bracket for `variable` "
-                "(must be below `upper`)."
+                "(must be below `upper`). Part of the variable+lower+upper trio; "
+                "leave unset when using the `variables` form."
             )
         ),
     ] = None,
@@ -620,7 +646,8 @@ def solver(
         Field(
             description=(
                 "SINGLE form: upper bound of the search bracket for `variable` "
-                "(must be above `lower`)."
+                "(must be above `lower`). Part of the variable+lower+upper trio; "
+                "leave unset when using the `variables` form."
             )
         ),
     ] = None,
@@ -629,9 +656,9 @@ def solver(
         Field(
             description=(
                 "MULTIPLE-unknown form: dict mapping each unknown name to its "
-                '[lower, upper] bracket, e.g. {"x": [0, 5], "y": [-4, 2]}. '
-                "Requires algorithm='nelder-mead'; mutually exclusive with "
-                "variable/lower/upper."
+                '[lower, upper] bracket, e.g. {"x": [0, 5], "y": [-4, 2]}; '
+                "requires algorithm='nelder-mead'. Give EXACTLY ONE input form: "
+                "this, OR `variable`+`lower`+`upper` (never both, never neither)."
             )
         ),
     ] = None,
