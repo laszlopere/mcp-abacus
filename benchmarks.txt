@@ -196,12 +196,6 @@
     rounding function, so I computed 40 decimals and read off the digits by hand
     to get the …799 → …800 wei result. In fixed-point mode these would make
     on-chain integer math exact and one-shot. High value given your crypto bent.
-  - degrees(x) / radians(x) — every trig problem (shadow, roof, ladder) ended in
-    * 180 / pi(). I did this 4+ times. A dedicated pair is cleaner and less
-      error-prone.
-  - exp(x) — the natural partner to ln. The coffee-cooling problem is e^(−kt); I
-    only avoided exp by algebraically rearranging into ln. pow(e(), x) works but
-    exp is the idiomatic form.
   - Sample stddev / variance (or a sample=true variant) — stddev is
     population-only, so for the 4·8·15·16·23·42 set I had to multiply by
     sqrt(n/(n−1)) by hand to get the n−1 version. Both conventions are needed
@@ -209,14 +203,6 @@
   - hypot(x, …) (Euclidean norm) — the ladder, rafter, and café-distance
     problems all reduce to √(Σ squares). A hypot avoids spelling out sqrt(a**2 +
     b**2) and is numerically safer.
-
-  Tier 2 — conspicuous math gaps
-
-  - log(x, base) — general logarithm; right now only ln and log10 exist.
-  - atan2(y, x) — correct-quadrant angle; atan alone can't disambiguate.
-  - Hyperbolics — sinh, cosh, tanh and inverses (catenaries, physics).
-  - Combinatorics — factorial/gamma, comb(n, k), perm(n, k).
-  - Integer helpers — gcd, lcm, sign.
 
   Tier 3 — solver / analysis upgrades (bigger lifts, high leverage)
 
@@ -236,7 +222,5 @@
   - Finance: npv, irr, fv, pv, pmt — the loan/compound-interest and (implicitly)
     the ad-ROI problems are exactly these. Given how much finance/crypto flows
     through this tool, a small finance pack would punch above its weight.
-  - Stats extras: percentile/quantile, correlation, covariance,
-    geometric/harmonic mean.
 
 

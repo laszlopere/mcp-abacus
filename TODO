@@ -1773,5 +1773,111 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 [ ] 40.  TIER 2 FUNCTIONS
     [ ] 40.1.  atan2(y, x) — correct-quadrant angle; atan alone can't
                disambiguate.
+    [ ] 40.2.  sinh, cosh, tanh — the hyperbolic functions, each a UNARY
+               operand-method (the sqrt/sin/exp shape). All reduce to exp
+               (28.27): sinh(x) = (e**x - e**-x)/2, cosh(x) = (e**x + e**-x)/2,
+               tanh(x) = (e**(2x) - 1)/(e**(2x) + 1). Transcendental, so the
+               exp/log per-mode stance: float inexact; fixed-point inexact via
+               the exp core except the exact landmarks (sinh(0)=0, cosh(0)=1,
+               tanh(0)=0); rational refuses non-zero (exp of a non-zero rational
+               is transcendental).
+    [ ] 40.3.  asinh, acosh, atanh — the inverse hyperbolics, UNARY, each
+               reducing to log/sqrt (28.17/19.5.2): asinh(x) = ln(x +
+               sqrt(x**2 + 1)), all reals; acosh(x) = ln(x + sqrt(x**2 - 1)),
+               DOMAIN x >= 1 (else refuse, like sqrt's negative); atanh(x) =
+               ln((1 + x)/(1 - x))/2, DOMAIN |x| < 1 (x = +/-1 is +/-inf). NB the
+               internal _fp_atanh_series already exists (ln's core, 28.17.1) —
+               the public atanh goes through ln, it does NOT re-expose the series.
+               Transcendental: inexact except the zero landmarks, rational
+               refuses non-zero.
+    [ ] 40.4.  factorial(n) / gamma(x) — UNARY. factorial is n! for a
+               NON-NEGATIVE INTEGER n, EXACT in every mode (a product of
+               integers, no rounding); a negative or non-integer operand is the
+               gamma extension n! = gamma(n+1), transcendental — float/fixed-point
+               inexact, rational refuses (like exp). gamma(x) is the continuous
+               form with POLES at zero and the negative integers (refuse there in
+               every mode). DECIDE whether to ship both names or just factorial
+               with a gamma fallback; the exact integer path is the common case
+               (combinatorics, below).
+    [ ] 40.5.  comb(n, k) — binomial coefficient n!/(k!(n-k)!), the BINARY
+               fixed-arity-2 shape (pow/atan2, 28.20/40.1). EXACT for integer
+               n >= k >= 0 in every mode (cancel to an integer; compute the
+               product form, not three factorials); k < 0 or k > n is 0. A
+               non-integer argument is the gamma-generalized coefficient
+               (inexact/refuse, per 40.4).
+    [ ] 40.6.  perm(n, k) — falling factorial n!/(n-k)! (k-permutations of n),
+               BINARY fixed-arity 2 like comb. EXACT for integer n >= k >= 0
+               (a product of k consecutive integers); k < 0 or k > n is 0.
+               Non-integer arguments go through gamma (inexact/refuse, per 40.4).
+    [ ] 40.7.  gcd(...) — greatest common divisor, VARIADIC (the sum/max shape,
+               math.gcd), EXACT in every mode (pure integer math, no rounding).
+               DOMAIN integer-valued operands only — a non-integer (fixed-point
+               with a fractional part, rational with denominator != 1, a float
+               that is not whole) refuses, the exact-or-refuse stance. Sign is
+               dropped (gcd works on magnitudes); gcd(0, 0) = 0.
+    [ ] 40.8.  lcm(...) — least common multiple, VARIADIC like gcd, EXACT in
+               every mode via lcm(a, b) = |a*b| / gcd(a, b) folded across the
+               operands. Same integer-only DOMAIN and refusal as gcd; any zero
+               operand makes lcm 0.
+    [ ] 40.9.  sign(x) — signum, UNARY: -1, 0, or +1 by the operand's sign.
+               EXACT in every mode (a comparison to zero, not arithmetic, so it
+               works on ANY value, integer or not — unlike gcd/lcm). Result type
+               follows the mode (the fixed-point/rational/float spelling of the
+               three values). DECIDE whether an inexact operand yields an exact
+               sign (the classification is certain) or carries the flag like abs.
+    [ ] 40.10. log(x, base) — general logarithm log(x)/log(base), the TWO-ARG
+               form flagged in the 28.17-28.19 naming note (today only the unary
+               natural log and log10/log2 exist). Reuses the _fp_ln core (28.17.1)
+               for both x and the base; exact only where the quotient lands on the
+               grid (e.g. log(8, 2) = 3, log(1, base) = 0), else inexact, rational
+               refuses, and base <= 0 or base = 1 refuses alongside x <= 0.
+               DESIGN: this OVERLOADS the existing unary `log` to arity (1, 2) —
+               log(x) stays natural log, log(x, base) takes the base. The current
+               _arity_of (22.2) counts every positional param as required, so it
+               cannot express (1, 2) from a `def log(self, base=None)` default;
+               either teach _arity_of to honour defaults (POSITIONAL_OR_KEYWORD
+               with a default -> optional) or special-case the registry. Settle
+               that before implementing — it is the one piece here that touches the
+               call machinery, not just a new Value method.
+    [ ] 40.11. degrees(x) / radians(x) — angle unit conversion, each UNARY:
+               degrees(x) = x * 180/pi, radians(x) = x * pi/180 (the trig family
+               is radians-only, 28.10, so these bridge to/from degrees). Both
+               multiply by an irrational (pi), so the per-pi stance: float inexact;
+               fixed-point inexact via the _pi_scaled core (29.3) except the
+               trivial degrees(0) = radians(0) = 0; rational refuses non-zero (pi
+               has no rational value). NB this is unit scaling, NOT a trig function
+               — no domain limit, every real converts.
+    [ ] 40.12. percentile(p, ...) / quantile(q, ...) — the value at rank p (0-100)
+               or q (0-1) of the operands, the order-statistic generalization of
+               median (28.7, which is the 50th percentile). A leading point arg +
+               the data set: arity (2, None) (the point plus >= 1 datum). EXACT
+               when the rank lands on a datum (like median's odd case); otherwise
+               INTERPOLATED between the two nearest (linear, the common default),
+               so it may round in fixed-point / be inexact in float, and rational
+               stays exact (rational interpolation is a Fraction). DECIDE the
+               interpolation convention and whether percentile and quantile are one
+               core under two scalings.
+    [ ] 40.13. covariance — population covariance mean((x-mx)*(y-my)) over PAIRED
+               series x and y. Follows variance's stance (28.8): no sqrt, so EXACT
+               in rational, may round in fixed-point/float. BLOCKER: needs TWO
+               vectors, which the current flat-variadic call shape cannot express
+               (a single operand list, cf. the multi-residual gap noted at 33.7/
+               33.8). Settle a paired/multi-vector call shape FIRST (interleaved
+               pairs, or a real list type); until then this and 40.14 cannot land.
+    [ ] 40.14. correlation — Pearson r = cov(x, y)/(stddev(x)*stddev(y)), range
+               [-1, 1], over PAIRED series. Inherits stddev's sqrt (28.9): always
+               inexact in float/fixed-point, rational refuses (irrational root).
+               Same two-vector BLOCKER as covariance (40.13) — depends on the same
+               call-shape decision.
+    [ ] 40.15. geometric mean — geomean(...) = (x1*x2*...*xn)**(1/n), the n-th root
+               of the product, VARIADIC (the avg shape). DOMAIN non-negative
+               operands (a negative makes an even root complex — refuse, like
+               sqrt). Irrational in general: inexact in float/fixed-point (via the
+               exp/log core or _iroot, 28.20.1/28.27), rational exact ONLY for a
+               perfect n-th power. geomean(0, ...) = 0.
+    [ ] 40.16. harmonic mean — harmean(...) = n / sum(1/xi), VARIADIC. DOMAIN
+               positive operands (a zero makes a term undefined — ZeroDivisionError;
+               mixed signs are ill-defined, refuse). No sqrt, so it follows avg's
+               division stance: EXACT in rational, may round in fixed-point/float.
 
 
