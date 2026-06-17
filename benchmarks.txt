@@ -1,0 +1,151 @@
+
+1 AI Abacus usage issues.
+  1. First attempt (failed — pi isn't a built-in constant):
+  mode: floating-point
+  expression:
+    r = (500/(2*pi))**(1/3)
+    h = 500/(pi*r**2)
+    area = 2*pi*r**2 + 2*pi*r*h
+    r
+    h
+    area
+  → error: undefined variable: pi
+
+  2. Retry with pi as a literal — gave the surface area:
+  mode: floating-point
+  expression:
+    p = 3.141592653589793
+    r = (500/(2*p))**(1/3)
+    h = 500/(p*r**2)
+    area = 2*p*r**2 + 2*p*r*h
+    r
+    h
+    area
+
+
+2  Mathematical problems.
+   In this session the mcp-abacus should be used to do all the calculations.
+   Show me what calls you made to answer this question.
+
+   I put €1,000 in a savings account earning 5% a year, compounded annually.
+   How many years until it doubles to €2,000?
+
+   My candle business has €450 of fixed monthly costs and each candle costs €3
+   to make but sells for €12. How many candles must I sell each month to break
+   even?
+
+   I have 40 metres of fencing to make a rectangular vegetable patch against my
+   house wall (only three sides need fencing). What width gives me the biggest
+   area?
+
+   I want a cylindrical tin can to hold exactly 500 ml. What radius uses the
+   least metal?
+
+   A closed cylindrical drum must hold 100 litres. What radius and height
+   minimize the metal used?
+
+   I walk east at 5 km/h from a point; my friend walks north at 4 km/h from 10
+   km east of me. When are we closest, and how close?
+
+   My orchard yields about 50*t - 5*t**2 crates if I wait t weeks (fruit grows
+   then rots). When is the yield highest?
+
+   I have €1,000 for social and search ads. Reach is roughly 80*sqrt(s) +
+   60*sqrt(g), but I want to penalize blowing the budget. How should I split the
+   spend?
+
+   One friend is at (2, 9) and another at (10, 1) on the map. We want a café
+   that minimizes the longer of our two travel distances squared, roughly the
+   sum of squared distances. Where?
+
+   A Uniswap V2 pool holds 1,500.000000000000000000 ETH and
+   4,200,000.000000000000000000 USDC. With the 0.3% swap fee, exactly how much
+   ETH must I sell to receive 100,000.000000000000000000 USDC out — to the full
+   18 decimals?
+
+   What's 0.1 + 0.2 in IEEE-754 double — show me the rounding error.
+
+   What's sqrt(2) * sqrt(2) in floating-point vs rational?
+
+   Solve x**2 - 2 = 0 for x between 1 and 2.
+
+   Find x and y that minimize (x-1)**2 + (y+2)**2, x in [0,5], y in [-4,2].
+
+   At what price does demand 100 - 2*p equal supply 20 + 3*p?
+
+   What interest rate makes a €1,000 loan repaid as €1,200 after 4 years?
+
+   What production level q minimizes my average cost q**2 - 10*q + 40?
+
+   A 2 m pole casts a shadow. At what sun elevation angle is the shadow exactly
+   3 m long?
+
+   My 8 m rafter needs the roof peak to be 2.5 m above the wall plate. What
+   pitch angle does that require?
+
+   My coffee comes out at about ninety degrees and the kitchen sits at twenty.
+   It cools fast at first and then slows down, the usual way hot drinks do.
+   After 5 minutes it is 82.1 degrees.  Roughly how many minutes before it's
+   down to a drinkable sixty degrees?
+
+   What's the average and standard deviation of 4, 8, 15, 16, 23, 42?
+
+   I've leaned my six-metre ladder against the wall and the feet are about a
+   metre and a half out from the bottom. Roughly what angle is it making with
+   the ground? People say steeper than seventy-five degrees is dodgy.
+
+   What's π to 100 decimal places?
+
+   Give me the value of ln(10) out to 85 digits.
+
+
+
+
+
+  Tier 1 — things I had to work around this session
+
+  These each cost me a manual step or an extra call in problems we actually did:
+
+  - floor / ceil / round / trunc — the biggest gap. The Uniswap getAmountIn
+    answer is literally floor(…) + 1 at wei precision, and abacus has no
+    rounding function, so I computed 40 decimals and read off the digits by hand
+    to get the …799 → …800 wei result. In fixed-point mode these would make
+    on-chain integer math exact and one-shot. High value given your crypto bent.
+  - degrees(x) / radians(x) — every trig problem (shadow, roof, ladder) ended in
+    * 180 / pi(). I did this 4+ times. A dedicated pair is cleaner and less
+      error-prone.
+  - exp(x) — the natural partner to ln. The coffee-cooling problem is e^(−kt); I
+    only avoided exp by algebraically rearranging into ln. pow(e(), x) works but
+    exp is the idiomatic form.
+  - Sample stddev / variance (or a sample=true variant) — stddev is
+    population-only, so for the 4·8·15·16·23·42 set I had to multiply by
+    sqrt(n/(n−1)) by hand to get the n−1 version. Both conventions are needed
+    often enough to be first-class.
+  - hypot(x, …) (Euclidean norm) — the ladder, rafter, and café-distance
+    problems all reduce to √(Σ squares). A hypot avoids spelling out sqrt(a**2 +
+    b**2) and is numerically safer.
+
+  Tier 2 — conspicuous math gaps
+
+  - log(x, base) — general logarithm; right now only ln and log10 exist.
+  - atan2(y, x) — correct-quadrant angle; atan alone can't disambiguate.
+  - Hyperbolics — sinh, cosh, tanh and inverses (catenaries, physics).
+  - Combinatorics — factorial/gamma, comb(n, k), perm(n, k).
+  - Integer helpers — gcd, lcm, sign.
+
+  Tier 3 — solver / analysis upgrades (bigger lifts, high leverage)
+
+  - Numerical derivative diff(expr, var, at) — I kept reasoning "set the derivative to zero" by hand (avg-cost
+  minimum, MC = AC). Exposing this would let the solver find optima analytically and verify them.
+  - Definite integral integral(expr, var, a, b) — accumulation/area; a natural complement to the root/optimum solver.
+  - Native solver constraints (equality + inequality) — the €1,000 ad-budget problem forced me to hand-roll a
+  −50*max(0, s+g−1000)² penalty. A real subject_to would be cleaner and less hacky than tuning penalty weights.
+  - Range summation / product (Σ, Π notation) — sum(i, 1, n, expr) for series and finance.
+
+  Tier 4 — domain packs (optional, fits your usage)
+
+  - Finance: npv, irr, fv, pv, pmt — the loan/compound-interest and (implicitly) the ad-ROI problems are exactly
+  these. Given how much finance/crypto flows through this tool, a small finance pack would punch above its weight.
+  - Stats extras: percentile/quantile, correlation, covariance, geometric/harmonic mean.
+
+
