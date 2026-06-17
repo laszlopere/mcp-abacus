@@ -19,6 +19,7 @@ call as a Code / Result block (the header is what makes it self-describing); und
 
 import asyncio
 import json
+import math
 
 import pytest
 
@@ -512,3 +513,147 @@ def test_irrational_optimum_is_not_snapped():
     found = _num(payload["solution"])
     assert found == pytest.approx(2**0.5, abs=1e-5)
     assert found != 1.0 and found != 1.4
+
+
+# --- BENCHMARKS: classic root-finding and optimisation test problems ----------
+# Named problems from the numerical-methods literature, driven over the same tool
+# seam. The single-variable transcendental roots (Kepler, Dottie, Omega) exercise
+# the 1-D engines on smooth non-polynomial residuals; the 2-D surfaces (Rosenbrock,
+# Himmelblau, Booth, Beale) exercise Nelder-Mead on the optimisation shapes it is
+# usually benchmarked against — a curved valley, a multimodal field, a convex bowl,
+# and a sharp asymmetric basin. Boxes are placed so the LOCAL, derivative-free
+# engines converge to the intended (global) optimum; reference values are abs-1e-3
+# or tighter, with the residual checked to confirm a genuine root / floor.
+
+
+def test_keplers_equation_root():
+    # Kepler's equation E - e*sin(E) = M (orbital mechanics): given eccentricity
+    # e = 0.8 and mean anomaly M = 1 rad, find the eccentric anomaly E. Smooth and
+    # monotone in [0, pi], so golden-section drives |expr| straight to zero.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi]\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi)
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_dottie_number_via_brent():
+    # The Dottie number: the unique real fixed point of cosine, the root of
+    # cos(x) - x. A smooth transcendental root for Brent's parabolic minimiser.
+    program = _annotated(
+        "find-root of cos(x) - x over [0, 1] via Brent (the Dottie number)\n"
+        "the unique real fixed point of cosine; expect x ~ 0.739085",
+        "cos(x) - x",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=1, algorithm="brent-parabolic")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == pytest.approx(0.7390851332151607, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_omega_constant_root():
+    # The omega constant Ω = W(1): the root of x*e^x - 1, where W is the Lambert W
+    # function. Another well-known transcendental constant defined by a root.
+    program = _annotated(
+        "find-root of x*exp(x) - 1 over [0, 1] (the omega constant, W(1))\n"
+        "expect x ~ 0.567143, where x*e^x = 1",
+        "x*exp(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=1)
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(0.5671432904097837, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_rosenbrock_minimum():
+    # Rosenbrock's banana function, the canonical optimisation benchmark: a long
+    # curved valley with the global minimum at (1, 1), value 0. Hard for naive
+    # methods, but Nelder-Mead tracks the valley floor down to the corner.
+    program = _annotated(
+        "find-minimum of Rosenbrock 100*(y - x**2)**2 + (1 - x)**2\n"
+        "over x in [-2, 2], y in [-1, 3]; global minimum at (1, 1), value 0",
+        "100*(y - x**2)**2 + (1 - x)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-2, 2], "y": [-1, 3]},
+        objective="find-minimum",
+        algorithm="nelder-mead",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-3)
+    assert found["y"] == pytest.approx(1.0, abs=1e-3)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_himmelblau_minimum():
+    # Himmelblau's function: a multimodal field with FOUR equal minima of value 0.
+    # The local simplex converges to whichever basin its box brackets — here [0, 5]^2
+    # holds the (3, 2) minimum, and that is the one found.
+    program = _annotated(
+        "find-minimum of Himmelblau (x**2 + y - 11)**2 + (x + y**2 - 7)**2\n"
+        "over x, y in [0, 5]; four equal minima exist, this box holds (3, 2), value 0",
+        "(x**2 + y - 11)**2 + (x + y**2 - 7)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [0, 5]},
+        objective="find-minimum",
+        algorithm="nelder-mead",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(3.0, abs=1e-3)
+    assert found["y"] == pytest.approx(2.0, abs=1e-3)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_booth_minimum():
+    # Booth's function: a smooth convex bowl (two linear forms squared) with a single
+    # minimum at (1, 3), value 0 — equivalently the least-squares solution of the
+    # linear system x + 2y = 7, 2x + y = 5.
+    program = _annotated(
+        "find-minimum of Booth (x + 2*y - 7)**2 + (2*x + y - 5)**2\n"
+        "over x, y in [-5, 5]; single minimum at (1, 3), value 0",
+        "(x + 2*y - 7)**2 + (2*x + y - 5)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-5, 5], "y": [-5, 5]},
+        objective="find-minimum",
+        algorithm="nelder-mead",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-3)
+    assert found["y"] == pytest.approx(3.0, abs=1e-3)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_beale_minimum():
+    # Beale's function: a sharp, asymmetric basin with the global minimum at
+    # (3, 0.5), value 0. The cubic y-term makes it steep, a classic stress test for
+    # derivative-free optimisers.
+    program = _annotated(
+        "find-minimum of Beale (1.5 - x + x*y)**2 + (2.25 - x + x*y**2)**2\n"
+        "+ (2.625 - x + x*y**3)**2 over x in [0, 4.5], y in [-1, 1]\n"
+        "global minimum at (3, 0.5), value 0",
+        "(1.5 - x + x*y)**2 + (2.25 - x + x*y**2)**2 + (2.625 - x + x*y**3)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 4.5], "y": [-1, 1]},
+        objective="find-minimum",
+        algorithm="nelder-mead",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(3.0, abs=1e-3)
+    assert found["y"] == pytest.approx(0.5, abs=1e-3)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
