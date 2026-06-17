@@ -140,6 +140,7 @@ def test_function_arities_match_the_registry():
     assert FUNCTION_ARITIES == {
         "abs": (1, 1),
         "sqrt": (1, 1),
+        "cbrt": (1, 1),
         "pow": (2, 2),  # the only BINARY function — fixed arity 2 (28.20)
         "sin": (1, 1),
         "cos": (1, 1),

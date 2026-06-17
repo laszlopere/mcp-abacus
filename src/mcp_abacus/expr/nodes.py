@@ -74,6 +74,7 @@ _BINARY_FUNCS: dict[str, Callable[[Value, Value], Value]] = {
 _FUNCS: dict[str, Callable[..., Value]] = {
     "abs": Value.abs_,  # 22.4.1 — exact magnitude in every mode (shape of neg())
     "sqrt": Value.sqrt,  # 22.4.2 — irrational, inexact except on the mode's grid
+    "cbrt": Value.cbrt,  # 28.21 — cube root; odd root so negatives OK, inexact except perfect cubes
     "pow": Value.pow,  # 28.20 — binary; the call form of **, reuses Value.pow (fixed-arity 2)
     "sin": Value.sin,  # 28.10 — transcendental; fixed-point Taylor series, else inexact/refuse
     "cos": Value.cos,  # 28.11 — sin's machinery; even Taylor series, else inexact/refuse
@@ -132,6 +133,8 @@ FUNCTION_HELP: dict[str, str] = {
     "abs": "absolute value; exact in every type",
     "sqrt": "square root; refuses negatives, inexact except on the type's grid "
     "(rational needs a perfect square)",
+    "cbrt": "cube root; negatives OK (odd root), inexact except on the type's grid "
+    "(rational needs a perfect cube)",
     "pow": "x to the power y; the call form of the ** operator",
     "sin": "sine, radians; inexact except sin(0)=0, rational refuses non-zero",
     "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",

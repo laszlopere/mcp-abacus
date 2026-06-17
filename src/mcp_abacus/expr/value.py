@@ -1648,6 +1648,62 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def cbrt(self) -> "Value":
+        """Cube root, x**(1/3) (28.21) — the SHAPE of sqrt (19.5.2), inexact except
+        where the root lands exactly on the mode's grid. The ONE difference from
+        sqrt: a cube root is an ODD root, so NEGATIVE inputs are in DOMAIN —
+        cbrt(-8) == -2, real, NOT the NotRepresentableError sqrt raises on negatives.
+
+        fixed-point: SUPPORTED. The integer cube root (the q=3 sibling of math.isqrt,
+            _iroot) of the mantissa rescaled to the operand's scale, rounded to
+            nearest at that scale. A tie cannot occur (8*scaled is even, (2r+1)**3
+            is odd), so nearest is unambiguous. Exact only when the operand was exact
+            AND it is a perfect cube at that scale. A negative mantissa cube-roots its
+            magnitude and carries the sign.
+        floating-point: math.cbrt is 3.11+ but the project floor is 3.10, so compute
+            sign-preserving via math.copysign(abs(x)**(1/3), x); unconditionally
+            inexact.
+        rational: exact ONLY when numerator and denominator are BOTH perfect cubes
+            (a negative numerator is fine — odd root); otherwise the root is
+            irrational and it raises NotRepresentableError, the exact-or-refuse stance
+            of sqrt.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(
+                    Mode.FLOATING_POINT,
+                    math.copysign(abs(self.payload) ** (1 / 3), self.payload),
+                    exact=False,
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                sign = -1 if fp.mantissa < 0 else 1
+                # cbrt(m * 10**-d) held at scale d == cbrt(m * 10**(2d)) * 10**-d:
+                # the integer cube root of the mantissa rescaled by 10**(2d), rounded.
+                scaled = abs(fp.mantissa) * 10 ** (2 * fp.decimals)
+                root = _iroot(scaled, 3)
+                exact = self.exact and root**3 == scaled
+                if 8 * scaled >= (2 * root + 1) ** 3:  # nearest is root+1 (tie impossible)
+                    root += 1
+                return Value(Mode.FIXED_POINT, FixedPoint(sign * root, fp.decimals), exact=exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                fr = self.payload
+                # Lowest terms, positive denominator; the root is rational iff BOTH
+                # parts are perfect cubes. The numerator may be negative (odd root).
+                num_sign = -1 if fr.numerator < 0 else 1
+                root_num = _perfect_root(abs(fr.numerator), 3)
+                root_den = _perfect_root(fr.denominator, 3)
+                if root_num is None or root_den is None:
+                    raise NotRepresentableError("rational cube root is irrational")
+                return Value(
+                    Mode.RATIONAL, Fraction(num_sign * root_num, root_den), exact=self.exact
+                )
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sin(self) -> "Value":
         """Sine, argument in radians (28.10) — transcendental, so inexact except
         the trivial sin(0) = 0.

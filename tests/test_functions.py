@@ -330,6 +330,59 @@ def test_sqrt_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # Fixed-point: exact only on a perfect cube at the operand's scale; otherwise
+        # rounds to that scale and flags inexact.
+        ("cbrt(8)", None, "2 (exact)"),
+        ("cbrt(27)", None, "3 (exact)"),
+        ("cbrt(0.008)", None, "0.200 (exact)"),  # 0.2 is a perfect cube at scale 3
+        # Unlike sqrt, a negative is IN DOMAIN — an odd root carries the sign.
+        ("cbrt(-8)", None, "-2 (exact)"),
+        ("cbrt(-27.000)", None, "-3.000 (exact)"),
+        (
+            "cbrt(2)",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 1.2599)",
+        ),
+        (
+            "cbrt(2.000000)",
+            None,
+            "1.259921 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.2599210499)",
+        ),
+        # binary64 cbrt is unconditionally inexact, even for a perfect cube, and
+        # handles negatives sign-preserving (no math.cbrt on the 3.10 floor).
+        ("cbrt(8)", "floating-point", "2.0 (inexact)"),
+        ("cbrt(-8)", "floating-point", "-2.0 (inexact)"),
+        ("cbrt(2)", "floating-point", "1.2599210498948732 (inexact)"),
+        # Rational is exact only when both parts are perfect cubes (negative numerator OK).
+        ("cbrt(8)", "rational", "2 (exact)"),
+        ("cbrt(27/8)", "rational", "3/2 (exact)"),
+        ("cbrt(-8/27)", "rational", "-2/3 (exact)"),
+    ],
+)
+def test_cbrt(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # No negative refusal (odd root): rational only refuses a non-perfect-cube.
+        ("cbrt(2)", "rational", "rational cube root is irrational"),
+        ("cbrt(1/2)", "rational", "rational cube root is irrational"),
+        ("cbrt(-2)", "rational", "rational cube root is irrational"),
+    ],
+)
+def test_cbrt_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # The BINARY pow(x, y) function — the call form of ** (28.20). Integer
         # exponent is exact in the exact modes, float rounds.
         ("pow(2, 10)", None, "1024 (exact)"),
@@ -1029,7 +1082,11 @@ def test_log10_refuses_with_a_line_tagged_error(expression, mode, error):
         ("log2(1)", "rational", "0 (exact)"),
         # A power of two is NOT exact: it divides ln(x)/ln(2) like any other argument
         # and is flagged inexact even though the quotient lands on a whole number.
-        ("log2(2)", None, "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)"),
+        (
+            "log2(2)",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)",
+        ),
         (
             "log2(8.000000)",
             None,
