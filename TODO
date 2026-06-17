@@ -1916,7 +1916,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 41.1.  Add Annotated[T, Field(description=...)] to every tool param —
                calculate (server.py:308-313), analyze (462-464), solver (508-518),
                help (54). Takes coverage 0%->100%, no behaviour change. Biggest lever.
-    [ ] 41.2.  Make help's `section` a Literal["types","language","functions",
+    [x] 41.2.  Make help's `section` a Literal["types","language","functions",
                "solver"] enum (server.py:54), mirroring reference._SECTIONS; add a
                test asserting the two stay in sync.
     [ ] 41.3.  Add an MCP server instructions= string at server.py:37 (currently

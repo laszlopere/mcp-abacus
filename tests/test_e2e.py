@@ -283,6 +283,19 @@ def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
     assert tools["info"].inputSchema.get("properties", {}) == {}
 
 
+def test_help_section_is_advertised_as_an_enum_over_the_wire():
+    # TODO 41.2: help's `section` is a Literal, so its inputSchema must carry an
+    # `enum` of the four valid sections — what lets a client pick a valid value
+    # without guessing. Asserted end-to-end so the enum survives the wire.
+    async def go():
+        async with _client() as session:
+            return await session.list_tools()
+
+    tools = {t.name: t for t in asyncio.run(go()).tools}
+    section = tools["help"].inputSchema["properties"]["section"]
+    assert sorted(section["enum"]) == ["functions", "language", "solver", "types"]
+
+
 def test_calculate_defaults_to_fixed_point_over_stdio():
     # 0.1 + 0.2 is the flagship discriminator: it is 0.3 in scaled fixed-point,
     # but the famous 0.30000000000000004 in floating_point. Omitting `mode` must pick

@@ -3,6 +3,8 @@
 
 """Tests for the language-help section text (TODO 21): sourced from live code."""
 
+from typing import get_args
+
 from mcp_abacus.expr import reference
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
@@ -110,3 +112,13 @@ def test_unknown_section_lists_the_valid_sections_instead_of_erroring():
 def test_every_mode_has_a_help_line():
     # The single-source guard: no Mode may ship without a MODE_HELP description.
     assert set(MODE_HELP) == set(Mode)
+
+
+def test_help_section_enum_mirrors_the_reference_sections():
+    # TODO 41.2: the help tool's `section` is a Literal enum (server.HelpSection) so
+    # clients see the valid values in the schema. It must stay in lockstep with the
+    # actual _SECTIONS registry — a section added/removed in reference.py without
+    # updating the Literal (or vice versa) is caught here.
+    from mcp_abacus.server import HelpSection
+
+    assert set(get_args(HelpSection)) == set(reference._SECTIONS)

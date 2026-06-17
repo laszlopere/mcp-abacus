@@ -5,7 +5,7 @@
 
 import platform
 from importlib.metadata import version
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -52,15 +52,20 @@ def info() -> dict:
     }
 
 
+# The valid `help` sections, advertised to clients as a schema enum. Kept in
+# lockstep with reference._SECTIONS by a test; reference.render() still handles an
+# unknown section gracefully for any direct caller that bypasses schema validation.
+HelpSection = Literal["types", "language", "functions", "solver"]
+
+
 @mcp.tool(name="help")
 def help_(
     section: Annotated[
-        str,
+        HelpSection,
         Field(
             description=(
                 "Which reference section to return: 'types', 'language', "
-                "'functions', or 'solver'. An unknown name returns the list of "
-                "valid section names instead of erroring."
+                "'functions', or 'solver'."
             )
         ),
     ],
@@ -70,8 +75,9 @@ def help_(
     Sections: 'types' (the numeric types this build supports), 'language' (the
     expression grammar — operators, precedence, literal forms), 'functions' (the
     callable functions and their argument counts), and 'solver' (the solver tool —
-    solving / optimising one variable over a bracket). An unknown section returns
-    the list of valid section names instead of erroring.
+    solving / optimising one variable over a bracket). `section` is restricted to
+    these four names — advertised as a schema enum — so any other value is rejected
+    with the valid list.
     """
     return reference.render(section)
 
