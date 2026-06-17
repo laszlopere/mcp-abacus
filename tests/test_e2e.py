@@ -259,6 +259,30 @@ def test_calculate_is_advertised_with_optional_mode_over_the_wire():
     assert schema["properties"]["mode"]["default"] == "fixed-point"  # ...and defaults here
 
 
+def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
+    # TODO 41.1: every tool parameter must carry its own inputSchema `description`
+    # (the per-parameter docs FastMCP builds from `Annotated[..., Field(...)]`), not
+    # just the prose buried in the tool description — this is the schema coverage a
+    # client (and Glama's grader) reads. Asserted end-to-end so a regression to bare
+    # signature args, which silently drops the descriptions, fails here.
+    async def go():
+        async with _client() as session:
+            return await session.list_tools()
+
+    tools = {t.name: t for t in asyncio.run(go()).tools}
+    # `info` is nullary; the other four expose parameters that must all be described.
+    expected_param_counts = {"analyze": 3, "calculate": 4, "help": 1, "solver": 9}
+    for name, count in expected_param_counts.items():
+        properties = tools[name].inputSchema["properties"]
+        assert len(properties) == count, f"{name}: param count changed to {len(properties)}"
+        undocumented = [
+            param for param, schema in properties.items() if not schema.get("description")
+        ]
+        assert not undocumented, f"{name} has parameters with no schema description: {undocumented}"
+    # `info` takes no arguments, so it has nothing to document.
+    assert tools["info"].inputSchema.get("properties", {}) == {}
+
+
 def test_calculate_defaults_to_fixed_point_over_stdio():
     # 0.1 + 0.2 is the flagship discriminator: it is 0.3 in scaled fixed-point,
     # but the famous 0.30000000000000004 in floating_point. Omitting `mode` must pick

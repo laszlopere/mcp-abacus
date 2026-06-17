@@ -1913,7 +1913,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 [ ] 41.  GLAMA TOOL-DEFINITION-QUALITY FIXES  (audit 2026-06-17. Root cause:
          schema coverage 0% on every tool — params are bare signature args, no
          Field/Annotated/Literal in src/. This is Glama's top deduction.)
-    [ ] 41.1.  Add Annotated[T, Field(description=...)] to every tool param —
+    [x] 41.1.  Add Annotated[T, Field(description=...)] to every tool param —
                calculate (server.py:308-313), analyze (462-464), solver (508-518),
                help (54). Takes coverage 0%->100%, no behaviour change. Biggest lever.
     [ ] 41.2.  Make help's `section` a Literal["types","language","functions",

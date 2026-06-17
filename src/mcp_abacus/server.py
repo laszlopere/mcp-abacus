@@ -5,8 +5,10 @@
 
 import platform
 from importlib.metadata import version
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from mcp_abacus import __version__
 from mcp_abacus.expr import parser, reference
@@ -51,7 +53,18 @@ def info() -> dict:
 
 
 @mcp.tool(name="help")
-def help_(section: str) -> str:
+def help_(
+    section: Annotated[
+        str,
+        Field(
+            description=(
+                "Which reference section to return: 'types', 'language', "
+                "'functions', or 'solver'. An unknown name returns the list of "
+                "valid section names instead of erroring."
+            )
+        ),
+    ],
+) -> str:
     """Return mcp-abacus reference text for one section, to drive the evaluator.
 
     Sections: 'types' (the numeric types this build supports), 'language' (the
@@ -306,10 +319,46 @@ def _evaluate_request(
 
 @mcp.tool()
 def calculate(
-    expression: str,
-    mode: str = "fixed-point",
-    min_fixed_point_precision: int | None = None,
-    inexact_handling: str = "continue-and-report",
+    expression: Annotated[
+        str,
+        Field(
+            description=(
+                "The expression, or a newline-separated multi-line program "
+                "(`name = expr` assignments sharing one scope), to evaluate."
+            )
+        ),
+    ],
+    mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric type the WHOLE calculation runs in: 'fixed-point' "
+                "(default; exact scaled integer, money/ERC-20-safe), "
+                "'floating-point' (IEEE-754 double; aliases 'float64', 'double'), "
+                "or 'rational' (exact numerator/denominator)."
+            )
+        ),
+    ] = "fixed-point",
+    min_fixed_point_precision: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Floor fixed-point results at this many decimal places "
+                "(non-negative integer). Valid ONLY in fixed-point mode; "
+                "null for no floor."
+            )
+        ),
+    ] = None,
+    inexact_handling: Annotated[
+        str,
+        Field(
+            description=(
+                "What to do when a result is inexact: 'continue-and-report' "
+                "(default; evaluate and let the precision verdict surface) or "
+                "'abort-on-inexact' (fail on the first inexact sub-result)."
+            )
+        ),
+    ] = "continue-and-report",
 ) -> dict:
     """Evaluate an expression (or short program) in one numeric type; return value + precision.
 
@@ -460,7 +509,33 @@ def calculate(
 
 @mcp.tool()
 def analyze(
-    expression: str, mode: str = "fixed-point", min_fixed_point_precision: int | None = None
+    expression: Annotated[
+        str,
+        Field(
+            description=(
+                "The expression or newline-separated program to parse and "
+                "evaluate; same grammar as `calculate`."
+            )
+        ),
+    ],
+    mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric type to evaluate in: 'fixed-point' (default), "
+                "'floating-point', or 'rational' — as in `calculate`."
+            )
+        ),
+    ] = "fixed-point",
+    min_fixed_point_precision: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Floor on fixed-point fractional digits (non-negative integer); "
+                "fixed-point mode only, null for no floor — as in `calculate`."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Evaluate an expression and return its AST as an indented tree of sub-results.
 
@@ -506,15 +581,92 @@ def analyze(
 
 @mcp.tool()
 def solver(
-    expression: str,
-    variable: str | None = None,
-    lower: float | None = None,
-    upper: float | None = None,
-    variables: dict[str, list[float]] | None = None,
-    objective: str | None = None,
-    algorithm: str | None = None,
-    mode: str = "fixed-point",
-    min_fixed_point_precision: int | None = None,
+    expression: Annotated[
+        str,
+        Field(
+            description=(
+                "The expression (or newline-separated program whose `name = expr` "
+                "lines set constants) to drive to a root or extremum; same grammar "
+                "as `calculate`."
+            )
+        ),
+    ],
+    variable: Annotated[
+        str | None,
+        Field(
+            description=(
+                "SINGLE-unknown form: name of the one variable to search for. Use "
+                "with `lower`+`upper`; mutually exclusive with `variables`."
+            )
+        ),
+    ] = None,
+    lower: Annotated[
+        float | None,
+        Field(
+            description=(
+                "SINGLE form: lower bound of the search bracket for `variable` "
+                "(must be below `upper`)."
+            )
+        ),
+    ] = None,
+    upper: Annotated[
+        float | None,
+        Field(
+            description=(
+                "SINGLE form: upper bound of the search bracket for `variable` "
+                "(must be above `lower`)."
+            )
+        ),
+    ] = None,
+    variables: Annotated[
+        dict[str, list[float]] | None,
+        Field(
+            description=(
+                "MULTIPLE-unknown form: dict mapping each unknown name to its "
+                '[lower, upper] bracket, e.g. {"x": [0, 5], "y": [-4, 2]}. '
+                "Requires algorithm='nelder-mead'; mutually exclusive with "
+                "variable/lower/upper."
+            )
+        ),
+    ] = None,
+    objective: Annotated[
+        str | None,
+        Field(
+            description=(
+                "What to search for: 'find-root' (default), 'find-minimum', or "
+                "'find-maximum'."
+            )
+        ),
+    ] = None,
+    algorithm: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Search engine: 'golden-section-search' (default, single-variable), "
+                "'brent-parabolic' (single-variable), or 'nelder-mead' (required "
+                "for the `variables` form)."
+            )
+        ),
+    ] = None,
+    mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric type the search runs in: 'fixed-point' (default), "
+                "'floating-point', or 'rational' — as in `calculate`."
+            )
+        ),
+    ] = "fixed-point",
+    min_fixed_point_precision: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Floor on fixed-point fractional digits (non-negative integer). "
+                "REQUIRED in fixed-point mode (else the search floors to integers); "
+                "null/omit in the other modes."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Find the value(s) of one or more variables that drive an expression to a root or extremum.
 
