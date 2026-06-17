@@ -1770,24 +1770,3 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                precision refusal and that float/rational still solve precision-free.
 
 
-[ ] SA.  SHAPE & MVP  (Server A — "mcp-abacus", the numeric engine; pure
-         Python)
-    [ ] SA.1.  Shape: gated toolsets numeric | bits | eval. Flagship is 10.
-    [ ] SA.2.  MVP (the differentiated, uncontested product — BUILD FIRST):
-        [ ] SA.2.1.  10 multi-model evaluator, modes: fixed-point +
-                     binary32 + binary64 + decimal (+ rational)
-                                                       -> 10  *** FLAGSHIP ***
-        [ ] SA.2.2.  IEEE-754 float <-> bits           -> 11.1
-        [ ] SA.2.3.  two's-complement / fixed-width int-> 12.1 / 12.2
-        [ ] SA.2.4.  base conversion (large values)    -> 14.2
-        [ ] SA.2.5.  bitwise + shifts/rotates          -> 13.1 / 13.2
-        [ ] SA.2.6.  popcount / bit-length             -> 13.3
-    SA.3.  Pitch: "One expression, every numeric regime, side by side — see
-           exactly where float, double, and money-safe fixed-point diverge.
-           The calculator that doesn't guess." Nobody else does this.
-
-SHARED.  Reuse mcp-tmux's opt-in toolset-gating pattern + its Trusted-
-         Publishing release workflow. Overarching thesis: "Makes Claude stop
-         emitting wrong-but-plausible answers for the operations it cannot do
-         by hand." Build order: A first (uncontested/novel), then B
-         (mcp-bytesmith, separate project).
