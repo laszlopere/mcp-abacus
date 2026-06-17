@@ -118,8 +118,7 @@ def help_(
         HelpSection,
         Field(
             description=(
-                "Which reference section to return: 'types', 'language', "
-                "'functions', or 'solver'."
+                "Which reference section to return: 'types', 'language', 'functions', or 'solver'."
             )
         ),
     ],
@@ -550,9 +549,7 @@ def calculate(
         assert sval is not None  # the eval cached each statement's Value (18.5)
         base.append((s, sval))
     offers = [
-        _offered_precision_for(
-            node, s, selected, min_fixed_point_precision, sval, sval.precision()
-        )
+        _offered_precision_for(node, s, selected, min_fixed_point_precision, sval, sval.precision())
         for s, sval in base
     ]
     values = [
@@ -702,8 +699,7 @@ def solver(
         str | None,
         Field(
             description=(
-                "What to search for: 'find-root' (default), 'find-minimum', or "
-                "'find-maximum'."
+                "What to search for: 'find-root' (default), 'find-minimum', or 'find-maximum'."
             )
         ),
     ] = None,

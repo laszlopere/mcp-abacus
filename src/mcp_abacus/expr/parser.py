@@ -180,9 +180,7 @@ class _Parser:
             if name.lexeme in CONSTANT_NAMES:
                 # pi/e are reserved constants (29.6) — binding one would shadow the
                 # constant, so reject it at the target rather than silently rebind.
-                raise ParseError(
-                    f"{name.lexeme!r} is a constant and cannot be assigned", name.line
-                )
+                raise ParseError(f"{name.lexeme!r} is a constant and cannot be assigned", name.line)
             self._advance()  # NAME
             self._advance()  # '='
             return Assign(name.lexeme, self.expression(), line=name.line)
