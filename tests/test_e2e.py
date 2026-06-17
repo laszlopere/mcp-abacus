@@ -115,7 +115,18 @@ def _analyze_in_one_session(calls):
     return asyncio.run(go())
 
 
-def test_analyze_renders_evaluated_trees_across_modes_and_precision_over_the_wire(capsys):
+def _tracing(request):
+    """True only under ./run-tests.sh --verbose / --human-readable.
+
+    The `analyze` tree-printing below predates the autouse `_compact_e2e_trace`
+    (which traces `calculate`, not `analyze`), so it prints inline — but gated on
+    the same switches as the rest of the suite, mirroring conftest's
+    ``_verbose_trace``. A plain run stays silent.
+    """
+    return request.config.option.verbose >= 1 or request.config.option.human_readable
+
+
+def test_analyze_renders_evaluated_trees_across_modes_and_precision_over_the_wire(capsys, request):
     # End-to-end over real stdio: each case is (expression, mode, floor) with the
     # tree ROOT it must evaluate to. The cases span all three modes and the fixed-
     # point floor, and each is chosen so the tree EXPLAINS its root:
@@ -135,12 +146,13 @@ def test_analyze_renders_evaluated_trees_across_modes_and_precision_over_the_wir
     ]
     payloads = _analyze_in_one_session([(e, m, f) for e, m, f, _ in cases])
 
-    # Show the tool's input and output so `pytest -s` prints the actual trees.
-    with capsys.disabled():
-        for _case, (arguments, payload) in zip(cases, payloads, strict=True):
-            print(f"\nINPUT  analyze({arguments})")
-            print("OUTPUT tree:")
-            print(payload["tree"])
+    # Under --verbose/--human-readable, show the tool's input and the actual trees.
+    if _tracing(request):
+        with capsys.disabled():
+            for _case, (arguments, payload) in zip(cases, payloads, strict=True):
+                print(f"\nINPUT  analyze({arguments})")
+                print("OUTPUT tree:")
+                print(payload["tree"])
 
     for (expr, _mode, _floor, root), (_arguments, payload) in zip(cases, payloads, strict=True):
         assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
@@ -153,7 +165,7 @@ def test_analyze_renders_evaluated_trees_across_modes_and_precision_over_the_wir
         assert all(" = " in line for line in payload["tree"].splitlines())
 
 
-def test_analyze_renders_bitwise_trees_over_the_wire(capsys):
+def test_analyze_renders_bitwise_trees_over_the_wire(capsys, request):
     # The bitwise ops (24.3.2) through the real `analyze` path: the printed AST
     # pins the opcodes (BINARY_AND/OR/XOR, UNARY_NOT), the | < ^ < & precedence
     # and ~-as-tight-prefix shape, and each node's per-mode value / exactness / bits:
@@ -196,12 +208,13 @@ def test_analyze_renders_bitwise_trees_over_the_wire(capsys):
     ]
     payloads = _analyze_in_one_session([(e, m, None) for e, m, _ in cases])
 
-    # Show the tool's input and output so `pytest -s` prints the actual trees.
-    with capsys.disabled():
-        for (_expr, _mode, _tree), (arguments, payload) in zip(cases, payloads, strict=True):
-            print(f"\nINPUT  analyze({arguments})")
-            print("OUTPUT tree:")
-            print(payload["tree"])
+    # Under --verbose/--human-readable, show the tool's input and the actual trees.
+    if _tracing(request):
+        with capsys.disabled():
+            for (_expr, _mode, _tree), (arguments, payload) in zip(cases, payloads, strict=True):
+                print(f"\nINPUT  analyze({arguments})")
+                print("OUTPUT tree:")
+                print(payload["tree"])
 
     for (expr, _mode, expected_tree), (_arguments, payload) in zip(cases, payloads, strict=True):
         assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
@@ -482,9 +495,9 @@ def _solve_in_one_session(cases):
     return asyncio.run(go())
 
 
-def test_solver_replies_are_observable_over_the_wire(capsys):
-    # A spread of solver calls over real stdio, PRINTED so `pytest -s`
-    # (./run-tests.sh --verbose) shows each request and its full reply. The five
+def test_solver_replies_are_observable_over_the_wire(capsys, request):
+    # A spread of solver calls over real stdio, PRINTED under --verbose/--human-
+    # readable (./run-tests.sh) to show each request and its full reply. The five
     # well-posed cases find a root or an extremum; the last is an honest no-solution.
     # Each case is (arguments, human note).
     cases = [
@@ -542,11 +555,12 @@ def test_solver_replies_are_observable_over_the_wire(capsys):
     ]
     payloads = _solve_in_one_session([arguments for arguments, _note in cases])
 
-    with capsys.disabled():
-        for (arguments, note), payload in zip(cases, payloads, strict=True):
-            print(f"\nINPUT  solver({arguments})  # {note}")
-            print("OUTPUT:")
-            print(json.dumps(payload, indent=2))
+    if _tracing(request):
+        with capsys.disabled():
+            for (arguments, note), payload in zip(cases, payloads, strict=True):
+                print(f"\nINPUT  solver({arguments})  # {note}")
+                print("OUTPUT:")
+                print(json.dumps(payload, indent=2))
 
     for (_arguments, note), payload in zip(cases[:-1], payloads[:-1], strict=True):
         assert payload["error"] is None, f"{note}: {payload['error']}"
