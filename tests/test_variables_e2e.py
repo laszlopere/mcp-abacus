@@ -197,3 +197,81 @@ def test_bare_constant_works_through_the_tool():
     # The benchmarks regression (29.6): `2*pi` once errored "undefined variable: pi";
     # now it resolves to the constant like any literal would.
     assert _value("2 * pi", "floating-point") == "6.283185307179586 (inexact)"
+
+
+# --- every bare-expression line is answered, not just the last (TODO) -------
+
+
+def test_all_output_expressions_returned():
+    # The driving regression: a program with one assignment and two bare divisions —
+    # both divisions must come back in `values`, in source order, and the silent
+    # `x = 10` assignment must NOT (only bare lines, plus the always-echoed final).
+    payload = _calc("x = 10\n(x - 1) / (x + 1)\n(x + 1) / 100.0")
+    assert payload["error"] is None
+    sources = [entry["source"] for entry in payload["values"]]
+    assert sources == ["(x - 1) / (x + 1)", "(x + 1) / 100.0"]
+
+
+def test_value_is_transcript_for_multiple_outputs():
+    # With 2+ answered lines the top-level `value` is a `<expr> = <result>` transcript,
+    # one line per `values` entry, in order.
+    payload = _calc("x = 10\n(x - 1) / (x + 1)\n(x + 1) / 100.0")
+    expected = "\n".join(f"{e['source']} = {e['value']}" for e in payload["values"])
+    assert payload["value"] == expected
+    assert payload["value"].count("\n") == 1  # exactly two lines
+
+
+def test_values_last_entry_matches_top_level():
+    # The last answered line IS the program's result, so its scalar fields equal the
+    # top-level ones (the `value` string may differ — transcript vs bare).
+    payload = _calc("a = 1 / 3\nb = 1 / 7\na\nb")
+    last = payload["values"][-1]
+    for key in ("value_hex_dump", "exact", "precision", "offered_precision"):
+        assert last[key] == payload[key]
+
+
+def test_single_output_unchanged():
+    # A lone bare expression: one `values` entry, no transcript, `value` byte-identical
+    # to the entry's value (full backward compatibility).
+    payload = _calc("2 + 3")
+    assert len(payload["values"]) == 1
+    assert payload["value"] == "5 (exact)"
+    assert payload["values"][0]["value"] == "5 (exact)"
+    assert payload["values"][0]["source"] == "2 + 3"
+
+
+def test_assignments_run_silently_final_line_echoed():
+    # An all-assignment program: assignments are silent, but the final line is always
+    # the result, so `values` holds exactly it — and there is no transcript prefix.
+    payload = _calc("x = 1\ny = 2")
+    assert [e["source"] for e in payload["values"]] == ["y = 2"]
+    assert payload["value"] == "2 (exact)"
+
+
+def test_per_statement_offered_precision():
+    # Each answered line steers independently: the inexact `1 / 3` line carries its own
+    # offered_precision, the exact `2 + 2` line offers nothing.
+    payload = _calc("1 / 3\n2 + 2")
+    inexact, exact = payload["values"]
+    assert inexact["source"] == "1 / 3"
+    assert inexact["offered_precision"] is not None
+    assert exact["offered_precision"] is None
+
+
+def test_per_statement_offer_rebuilds_bindings():
+    # Regression guard for the snapshot/re-run ordering: a later bare line that reads an
+    # earlier binding must get the RIGHT offered value, proving the whole-program re-run
+    # at the higher floor rebuilt `d` rather than evaluating the line in isolation.
+    payload = _calc("d = 1 / 3\nd + d\nd * 3")
+    offered = payload["values"][0]["offered_precision"]
+    # d + d at floor 4 = 0.3333 + 0.3333 = 0.6666 (had `d` been lost, this would error or
+    # be wrong); the offer reveals those digits the scale-0 result (1) hid.
+    assert offered["value"].startswith("0.6666")
+
+
+def test_floating_point_outputs_have_null_offers():
+    # offered_precision is fixed-point-only: every float line offers nothing, precision null.
+    payload = _calc("1 / 3\n2 / 7", mode="floating-point")
+    for entry in payload["values"]:
+        assert entry["offered_precision"] is None
+        assert entry["precision"] is None

@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp_abacus import __version__
 from mcp_abacus.expr import parser, reference
 from mcp_abacus.expr.lexer import LexError
-from mcp_abacus.expr.nodes import EvalError, Node
+from mcp_abacus.expr.nodes import Assign, EvalError, Node, Sequence
 from mcp_abacus.expr.parser import ParseError
 from mcp_abacus.expr.value import (
     FixedPoint,
@@ -121,23 +121,36 @@ def _annotate(
 _OFFERED_BUMP = 4  # 25.3.3: an offer reveals the result scale + this many more decimals.
 
 
-def _offered_precision(
-    node: Node, mode: Mode, floor_given: int | None, value: Value, precision: int | None
+def _offered_precision_for(
+    root: Node,
+    statement: Node,
+    mode: Mode,
+    floor_given: int | None,
+    value: Value,
+    precision: int | None,
 ) -> tuple[Value, int] | None:
-    """A what-if at higher fixed-point precision as ``(Value, floor)``, or None (25.3.3/27.2).
+    """A what-if at higher fixed-point precision for ONE statement, or None (25.3.3/27.2).
 
     Steers an inexact fixed-point result toward more precision by SHOWING the
     digits it hid, not merely naming the argument: re-evaluates the SAME parsed
-    expression with the floor raised to ``precision + _OFFERED_BUMP`` and returns
-    the resulting Value alongside that floor. The caller turns the pair into the
-    structured ``offered_precision`` field (annotated value + hex dump, 27.3-27.5)
-    and into the inline worked example in the top-level value string (27.6). Gated
-    to the one case the argument helps — fixed-point mode, an inexact result, and
-    the caller did NOT already pass min_fixed_point_precision (None, not 0; an
-    explicit floor means they have already engaged the knob, so no nudge). Re-
-    evaluating is safe and cannot newly fail: a higher scale only pads decimals, so
-    an expression that already evaluated keeps evaluating (18.5 lets the node be
-    re-run).
+    program (``root``) with the floor raised to ``precision + _OFFERED_BUMP`` and
+    reads ``statement``'s freshly cached Value off the re-run. Re-running the WHOLE
+    program — not the statement in isolation — is deliberate: a later line may read a
+    name an earlier assignment bound, and ``root.evaluate`` rebuilds the whole
+    VariableStore (30.2), so every binding is back in place for ``statement``. The
+    caller turns the returned pair into the structured ``offered_precision`` field
+    (annotated value + hex dump, 27.3-27.5) and into the inline worked example in the
+    value string (27.6). Gated to the one case the argument helps — fixed-point mode,
+    an inexact result, and the caller did NOT already pass min_fixed_point_precision
+    (None, not 0; an explicit floor means they have already engaged the knob, so no
+    nudge). Re-evaluating is safe and cannot newly fail: a higher scale only pads
+    decimals, so an expression that already evaluated keeps evaluating (18.5 lets the
+    node be re-run). It runs under the default CONTINUE_AND_REPORT, so a higher floor
+    never trips abort-on-inexact.
+
+    NOTE: ``root.evaluate`` OVERWRITES every node's cached ``.value`` (18.5). The
+    caller must snapshot all base statement Values BEFORE invoking this for any
+    statement, since this mutates the tree.
 
     Returns None when a gate fails, or when the extra precision does not actually
     change the value (the "27.0000" case — every revealed digit is zero), so an
@@ -147,13 +160,66 @@ def _offered_precision(
         return None
     assert precision is not None  # fixed-point always carries a scale
     floor = precision + _OFFERED_BUMP
-    previewed = node.evaluate(mode, floor)
+    root.evaluate(mode, floor)
+    previewed = statement.value
+    assert previewed is not None  # the re-run walks every statement, caching its Value
     assert isinstance(previewed.payload, FixedPoint) and isinstance(value.payload, FixedPoint)
     # Both stand for the same number iff the revealed lower digits are all zero:
     # compare the previewed mantissa to the result's, re-scaled up to the same floor.
     if previewed.payload.mantissa == value.payload.mantissa * 10 ** (floor - precision):
         return None
     return previewed, floor
+
+
+def _offered_precision(
+    node: Node, mode: Mode, floor_given: int | None, value: Value, precision: int | None
+) -> tuple[Value, int] | None:
+    """Single-node offer: re-evaluate ``node`` itself for its own what-if (25.3.3/27.2).
+
+    The whole-tree case of ``_offered_precision_for`` where the statement IS the root —
+    kept as a named wrapper for callers that offer one bare node.
+    """
+    return _offered_precision_for(node, node, mode, floor_given, value, precision)
+
+
+def _offer_dict(offer: "tuple[Value, int] | None") -> dict | None:
+    """Render an ``(offered Value, floor)`` pair as the structured offered_precision field.
+
+    None when there is nothing to offer; otherwise the nested object mirroring the
+    top-level reply (27.3-27.5): its mode is always fixed-point, min_fixed_point_precision
+    is the floor to PASS to get this fuller value, and value/value_hex_dump/exact describe
+    it (annotated with its OWN verdict, since the offered value may itself still be inexact).
+    """
+    if offer is None:
+        return None
+    offered, floor = offer
+    return {
+        "mode": offered.mode.value,
+        "min_fixed_point_precision": floor,
+        "value": _annotate(offered.to_string(), offered.exact, offered.precision(), None, floor),
+        "value_hex_dump": offered.hex_dump(),
+        "exact": offered.exact,
+    }
+
+
+def _statement_result(
+    value: Value, offer: "tuple[Value, int] | None", floor_given: int | None
+) -> dict:
+    """The common per-result fields for one Value: the calculate reply shape minus mode/values.
+
+    The single source of truth for the annotate/hex/precision rendering, reused for both the
+    top-level reply (the program's last result) and each ``values`` entry. Returns
+    value/value_hex_dump/exact/precision/offered_precision; the caller adds ``source`` for a
+    list entry, or ``mode``/``values``/``error`` for the top-level reply.
+    """
+    precision = value.precision()
+    return {
+        "value": _annotate(value.to_string(), value.exact, precision, offer, floor_given),
+        "value_hex_dump": value.hex_dump(),
+        "exact": value.exact,
+        "precision": precision,
+        "offered_precision": _offer_dict(offer),
+    }
 
 
 def _resolve_mode_and_precision(
@@ -276,10 +342,15 @@ def calculate(
     expression — its value is the right-hand side — so `x = 2 + 3` returns 5 and
     also binds `x`. Pass SEVERAL statements as one `expression` by separating them
     with NEWLINES (`\n`): they run top to bottom sharing one variable scope, so a
-    later line sees earlier bindings, and the call's returned `value` is the LAST
-    statement's (earlier lines run for their bindings). E.g.
-    `"x = 10\ny = x * 2\ny + 1"` returns 21. Scope lasts for the one call only —
-    bindings do not carry over to the next `calculate`.
+    later line sees earlier bindings. EVERY bare-expression line is answered, in source
+    order, in the `values` array (below); assignment lines run silently for their
+    bindings and are NOT echoed — except the final line, which is always the program's
+    result and so is always echoed. When more than one line is answered, the top-level
+    `value` is a multi-line transcript, one `<expression> = <result>` per answered line;
+    a single answered line keeps `value` as just that result. E.g.
+    `"x = 10\ny = x * 2\ny + 1"` returns 21 (only `y + 1` is a bare line), while
+    `"x = 10\n(x - 1) / (x + 1)\n(x + 1) / 100.0"` answers both divisions. Scope lasts
+    for the one call only — bindings do not carry over to the next `calculate`.
 
     Returns a dict: `value` is the result rendered as a string and ANNOTATED with
     its precision verdict — "(exact)" when the result is the true value, else
@@ -294,8 +365,14 @@ def calculate(
     are also returned as separate fields: `exact` (bool — did the mode hold the
     true value) and `precision` (the fixed-point decimal scale, or null when the
     mode has none). NOTE: floating-point conservatively reports `exact: false` for
-    every result today, including ones a double holds exactly. On failure `value`/
-    `value_hex_dump`/`mode`/`exact`/`precision` are null and `error` carries a plain,
+    every result today, including ones a double holds exactly. `values` is the per-line
+    breakdown: an array with one object per answered line, in source order, each
+    `{source, value, value_hex_dump, exact, precision, offered_precision}` — `source` is
+    the re-rendered expression and the other fields mirror the top-level ones for that one
+    line. The LAST entry is the program's result, so its fields equal the top-level
+    `value_hex_dump`/`exact`/`precision`/`offered_precision` (and, for a single answered
+    line, the top-level `value`). On failure `value`/`value_hex_dump`/`mode`/`exact`/
+    `precision`/`offered_precision`/`values` are null and `error` carries a plain,
     self-contained message — what went wrong (a malformed expression, a domain error,
     or an unknown mode with the valid list). It reads as prose, not a log line; only
     the inexact-abort diagnostic names its source line, and in prose. On success
@@ -333,7 +410,8 @@ def calculate(
     the offered value may itself still be inexact — e.g. 10/3 never terminates),
     and `value_hex_dump` is that offered value in hex. It is NOT the answer to the
     call you made (that stays in the top-level `value`); it is null whenever there
-    is nothing to offer.
+    is nothing to offer. Each `values` entry carries its OWN `offered_precision` under
+    the same gate, so every answered line steers independently.
     """
     handling, handling_error = _resolve_inexact_handling(inexact_handling)
     if handling_error is not None:
@@ -345,31 +423,39 @@ def calculate(
     if error is not None:
         return _error(error)
     assert node is not None and selected is not None and value is not None  # error is None
-    precision = value.precision()
-    offer = _offered_precision(node, selected, min_fixed_point_precision, value, precision)
-    offered_precision = None
-    if offer is not None:
-        offered, floor = offer
-        offered_precision = {
-            "mode": offered.mode.value,
-            "min_fixed_point_precision": floor,
-            "value": _annotate(
-                offered.to_string(), offered.exact, offered.precision(), None, floor
-            ),
-            "value_hex_dump": offered.hex_dump(),
-            "exact": offered.exact,
-        }
-    return {
-        "value": _annotate(
-            value.to_string(), value.exact, precision, offer, min_fixed_point_precision
-        ),
-        "value_hex_dump": value.hex_dump(),
+    # The OUTPUT statements (30.5): bare expressions echo, assignments run silently — except
+    # the final statement, which is always the program's result and so is always echoed.
+    statements = node.statements if isinstance(node, Sequence) else (node,)
+    outputs = [s for s in statements if not isinstance(s, Assign) or s is statements[-1]]
+    # Snapshot every output's BASE Value before computing any offer: each offer re-runs the
+    # whole program at a higher floor, which OVERWRITES every node's cached .value (18.5).
+    base: list[tuple[Node, Value]] = []
+    for s in outputs:
+        sval = s.value
+        assert sval is not None  # the eval cached each statement's Value (18.5)
+        base.append((s, sval))
+    offers = [
+        _offered_precision_for(
+            node, s, selected, min_fixed_point_precision, sval, sval.precision()
+        )
+        for s, sval in base
+    ]
+    values = [
+        {"source": s.source(), **_statement_result(sval, offer, min_fixed_point_precision)}
+        for (s, sval), offer in zip(base, offers, strict=True)
+    ]
+    # Top-level scalars stay pinned to the program's result (the last output) for backward
+    # compatibility; value becomes a `source = result` transcript only when 2+ outputs exist.
+    _, last_value = base[-1]
+    reply = {
+        **_statement_result(last_value, offers[-1], min_fixed_point_precision),
         "mode": selected.value,
-        "exact": value.exact,
-        "precision": precision,
-        "offered_precision": offered_precision,
+        "values": values,
         "error": None,
     }
+    if len(values) >= 2:
+        reply["value"] = "\n".join(f"{v['source']} = {v['value']}" for v in values)
+    return reply
 
 
 @mcp.tool()
@@ -657,9 +743,9 @@ def _solver_error(message: str) -> dict:
 def _error(message: str) -> dict:
     """A calculate result carrying only an error — every value field null (27.1/27.5).
 
-    value/value_hex_dump/mode/exact/precision/offered_precision are all null: no
-    mode ever resolved (an unknown mode never produced one), no value to dump, and
-    nothing to offer. Same key set as the success reply so the shape never varies.
+    value/value_hex_dump/mode/exact/precision/offered_precision/values are all null:
+    no mode ever resolved (an unknown mode never produced one), no value to dump, and
+    nothing to offer or list. Same key set as the success reply so the shape never varies.
     """
     return {
         "value": None,
@@ -668,6 +754,7 @@ def _error(message: str) -> dict:
         "exact": None,
         "precision": None,
         "offered_precision": None,
+        "values": None,
         "error": message,
     }
 

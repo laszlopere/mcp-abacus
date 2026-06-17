@@ -469,3 +469,28 @@ def test_invoking_through_the_app_returns_the_info_payload():
     assert payload["python"]
     assert payload["mcp_sdk"]
     assert payload["toolsets"] == []
+
+
+def test_calculate_reply_has_values_array():
+    # The success reply carries a `values` list — one object per answered line — with a
+    # fixed key set; the error reply nulls it like every other field (shape never varies).
+    ok = _calc(asyncio.run(mcp.call_tool("calculate", {"expression": "1 + 1\n2 + 2"})))
+    assert isinstance(ok["values"], list) and len(ok["values"]) == 2
+    for entry in ok["values"]:
+        assert set(entry) == {
+            "source",
+            "value",
+            "value_hex_dump",
+            "exact",
+            "precision",
+            "offered_precision",
+        }
+    bad = _calc(asyncio.run(mcp.call_tool("calculate", {"expression": "1", "mode": "int128"})))
+    assert bad["error"] is not None
+    assert bad["values"] is None
+
+
+def test_analyze_reply_unchanged_by_values():
+    # analyze is untouched: it returns only `tree`/`error`, never a `values` array.
+    result = _calc(asyncio.run(mcp.call_tool("analyze", {"expression": "1 + 2"})))
+    assert set(result) == {"tree", "error"}
