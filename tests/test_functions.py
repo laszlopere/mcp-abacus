@@ -1020,6 +1020,77 @@ def test_log10_refuses_with_a_line_tagged_error(expression, mode, error):
     assert payload["value"] is None
 
 
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # exp(0) = 1 is the one exact case in every mode (transcendental otherwise),
+        # the inverse landmark of log(1) = 0.
+        ("exp(0)", None, "1 (exact)"),
+        ("exp(0)", "rational", "1 (exact)"),
+        ("exp(0.000000)", None, "1.000000 (exact)"),  # scale preserved on the exact case
+        ("exp(0)", "floating-point", "1.0 (inexact)"),
+        # binary64 uses math.exp and is unconditionally inexact; exp(1) is e.
+        ("exp(1)", "floating-point", "2.718281828459045 (inexact)"),
+        ("exp(2)", "floating-point", "7.38905609893065 (inexact)"),
+        ("exp(-1)", "floating-point", "0.36787944117144233 (inexact)"),
+        # Fixed-point range-reduces by ln(2) and sums the all-plus series at the
+        # operand's scale, inexact; exp(5) ~ 148.41 rounds to 148 at scale 0.
+        (
+            "exp(5)",
+            None,
+            "148 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 148.4132)",
+        ),
+        (
+            "exp(1.000000)",  # e at scale 6
+            None,
+            "2.718282 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 2.7182818285)",
+        ),
+        # A negative argument is fine (k < 0): exp(-1) = 1/e, below 1.
+        (
+            "exp(-1.000000)",
+            None,
+            "0.367879 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 0.3678794412)",
+        ),
+        # A large argument forces many 2**k restorations; the working scale carries
+        # the result's integer digits so the last place is still right.
+        (
+            "exp(20.000000)",
+            None,
+            "485165195.409790 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 485165195.4097902780)",
+        ),
+    ],
+)
+def test_exp(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+def test_exp_fixed_point_honours_a_raised_precision_floor():
+    # min_fixed_point_precision lifts the scale: exp(1) to 10 places is e exactly
+    # rounded, the value the scale-6 default advertises in its hint.
+    assert _value("exp(1.0000000000)", None, 10) == "2.7182818285 (inexact, rounded to 10 decimals)"
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # rational refuses a transcendental exp (no scale to round to) — exp of any
+        # non-zero rational is irrational (Lindemann-Weierstrass), the exact-or-refuse
+        # mirror of log's non-unit refusal.
+        ("exp(1)", "rational", "exp of a non-zero rational is transcendental"),
+        ("exp(-2)", "rational", "exp of a non-zero rational is transcendental"),
+        ("exp(1/2)", "rational", "exp of a non-zero rational is transcendental"),
+    ],
+)
+def test_exp_rational_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
 # --- nullary constants pi() and e() (29.2 / 29.3 / 29.4) --------------------
 # Zero-argument calls, the one function shape that takes the run context instead
 # of operands (29.2). Both are irrational, so the per-mode story is the same as

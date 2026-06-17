@@ -85,6 +85,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "log": Value.log,  # 28.17 — NATURAL log; base-10 reduce + atanh series, else inexact/refuse
     "ln": Value.log,  # 28.17 — alias of log (the canonical natural-log spelling)
     "log10": Value.log10,  # 28.18 — base-10 log; ln(x)/ln(10), exact on powers of ten
+    "exp": Value.exp,  # 28.27 — e**x; reduce by ln2 + exp series, inexact/refuse off the grid
     "sum": Value.sum_,  # 28.5 — variadic; repeated + via reduce, exact in every mode
     "product": Value.product,  # 28.6 — variadic; repeated * via reduce, may round (covering scale)
     "avg": Value.avg,  # 28.4 — variadic; sum / count, follows the mode's / rule
@@ -141,6 +142,7 @@ FUNCTION_HELP: dict[str, str] = {
     "log": "natural log, base e; inexact except log(1)=0, refuses x<=0",
     "ln": "natural log; alias of log",
     "log10": "base-10 log; exact on powers of ten, inexact otherwise, refuses x<=0",
+    "exp": "exponential e**x, inverse of log; inexact except exp(0)=1, rational refuses non-zero",
     "sum": "total of the operands; exact in every type",
     "product": "product of the operands; may round in fixed-point/float",
     "avg": "arithmetic mean, sum/count; follows the type's / rule",

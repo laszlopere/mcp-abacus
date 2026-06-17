@@ -2051,6 +2051,58 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def exp(self) -> "Value":
+        """The exponential e**x (28.27), the INVERSE of log/ln (28.17) —
+        transcendental, so inexact except the trivial exp(0) = 1.
+
+        fixed-point: SUPPORTED via the all-plus Taylor series 1 + x + x**2/2! + ...
+            (the _fp_exp_series core, 28.27.1) after range-reducing by ln(2): write
+            x == k*ln2 + s with s in [0, ln 2), so exp(x) == 2**k * exp(s) — the
+            2**k an EXACT mantissa shift, only exp(s) summed. The working scale
+            carries the result's ~k*log10(2) integer digits on top of the operand's
+            so the shift stays accurate to the last place. Negative x is fine
+            (k < 0). Always inexact except exp(0) = 1.
+        floating-point: math.exp; unconditionally inexact.
+        rational: exp of a rational is transcendental except exp(0) = 1 (Lindemann-
+            Weierstrass: e**r is irrational for rational r != 0); otherwise
+            NotRepresentableError, the exact-or-refuse stance of log/sqrt.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.exp(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # exp(0) = 1, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(1), exact=self.exact)
+                raise NotRepresentableError("exp of a non-zero rational is transcendental")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # exp(0) = 1, the only exact case
+                    return Value(
+                        Mode.FIXED_POINT, FixedPoint(10**fp.decimals, fp.decimals), exact=self.exact
+                    )
+                d = fp.decimals
+                # exp(x) ~ 2**k grows with x, so the working scale must cover the
+                # result's integer digits; size it from a cheap first estimate of k
+                # (2**(k+1) bounds exp(x), len(str(...)) is its exact digit count).
+                coarse = d + _LN_GUARD
+                k_est = fp.mantissa * 10 ** (coarse - d) // _ln2_scaled(coarse)
+                headroom = len(str(1 << (k_est + 1))) if k_est > 0 else 0
+                working = d + _LN_GUARD + headroom
+                unity = 10**working
+                ln2 = _ln2_scaled(working)
+                x = fp.mantissa * 10 ** (working - d)  # x at the working scale, exact
+                k = x // ln2  # floor keeps s in [0, ln 2), where _fp_exp_series needs z >= 0
+                s = x - k * ln2
+                es = _fp_exp_series(s, unity)  # exp(s) * unity
+                num, den = (es << k, unity) if k >= 0 else (es, unity << -k)
+                mantissa, _ = _fp_quantize(num, den, d)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, d), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     # --- reporting (25.1) -----------------------------------------------
 
     def precision(self) -> int | None:

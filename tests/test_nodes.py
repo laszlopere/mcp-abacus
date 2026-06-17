@@ -151,6 +151,7 @@ def test_function_arities_match_the_registry():
         "log": (1, 1),
         "ln": (1, 1),
         "log10": (1, 1),
+        "exp": (1, 1),
         "sum": (1, None),
         "product": (1, None),
         "avg": (1, None),
