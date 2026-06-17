@@ -383,6 +383,53 @@ def test_cbrt_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # factorial (40.4): n! for a non-negative integer, EXACT in every mode — a
+        # product of integers with no rounding.
+        ("factorial(0)", None, "1 (exact)"),  # fixed-point default; 0! = 1
+        ("factorial(5)", None, "120 (exact)"),
+        ("factorial(10)", None, "3628800 (exact)"),
+        ("factorial(5.00)", None, "120 (exact)"),  # whole-valued fixed-point literal is in domain
+        ("factorial(0)", "rational", "1 (exact)"),
+        ("factorial(20)", "rational", "2432902008176640000 (exact)"),  # exact bignum, no scale
+        # binary64: exact while the double represents n! precisely (every n <= 18; 20!
+        # still lands exactly via its trailing factors of two), inexact once it cannot.
+        ("factorial(5)", "floating-point", "120.0 (exact)"),
+        ("factorial(18)", "floating-point", "6402373705728000.0 (exact)"),
+        ("factorial(20)", "floating-point", "2.43290200817664e+18 (exact)"),
+        ("factorial(25)", "floating-point", "1.5511210043330986e+25 (inexact)"),
+    ],
+)
+def test_factorial(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # A negative operand is the gamma extension (40.4.1), refused here in every mode...
+        ("factorial(-1)", None, "factorial of a negative value"),
+        ("factorial(-1)", "floating-point", "factorial of a negative value"),
+        ("factorial(-1)", "rational", "factorial of a negative value"),
+        # ...as is a non-integer operand (the integer-domain gate, shared with gcd/lcm).
+        ("factorial(2.5)", None, "factorial requires integer operands"),
+        ("factorial(2.5)", "floating-point", "factorial requires integer operands"),
+        ("factorial(1/2)", "rational", "factorial requires integer operands"),
+        # n is capped so a huge operand cannot blow up...
+        ("factorial(1001)", None, "factorial argument too large (limit 1000)"),
+        ("factorial(1001)", "rational", "factorial argument too large (limit 1000)"),
+        # ...and float refuses far below the cap, where n! overflows a double (~n>170).
+        ("factorial(171)", "floating-point", "factorial overflows floating-point"),
+    ],
+)
+def test_factorial_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # floor (28.23): round toward -inf with an optional ndigits count (default 0).
         # Fixed-point snaps to the grid, always exact.
         ("floor(2.7)", None, "2 (exact)"),

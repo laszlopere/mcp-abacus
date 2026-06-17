@@ -738,6 +738,8 @@ def _integer_log(x: Fraction, base: Fraction) -> int | None:
 
 _INTEGER_LOG_LIMIT = 4096  # cap on the candidate exponent _integer_log will verify
 
+_MAX_FACTORIAL = 1000  # cap on n in factorial(n); keeps a huge operand from blowing up
+
 
 def _fp_ln(fp: FixedPoint) -> tuple[int, int]:
     """Natural log of a POSITIVE fixed-point value (28.17), as a scaled int.
@@ -2036,6 +2038,43 @@ class Value:
             self._same_mode(other, "lcm")
             ints.append(other._as_integer("lcm"))
         return Value._from_scaled_int(math.lcm(*ints), 0, self.mode)
+
+    def factorial(self) -> "Value":
+        """n! for a NON-NEGATIVE INTEGER n (40.4) — UNARY, EXACT in every mode (a
+        product of integers, no rounding).
+
+        DOMAIN is non-negative integers only: the operand goes through
+        ``_as_integer`` (so a fractional fixed-point value, a rational with
+        denominator != 1, or a non-whole float REFUSES), and a negative operand
+        REFUSES too — both the negative and the non-integer cases are the
+        continuous gamma extension n! = gamma(n+1), deferred to 40.4.1. n is capped
+        at ``_MAX_FACTORIAL`` so a huge operand cannot lock the process up building
+        an astronomically large integer.
+
+        fixed-point / rational: the exact integer ``math.factorial(n)`` at scale 0,
+            like gcd/lcm — always exact.
+        floating-point: ``float(n!)``, refusing when that overflows a double
+            (~n > 170, well under the cap). Marked exact only when the double
+            represents n! precisely (every n <= 18; some larger n via n!'s trailing
+            factors of two), honoring the exact-in-every-mode contract.
+        """
+        n = self._as_integer("factorial")
+        if n < 0:
+            raise NotRepresentableError("factorial of a negative value")
+        if n > _MAX_FACTORIAL:
+            raise NotRepresentableError(f"factorial argument too large (limit {_MAX_FACTORIAL})")
+        f = math.factorial(n)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                try:
+                    fl = float(f)
+                except OverflowError:
+                    raise NotRepresentableError("factorial overflows floating-point") from None
+                return Value(Mode.FLOATING_POINT, fl, exact=(int(fl) == f))
+            case Mode.FIXED_POINT | Mode.RATIONAL:
+                return Value._from_scaled_int(f, 0, self.mode)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
 
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root

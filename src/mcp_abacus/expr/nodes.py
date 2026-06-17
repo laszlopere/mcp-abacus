@@ -109,6 +109,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
     "lcm": Value.lcm,  # 40.8 — variadic; math.lcm of magnitudes, integer-only, zero absorbs to 0
+    "factorial": Value.factorial,  # 40.4 — n! for a non-negative integer, exact every mode, capped
 }
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
@@ -204,6 +205,8 @@ FUNCTION_HELP: dict[str, str] = {
     "stddev": "population standard deviation, sqrt of variance",
     "gcd": "greatest common divisor of the operands; integer-only, sign-dropped, exact everywhere",
     "lcm": "least common multiple of the operands; integer-only, any zero gives 0, exact always",
+    "factorial": "n! for a non-negative integer; exact in every type, refuses negative/non-integer "
+    "operands, capped at 1000 (float refuses past the double range, ~n>170)",
     "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
     "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",

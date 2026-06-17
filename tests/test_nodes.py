@@ -176,6 +176,7 @@ def test_function_arities_match_the_registry():
         "stddev": (1, None),
         "gcd": (1, None),  # 40.7 — variadic, minimum one operand
         "lcm": (1, None),  # 40.8 — variadic, minimum one operand
+        "factorial": (1, 1),  # 40.4 — UNARY, n! for a non-negative integer
         "pi": (0, 0),  # nullary constant (29.2)
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)

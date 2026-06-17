@@ -1786,15 +1786,16 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                the public atanh goes through ln, it does NOT re-expose the series.
                Transcendental: inexact except the zero landmarks, rational
                refuses non-zero.
-    [ ] 40.4.  factorial(n) / gamma(x) — UNARY. factorial is n! for a
-               NON-NEGATIVE INTEGER n, EXACT in every mode (a product of
-               integers, no rounding); a negative or non-integer operand is the
-               gamma extension n! = gamma(n+1), transcendental — float/fixed-point
-               inexact, rational refuses (like exp). gamma(x) is the continuous
-               form with POLES at zero and the negative integers (refuse there in
-               every mode). DECIDE whether to ship both names or just factorial
-               with a gamma fallback; the exact integer path is the common case
-               (combinatorics, below).
+    [x] 40.4.  factorial(n) — UNARY. n! for a NON-NEGATIVE INTEGER n, EXACT in
+               every mode (a product of integers, no rounding). Refuses a negative
+               or non-integer operand (that is the gamma extension, 40.4.1) and
+               caps n so a huge operand cannot blow up. The common case is the
+               exact integer path (combinatorics, comb/perm below).
+        [ ] 40.4.1.  gamma(x) — the continuous factorial, n! = gamma(n+1):
+                     transcendental (float/fixed-point inexact, rational refuses
+                     like exp), with POLES at zero and the negative integers
+                     (refuse there in every mode). Also extends factorial() to
+                     negative / non-integer operands via gamma(n+1).
     [ ] 40.5.  comb(n, k) — binomial coefficient n!/(k!(n-k)!), the BINARY
                fixed-arity-2 shape (pow/atan2, 28.20/40.1). EXACT for integer
                n >= k >= 0 in every mode (cancel to an integer; compute the
