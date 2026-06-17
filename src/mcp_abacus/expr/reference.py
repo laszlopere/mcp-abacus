@@ -187,10 +187,20 @@ _SECTIONS: dict[str, tuple[str, Callable[[], str]]] = {
 }
 
 
+def sections() -> tuple[str, ...]:
+    """The valid section names, in registry order."""
+    return tuple(_SECTIONS)
+
+
+def index() -> str:
+    """A one-line-per-section listing of the available reference sections."""
+    return "\n".join(f"{name} — {desc}" for name, (desc, _) in _SECTIONS.items())
+
+
 def render(section: str) -> str:
     """Return ``section``'s reference text, or the valid-section list if unknown."""
     entry = _SECTIONS.get(section)
     if entry is None:
-        index = "\n".join(f"  {name} — {desc}" for name, (desc, _) in _SECTIONS.items())
-        return f"unknown section {section!r}. valid sections:\n{index}"
+        listing = "\n".join(f"  {name} — {desc}" for name, (desc, _) in _SECTIONS.items())
+        return f"unknown section {section!r}. valid sections:\n{listing}"
     return entry[1]()

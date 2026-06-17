@@ -6,8 +6,9 @@
 import asyncio
 import json
 
+from mcp_abacus.expr import reference
 from mcp_abacus.expr.value import Mode
-from mcp_abacus.server import _resolve_mode_and_precision, mcp
+from mcp_abacus.server import _resolve_mode_and_precision, mcp, reference_section
 
 
 def _content_blocks(call_tool_result):
@@ -47,6 +48,21 @@ def test_invoking_help_through_the_app_returns_section_text():
     result = asyncio.run(mcp.call_tool("help", {"section": "types"}))
     blocks = _content_blocks(result)
     assert "floating-point" in blocks[0].text
+
+
+def test_reference_resources_are_registered_on_the_app():
+    # TODO 41.8: the help reference is also exposed as resources, so a non-tool client
+    # (and Glama's introspection) finds something under resources/templates.
+    resources = {str(r.uri) for r in asyncio.run(mcp.list_resources())}
+    templates = {t.uriTemplate for t in asyncio.run(mcp.list_resource_templates())}
+    assert "abacus://reference" in resources
+    assert "abacus://reference/{section}" in templates
+
+
+def test_reference_section_resource_mirrors_the_help_tool():
+    # The resource and the `help` tool render the SAME section text — one source.
+    for section in reference.sections():
+        assert reference_section(section) == reference.render(section)
 
 
 def test_calculate_tool_has_optional_mode_defaulting_to_fixed_point():

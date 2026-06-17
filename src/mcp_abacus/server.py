@@ -59,7 +59,13 @@ mcp = FastMCP(
 
 @mcp.tool()
 def info() -> dict:
-    """Report mcp-abacus server availability, version, and environment information."""
+    """Report mcp-abacus server availability, version, and environment information.
+
+    `toolsets` lists the opt-in tool groups active in this build. It is EMPTY today —
+    every tool registers unconditionally — and is reserved for the future toolset
+    gating (SA.1); it is reported now so a client can read the active set once that
+    lands.
+    """
     return {
         "status": "available",
         "name": "mcp-abacus",
@@ -68,6 +74,36 @@ def info() -> dict:
         "mcp_sdk": version("mcp"),
         "toolsets": [],
     }
+
+
+@mcp.resource(
+    "abacus://reference",
+    name="abacus-reference-index",
+    title="abacus reference index",
+    description=(
+        "Index of the available reference sections; read abacus://reference/"
+        "{section} for one section's full text."
+    ),
+    mime_type="text/markdown",
+)
+def reference_index() -> str:
+    """List the reference sections an LLM can read, one per line."""
+    return reference.index()
+
+
+@mcp.resource(
+    "abacus://reference/{section}",
+    name="abacus-reference-section",
+    title="abacus reference section",
+    description=(
+        "The reference text for one section: 'types', 'language', 'functions', or "
+        "'solver' — the same content the `help` tool returns, exposed as a resource."
+    ),
+    mime_type="text/markdown",
+)
+def reference_section(section: str) -> str:
+    """Return one reference section's text (mirrors the `help` tool)."""
+    return reference.render(section)
 
 
 # The valid `help` sections, advertised to clients as a schema enum. Kept in

@@ -1931,12 +1931,12 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 41.6.  Encode solver's single (variable+lower+upper) vs multiple (variables)
                form coupling in the param descriptions; schema shows them as
                independent optionals (no oneOf).
-    [ ] 41.7.  Drop or document info()'s always-empty "toolsets": [] (server.py:49)
+    [x] 41.7.  Drop or document info()'s always-empty "toolsets": [] (server.py:49)
                until the SA.1 gating lands.
-    [ ] 41.8.  Consider exposing the help reference as an MCP resource (e.g.
+    [x] 41.8.  Consider exposing the help reference as an MCP resource (e.g.
                abacus://reference/{section}); Glama introspection probes
                resources/prompts and none are exposed today.
-    [ ] 41.9.  Add classifiers to pyproject.toml (License, Python versions, Topic)
+    [x] 41.9.  Add classifiers to pyproject.toml (License, Python versions, Topic)
                for metadata completeness.
 
 

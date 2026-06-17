@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from pydantic import AnyUrl
 
 # Launch the server with the interpreter already running the tests (the venv
 # that has mcp_abacus installed), via its console module entry point.
@@ -246,6 +247,31 @@ def test_initialize_handshake_identifies_the_server():
         "info",
         "solver",
     ]
+
+
+def test_reference_is_exposed_as_resources_over_the_wire():
+    # TODO 41.8: the help reference is also exposed as MCP resources — a static index
+    # (abacus://reference) plus a template (abacus://reference/{section}) — so Glama's
+    # resources probe finds something and a client can read the grammar without a tool
+    # call. Asserted end-to-end: the registrations are advertised AND readable.
+    async def go():
+        async with stdio_client(SERVER) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                resources = await session.list_resources()
+                templates = await session.list_resource_templates()
+                index = await session.read_resource(AnyUrl("abacus://reference"))
+                types = await session.read_resource(AnyUrl("abacus://reference/types"))
+                return resources, templates, index, types
+
+    resources, templates, index, types = asyncio.run(go())
+    assert "abacus://reference" in [str(r.uri) for r in resources.resources]
+    assert "abacus://reference/{section}" in [t.uriTemplate for t in templates.resourceTemplates]
+    # The index lists every section; a section read returns that section's text.
+    index_text = index.contents[0].text
+    for section in ("types", "language", "functions", "solver"):
+        assert section in index_text
+    assert "floating-point" in types.contents[0].text  # the 'types' section content
 
 
 def test_initialize_carries_server_instructions_over_the_wire():

@@ -114,6 +114,16 @@ def test_every_mode_has_a_help_line():
     assert set(MODE_HELP) == set(Mode)
 
 
+def test_index_and_sections_list_every_registered_section():
+    # TODO 41.8: the resource index is built from the same _SECTIONS registry, so it
+    # must name every section and stay in step with sections().
+    assert set(reference.sections()) == set(reference._SECTIONS)
+    index = reference.index()
+    for name, (desc, _builder) in reference._SECTIONS.items():
+        assert name in index
+        assert desc in index
+
+
 def test_help_section_enum_mirrors_the_reference_sections():
     # TODO 41.2: the help tool's `section` is a Literal enum (server.HelpSection) so
     # clients see the valid values in the schema. It must stay in lockstep with the
