@@ -623,6 +623,81 @@ def test_the_bare_constants_pi_and_e():
     ]
 
 
+# --- integral: the definite-integral special form (40.18) --------------------
+
+
+def test_integral_polynomials_through_the_grid():
+    # integral(expr, var, a, b) is a SPECIAL FORM: the 1st argument is the unevaluated
+    # integrand and the 2nd a bare variable NAME, not values. Adaptive Simpson is exact for
+    # polynomials up to degree 3, so these land on the true area — yet a quadrature only
+    # APPROXIMATES, so every line is flagged inexact. The group covers a linear and a
+    # quadratic integrand, a signed interval (a > b negates), and a constant integrand
+    # (the variable need not occur). Pinned at scale 4 so the digits are stable.
+    program = _annotated(
+        "definite integrals of low-degree polynomials, including a signed and a constant",
+        "integral(x, x, 0, 2)\nintegral(x**2, x, 0, 3)\n"
+        "integral(x**2, x, 3, 0)\nintegral(1, x, 0, 5)",
+    )
+    assert _values(_calc(program, floor=4)) == [
+        "2.0000 (inexact, rounded to 4 decimals)",  # ∫x dx over [0,2]
+        "9.0000 (inexact, rounded to 4 decimals)",  # ∫x**2 dx over [0,3]
+        "-9.0000 (inexact, rounded to 4 decimals)",  # a > b integrates with sign
+        "5.0000 (inexact, rounded to 4 decimals)",  # constant integrand: var unused
+    ]
+
+
+def test_integral_reads_a_shared_assignment():
+    # The reason to group: the integrand re-evaluates in a child scope seeded from the
+    # program's, so a leading assignment (a = 3) feeds the integral while the integration
+    # variable x shadows the per-sample point. ∫(3*x) dx over [0,2] = 6, exact-valued in
+    # rational but still flagged inexact (the quadrature rule).
+    program = _annotated(
+        "an outer assignment feeds the integrand through the shared scope",
+        "a = 3\nintegral(a * x, x, 0, 2)",
+    )
+    assert _values(_calc(program, mode="rational")) == ["6 (inexact)"]
+
+
+def test_integral_in_rational_is_inexact_even_when_the_value_is_whole():
+    # Contrast with the rational group below: where sqrt/cbrt stay EXACT on a clean result,
+    # the integral is inexact in EVERY mode — Simpson is exact for these low-degree
+    # integrands so the value is a whole fraction, but it stands for the true integral it
+    # only approximates, so the honest flag is inexact (a == b gives a still-inexact 0).
+    program = _annotated(
+        "rational integrals: whole-valued, yet flagged inexact (a quadrature)",
+        "integral(x**2, x, 0, 3)\nintegral(2 * x + 1, x, 0, 1)\nintegral(x, x, 2, 2)",
+    )
+    assert _values(_calc(program, mode="rational")) == [
+        "9 (inexact)",
+        "2 (inexact)",
+        "0 (inexact)",  # zero-width interval
+    ]
+
+
+def test_integral_transcendental_rounds_at_the_floor():
+    # A transcendental integrand is not Simpson-exact, so the result is a genuine
+    # approximation that rounds to the operand scale and flags inexact. ∫sin(x) dx over
+    # [0, pi] = 2; at scale 4 the quadrature lands on 1.9999.
+    program = _annotated(
+        "the area under one arch of sine, ∫sin(x) dx over [0, pi] = 2",
+        "integral(sin(x), x, 0, pi)",
+    )
+    assert _values(_calc(program, floor=4)) == ["1.9999 (inexact, rounded to 4 decimals)"]
+
+
+def test_integral_non_name_variable_aborts_the_group():
+    # The 2nd argument MUST be a bare name (the variable to integrate over); a literal is
+    # not, so the whole program aborts with a self-contained reason — the earlier exact
+    # integral is discarded with it, like any mid-group domain refusal.
+    program = _annotated(
+        "a non-name integration variable aborts the program",
+        "integral(x**2, x, 0, 3)\nintegral(x, 5, 0, 1)",
+    )
+    payload = _calc(program)
+    assert payload["values"] is None
+    assert payload["error"] == "integral's variable (2nd argument) must be a name"
+
+
 # --- rational: exact selection and exact fractions ---------------------------
 
 

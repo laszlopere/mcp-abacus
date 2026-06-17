@@ -125,6 +125,24 @@ _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
 }
 
 
+# The special-form set (40.18): a THIRD callable KIND beside _FUNCS and _NULLARY_FUNCS.
+# A special form does NOT receive evaluated operands — it takes the run EvalContext and
+# its arguments' UNEVALUATED subtrees, because (like the solver) some arguments are an
+# unevaluated sub-program and a free variable NAME, not values. ``integral(expr, var, a,
+# b)`` is the first: ``expr`` is re-evaluated at many sample points with ``var`` bound to
+# each, never walked once as an operand. The implementation needs the AST (Node.evaluate),
+# which value.py cannot see, so unlike every other function it lives in the sibling engine
+# module expr.forms, NOT as a Value method; FuncCall._evaluate defers the import to it (the
+# same call-time-import trick reference.py uses for the solver, avoiding a load-time cycle).
+# Only the static name -> arity table lives here, the single source the parser validates
+# against; arity is fixed per form (not read off a signature — the args are Nodes, not the
+# call's user arguments in the operand-method sense).
+_SPECIAL_FORM_ARITIES: dict[str, tuple[int, int | None]] = {
+    "integral": (4, 4),  # 40.18 — integral(expr, var, a, b); definite integral, always inexact
+}
+_SPECIAL_FORM_NAMES: frozenset[str] = frozenset(_SPECIAL_FORM_ARITIES)
+
+
 # The nullaries that double as bare constants (29.6): pi and e may be written WITHOUT
 # parentheses, so `2*pi` reads the constant like a literal. The parser turns a bare
 # `pi`/`e` into the same nullary FuncCall as `pi()`/`e()`, so evaluation is identical.
@@ -188,6 +206,9 @@ FUNCTION_HELP: dict[str, str] = {
     "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
     "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",
+    "integral": "definite integral of an expression over [a, b] w.r.t. the variable NAMED by "
+    "the 2nd arg (1st arg is the unevaluated integrand, 2nd a bare name — NOT values); "
+    "adaptive-Simpson quadrature, always inexact",
 }
 
 
@@ -218,6 +239,7 @@ def _arity_of(func: Callable[..., Value]) -> tuple[int, int | None]:
 FUNCTION_ARITIES: dict[str, tuple[int, int | None]] = {
     **{name: _arity_of(func) for name, func in _FUNCS.items()},
     **{name: (0, 0) for name in _NULLARY_FUNCS},
+    **_SPECIAL_FORM_ARITIES,  # 40.18 — fixed per form, not read off a signature
 }
 
 
@@ -607,7 +629,11 @@ class FuncCall(Node):
     value: Value | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.name not in _FUNCS and self.name not in _NULLARY_FUNCS:
+        if (
+            self.name not in _FUNCS
+            and self.name not in _NULLARY_FUNCS
+            and self.name not in _SPECIAL_FORM_NAMES
+        ):
             raise ValueError(f"unknown function: {self.name!r}")
         if not _arity_ok(self.name, len(self.args)):
             lo, hi = FUNCTION_ARITIES[self.name]
@@ -625,15 +651,37 @@ class FuncCall(Node):
     def _operand_form(self, scale: int | None) -> str:
         # Call syntax over the arguments' VALUES at the active precision (35.3.1):
         # "sqrt(2.00)"; a nullary like pi() renders with empty parentheses.
+        if self.name in _SPECIAL_FORM_NAMES:
+            # A special form (40.18) never walks its expr/var args as operands, so they
+            # carry no value to lay out — fall back to the lexeme-level source rendering.
+            return self.source()
         return f"{self.name}({', '.join(_operand_value_string(arg, scale) for arg in self.args)})"
 
     def _children(self) -> tuple[Node, ...]:
         return self.args
 
+    def referenced_names(self) -> frozenset[str]:
+        # A special form's named variable (40.18) is BOUND inside the call (a dummy the
+        # form rebinds per sample), not a free reference — so drop it from the names this
+        # subtree reads, keeping it from surfacing as a free unknown when an integral is
+        # nested in a solver expression. Every other function reads the base union.
+        names = Node.referenced_names(self)
+        if self.name in _SPECIAL_FORM_NAMES and isinstance(self.args[1], Var):
+            return names - {self.args[1].name}
+        return names
+
     def _evaluate(self, ctx: EvalContext) -> Value:
-        # A nullary takes the context, not operands (29.2); every other function is
-        # an operand-method fed its evaluated arguments. Arity 0 vs the operand path
-        # is settled by which registry holds the name.
+        # A nullary takes the context, not operands (29.2); a special form (40.18) takes
+        # the context and its UNEVALUATED argument subtrees; every other function is an
+        # operand-method fed its evaluated arguments. Which path is settled by which
+        # registry holds the name.
+        if self.name in _SPECIAL_FORM_NAMES:
+            # Deferred import (like reference.py's solver edge): the implementation lives
+            # in the sibling engine expr.forms, which imports this module — a call-time
+            # import keeps that edge out of module load and avoids a cycle.
+            from mcp_abacus.expr.forms import dispatch_special_form
+
+            return dispatch_special_form(self.name, ctx, self.args)
         if self.name in _NULLARY_FUNCS:
             return _NULLARY_FUNCS[self.name](ctx)
         return _FUNCS[self.name](*(arg._walk(ctx) for arg in self.args))

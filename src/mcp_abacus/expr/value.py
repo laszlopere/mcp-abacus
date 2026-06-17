@@ -261,6 +261,20 @@ class VariableStore:
         except KeyError:
             raise UndefinedVariableError(name) from None
 
+    def copy(self) -> "VariableStore":
+        """A shallow clone — a fresh store with the SAME bindings (40.18).
+
+        The solver-adjacent forms (``integral``) re-evaluate a sub-program many times
+        with one name rebound to each sample point; they seed a per-sample store from
+        the enclosing run's store so the integrand can still read the outer bindings,
+        while the bound (dummy) variable shadows any outer binding of the same name.
+        Cloning keeps those per-sample rebindings from leaking back into the run's own
+        store. Values are immutable, so a shallow dict copy is enough.
+        """
+        clone = VariableStore()
+        clone._values = dict(self._values)
+        return clone
+
 
 @dataclass(frozen=True, slots=True)
 class EvalContext:

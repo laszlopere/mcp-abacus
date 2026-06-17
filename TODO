@@ -1880,7 +1880,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                are an unevaluated program + a free variable NAME, not values — so it
                is solver-adjacent, not an ordinary 40.x operand-method. Inherently
                inexact in every mode (a finite-difference quotient).
-    [ ] 40.18. integral(expr, var, a, b) — definite integral of an expression w.r.t.
+    [x] 40.18. integral(expr, var, a, b) — definite integral of an expression w.r.t.
                a named variable over [a, b]. Same solver-adjacent shape as diff
                (40.17): `expr`/`var` are an unevaluated program + a free variable
                NAME, not values. Inherently inexact in every mode (a numerical

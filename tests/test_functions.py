@@ -1584,3 +1584,87 @@ def test_time_rational_through_the_tool_does_not_refuse():
     payload = _calc("time()", "rational")
     assert payload["error"] is None
     assert payload["value"] is not None
+
+
+# --- integral(expr, var, a, b): the definite integral special form (40.18) ----
+# A SOLVER-ADJACENT special form: `expr` is the unevaluated integrand and `var` a bare
+# NAME, not values. Adaptive-Simpson quadrature in the active mode (no float shadow); the
+# result is ALWAYS inexact (a quadrature only approximates the integral). Simpson is EXACT
+# for polynomials up to degree 3, so a low-degree integrand lands on the true value in
+# every mode — still flagged inexact — which keeps these assertions deterministic.
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "value"),
+    [
+        # Linear is Simpson-exact even at fixed-point scale 0 (midpoints stay on the grid).
+        ("integral(x, x, 0, 2)", None, None, "2 (inexact, rounded to 0 decimals "
+         "— pass min_fixed_point_precision for more)"),
+        # Raising the fixed-point floor carries the precision through the quadrature.
+        ("integral(x, x, 0, 2)", None, 4, "2.0000 (inexact, rounded to 4 decimals)"),
+        ("integral(x**2, x, 0, 3)", None, 4, "9.0000 (inexact, rounded to 4 decimals)"),
+        # x**2 is degree 2 — Simpson-exact — so float and rational hit 9 exactly (inexact).
+        ("integral(x**2, x, 0, 3)", "floating-point", None, "9.0 (inexact)"),
+        ("integral(x**2, x, 0, 3)", "rational", None, "9 (inexact)"),
+        ("integral(2*x+1, x, 0, 1)", "floating-point", None, "2.0 (inexact)"),
+        # A constant integrand: var need not occur; the area is just height * width.
+        ("integral(1, x, 0, 5)", "rational", None, "5 (inexact)"),
+        # a > b integrates with sign; a == b is zero — both still flagged inexact.
+        ("integral(x**2, x, 3, 0)", "rational", None, "-9 (inexact)"),
+        ("integral(x, x, 2, 2)", "rational", None, "0 (inexact)"),
+    ],
+)
+def test_integral(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
+
+
+def test_integral_reads_outer_variables():
+    # The integrand re-evaluates in a child store seeded from the run's, so it can read an
+    # outer binding (k) while the integration variable (x) shadows the per-sample point.
+    assert _value("k = 3\nintegral(k*x, x, 0, 2)", "rational") == "6 (inexact)"
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "expected"),
+    [
+        # A transcendental integrand: not Simpson-exact, so the result only approximates —
+        # assert closeness rather than an exact string. integral of sin over [0, pi] = 2.
+        ("integral(sin(x), x, 0, pi)", "floating-point", None, 2.0),
+        ("integral(sin(x), x, 0, pi)", None, 6, 2.0),
+    ],
+)
+def test_integral_transcendental_is_close(expression, mode, floor, expected):
+    rendered = _value(expression, mode, floor)
+    number, annotation = rendered.split(" ", 1)
+    assert annotation.startswith("(inexact")
+    assert abs(float(number) - expected) < 1e-4
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # The 2nd argument must be a bare name: a literal or a constant nullary (pi/e) is not.
+        ("integral(x, 5, 0, 1)", None, "integral's variable (2nd argument) must be a name"),
+        ("integral(x, pi, 0, 1)", None, "integral's variable (2nd argument) must be a name"),
+        # A transcendental integrand in rational mode refuses at the sample, like sin does
+        # everywhere — surfaced as the integrand's own line-tagged error, not a special one.
+        ("integral(sin(x), x, 0, 1)", "rational", "sine of a non-zero rational is irrational"),
+    ],
+)
+def test_integral_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_integral_arity_is_a_parse_error():
+    # Fixed arity 4, wired through FUNCTION_ARITIES like every call — wrong count is caught
+    # at parse, before evaluation, the same as a misused ordinary function.
+    payload = _calc("integral(x, x, 0)")
+    assert payload["value"] is None
+    assert "takes 4 argument(s)" in payload["error"]
+
+
+def test_integral_masks_its_bound_variable_in_referenced_names():
+    # The integration variable is BOUND (a dummy the form rebinds per sample), so it is not
+    # a free reference — only genuinely free names (here `t`) leak out, which keeps the
+    # dummy from being mistaken for a solver unknown when an integral is nested.
+    assert parse("integral(x*t, x, 0, 1)").referenced_names() == frozenset({"t"})
