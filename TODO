@@ -1910,3 +1910,33 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                [0, 1] extrapolates).
 
 
+[ ] 41.  GLAMA TOOL-DEFINITION-QUALITY FIXES  (audit 2026-06-17. Root cause:
+         schema coverage 0% on every tool — params are bare signature args, no
+         Field/Annotated/Literal in src/. This is Glama's top deduction.)
+    [ ] 41.1.  Add Annotated[T, Field(description=...)] to every tool param —
+               calculate (server.py:308-313), analyze (462-464), solver (508-518),
+               help (54). Takes coverage 0%->100%, no behaviour change. Biggest lever.
+    [ ] 41.2.  Make help's `section` a Literal["types","language","functions",
+               "solver"] enum (server.py:54), mirroring reference._SECTIONS; add a
+               test asserting the two stay in sync.
+    [ ] 41.3.  Add an MCP server instructions= string at server.py:37 (currently
+               bare FastMCP("mcp-abacus")); bytesmith/tmux/molecules all set one.
+               Lift from README lede (three modes, exact/inexact verdict).
+    [ ] 41.4.  Fix pyproject.toml:8 description — claims five regimes ("fixed-width
+               int … decimal … rational"); only three modes exist (fixed-point,
+               floating-point, rational). Contradicts engine + README.
+    [ ] 41.5.  Add a "when to use vs siblings" sentence to calculate's docstring;
+               cross-refs are one-directional (analyze/solver point to calculate,
+               not back).
+    [ ] 41.6.  Encode solver's single (variable+lower+upper) vs multiple (variables)
+               form coupling in the param descriptions; schema shows them as
+               independent optionals (no oneOf).
+    [ ] 41.7.  Drop or document info()'s always-empty "toolsets": [] (server.py:49)
+               until the SA.1 gating lands.
+    [ ] 41.8.  Consider exposing the help reference as an MCP resource (e.g.
+               abacus://reference/{section}); Glama introspection probes
+               resources/prompts and none are exposed today.
+    [ ] 41.9.  Add classifiers to pyproject.toml (License, Python versions, Topic)
+               for metadata completeness.
+
+
