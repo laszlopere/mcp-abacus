@@ -1,3 +1,47 @@
+  Rounding family — floor / ceil / round
+
+  1. I'm boxing up 230 home-made cookies into bags of 7 to sell at the fair. How
+  many full bags can I make, and how many cookies will be left over for me to
+  nibble? (→ floor, with remainder)
+  2. A school outing has 154 children and each minibus seats 17. How many minibuses do we need to book so that nobody
+  gets left behind? (→ ceil)
+  3. Dinner came to 47 euros and I want to leave an 18% tip, but I'd like to hand over a round number of euros to keep
+  the cash simple. What should I pay, rounded to the nearest euro? (→ round)
+  4. My fuel receipt says I pumped 38.6 litres, but my mileage logbook only takes whole litres. What do I write down?
+  (→ round / floor depending on intent)
+
+  Exponential change — exp
+
+  5. I left a bottle of fizzy water open and it goes flat steadily, losing about
+  the same share of its bubbles every hour. If it lost a quarter of its fizz in
+  the first hour, how much is still left after a six-hour evening? 
+
+  6. My savings sit in an account that grows continuously at a steady yearly
+  rate of 4%. If I leave 5,000 in it untouched for three years, what will it
+  have grown to? 
+
+  7. My back garden drops by about 1 metre over a 12-metre run from the house to
+  the fence. How many degrees of slope is that? 
+
+  8. A delivery ramp rises 30 centimetres, and the sloped surface of the ramp
+  itself is 2 metres long. What angle does it make with the ground, in degrees?
+
+  9. My last six electricity bills were 88, 92, 79, 105, 96 and 84 euros. How
+  much do my bills typically swing from one month to the next? 
+
+  10. I timed my morning jog on five different days and got 27, 31, 26, 29 and 33 minutes. How consistent am I —
+  what's the typical spread in those times? (→ sample stddev)
+
+  Straight-line distance — hypot
+
+  11. Walking to the station I go 600 metres along one street, then turn the corner and go 800 metres along the next.
+  If there were a footpath cutting straight across, how long would that shortcut be? (→ hypot)
+  12. I want to check whether a new monitor will sit on my desk. The desk is 70 centimetres deep and 140 centimetres
+  wide — what's the straight-line distance from one corner to the opposite one? (→ hypot)
+
+
+
+
 
 1 AI Abacus usage issues.
   1. First attempt (failed — pi isn't a built-in constant):
@@ -103,8 +147,6 @@
 
 
   Tier 1 — things I had to work around this session
-
-  These each cost me a manual step or an extra call in problems we actually did:
 
   - floor / ceil / round / trunc — the biggest gap. The Uniswap getAmountIn
     answer is literally floor(…) + 1 at wei precision, and abacus has no
