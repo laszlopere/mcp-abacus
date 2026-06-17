@@ -143,6 +143,7 @@ def test_function_arities_match_the_registry():
         "sqrt": (1, 1),
         "cbrt": (1, 1),
         "pow": (2, 2),  # the only BINARY function — fixed arity 2 (28.20)
+        "floor": (1, 2),  # operand + optional ndigits — the first (1, 2) function (28.23)
         "sin": (1, 1),
         "cos": (1, 1),
         "tan": (1, 1),
@@ -174,14 +175,17 @@ def test_arity_of_treats_defaulted_param_as_optional():
     # the min. round(self, ndigits=None) reads (1, 2): one required operand plus one
     # optional trailing arg. The prerequisite shape for floor/ceil/round/trunc.
     def round_(self, ndigits=None): ...
+
     assert _arity_of(round_) == (1, 2)
 
     # A required param still counts toward the min; a *args tail still wins the max.
     def two_or_more(self, other, *rest): ...
+
     assert _arity_of(two_or_more) == (2, None)
 
     # All-required is unchanged (regression guard for the existing funcs).
     def binary(self, other): ...
+
     assert _arity_of(binary) == (2, 2)
 
 

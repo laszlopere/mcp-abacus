@@ -76,6 +76,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "sqrt": Value.sqrt,  # 22.4.2 — irrational, inexact except on the mode's grid
     "cbrt": Value.cbrt,  # 28.21 — cube root; odd root so negatives OK, inexact except perfect cubes
     "pow": Value.pow,  # 28.20 — binary; the call form of **, reuses Value.pow (fixed-arity 2)
+    "floor": Value.floor,  # 28.23 — round toward -inf; optional ndigits (1,2), mostly exact
     "sin": Value.sin,  # 28.10 — transcendental; fixed-point Taylor series, else inexact/refuse
     "cos": Value.cos,  # 28.11 — sin's machinery; even Taylor series, else inexact/refuse
     "tan": Value.tan,  # 28.12 — sin/cos; fixed-point divides the two series, else inexact/refuse
@@ -136,6 +137,7 @@ FUNCTION_HELP: dict[str, str] = {
     "cbrt": "cube root; negatives OK (odd root), inexact except on the type's grid "
     "(rational needs a perfect cube)",
     "pow": "x to the power y; the call form of the ** operator",
+    "floor": "round toward -inf; optional ndigits (default 0); exact except float with ndigits>0",
     "sin": "sine, radians; inexact except sin(0)=0, rational refuses non-zero",
     "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",
     "tan": "tangent, radians; inexact except tan(0)=0, undefined at odd multiples of pi/2",
@@ -156,10 +158,8 @@ FUNCTION_HELP: dict[str, str] = {
     "median": "middle operand by value; odd count exact, even averages the two middles",
     "variance": "population variance, sum of squared deviations / n",
     "stddev": "population standard deviation, sqrt of variance",
-    "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, "
-    "rational refuses",
-    "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, "
-    "rational refuses",
+    "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
+    "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",
 }
 

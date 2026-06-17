@@ -1248,7 +1248,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 INTEGER (any mode) and read as a Python int — non-integer refuses (the
                 pow integer-exponent stance, 28.20). Negative ndigits rounds to
                 tens/hundreds (round(1234, -2) -> 1200), the standard Python semantics.
-    [ ] 28.23.  floor(x[, ndigits]) — round toward NEGATIVE infinity. UNARY operand-
+    [x] 28.23.  floor(x[, ndigits]) — round toward NEGATIVE infinity. UNARY operand-
                 method (the shape of abs, 19.5.1) with the 28.22 optional ndigits.
                 EXACT in every mode (it snaps to a representable value, no compute) —
                 EXCEPT floating-point with ndigits > 0, where the n-decimal target is

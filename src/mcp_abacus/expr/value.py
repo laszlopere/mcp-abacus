@@ -1450,6 +1450,94 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    @staticmethod
+    def _as_ndigits(value: "Value") -> int:
+        """Read the optional ``ndigits`` argument of the rounding family as a Python int.
+
+        The second operand of floor/ceil/round/trunc (28.22-28.26) is a COUNT of
+        decimal places, not a value-in-the-mode: it is evaluated like any operand,
+        then required to be an INTEGER (no fractional part) in whatever mode the run
+        is in and read as a plain ``int``. A non-integer refuses — the same
+        integer-argument stance ``pow`` takes for its exponent (28.20). The exactness
+        FLAG is irrelevant (a float ``2.0`` is inexact here yet a valid count); only
+        the value's integrality matters. A negative count is allowed (it rounds to
+        tens/hundreds), so no sign check.
+        """
+        match value.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(value.payload, float)
+                if not value.payload.is_integer():
+                    raise NotRepresentableError("ndigits must be an integer")
+                return int(value.payload)
+            case Mode.FIXED_POINT:
+                assert isinstance(value.payload, FixedPoint)
+                fp = value.payload
+                whole, frac = divmod(fp.mantissa, 10**fp.decimals)
+                if frac != 0:
+                    raise NotRepresentableError("ndigits must be an integer")
+                return whole
+            case Mode.RATIONAL:
+                assert isinstance(value.payload, Fraction)
+                if value.payload.denominator != 1:
+                    raise NotRepresentableError("ndigits must be an integer")
+                return value.payload.numerator
+            case _:
+                raise ValueError(f"unsupported mode: {value.mode!r}")
+
+    def floor(self, ndigits: "Value | None" = None) -> "Value":
+        """Round toward NEGATIVE infinity (28.23) — the shape of ``abs`` (19.5.1)
+        with an optional ``ndigits`` count (28.22): a required operand plus one
+        optional trailing integer that fixes how many decimal places to floor at
+        (default 0 — floor to a whole number). ``floor(2.7) -> 2``,
+        ``floor(-2.1) -> -3``; ``floor(1234, -2) -> 1200`` (negative ndigits rounds
+        to tens/hundreds, Python's semantics).
+
+        EXACT in every mode — flooring SELECTS a representable value, it does not
+        compute — EXCEPT floating-point with ``ndigits > 0``, where the n-decimal
+        target (e.g. 2.70) is not binary-representable; flooring a float to an
+        INTEGER (ndigits <= 0) lands on a whole multiple a double holds exactly, so
+        it stays exact.
+        floating-point: ``math.floor`` to an int (ndigits <= 0, exact), else the
+            decimal shift ``floor(x*10**n)/10**n`` (inexact).
+        fixed-point: ``M // 10**d`` on the scaled mantissa — Python ``//`` already
+            floors toward -inf — held at scale ``max(0, n)``. Exact.
+        rational: ``math.floor`` of the shifted fraction, back to a Fraction. Exact.
+        """
+        n = 0 if ndigits is None else Value._as_ndigits(ndigits)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if n <= 0:
+                    # Floor to a whole multiple of 10**-n: an integer-valued double,
+                    # exactly representable. Pure-int scaling keeps it exact.
+                    unit = 10**-n
+                    whole = math.floor(self.payload / unit) * unit
+                    return Value(Mode.FLOATING_POINT, float(whole), exact=True)
+                # n > 0: the n-decimal target is not binary-representable -> inexact.
+                unit = 10**n
+                shifted = math.floor(self.payload * unit) / unit
+                return Value(Mode.FLOATING_POINT, shifted, exact=False)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                # Mantissa floored to scale n (Python // floors toward -inf), then
+                # rescaled to the result scale max(0, n): for n < 0 the floor lands
+                # on tens/hundreds carried at scale 0.
+                if n >= fp.decimals:  # finer than the value: nothing to drop
+                    at_n = fp.mantissa * 10 ** (n - fp.decimals)
+                else:
+                    at_n = fp.mantissa // 10 ** (fp.decimals - n)
+                scale = max(0, n)
+                mantissa = at_n * 10 ** (scale - n)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=self.exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                shift = Fraction(10) ** n
+                floored = Fraction(math.floor(self.payload * shift)) / shift
+                return Value(Mode.RATIONAL, floored, exact=self.exact)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sum_(self, *others: "Value") -> "Value":
         """Total of one-or-more operands (28.5) — VARIADIC; repeated ``+``.
 
