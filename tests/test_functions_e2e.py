@@ -301,6 +301,141 @@ def test_logarithms_and_exponential_are_inverses():
     ]
 
 
+def test_hyperbolics_share_one_argument():
+    # The headline hyperbolic group: one shared x = 1 feeds sinh, cosh and tanh, each
+    # built from e**x and e**-x. Float, so the values are the IEEE-754 doubles, all
+    # inexact, and they satisfy cosh**2 - sinh**2 = 1 (cosh > sinh > tanh here).
+    program = _annotated(
+        "hyperbolic sine, cosine and tangent of the shared x = 1",
+        "x = 1\nsinh(x)\ncosh(x)\ntanh(x)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "1.1752011936438014 (inexact)",  # (e - 1/e)/2
+        "1.5430806348152437 (inexact)",  # (e + 1/e)/2
+        "0.7615941559557649 (inexact)",  # sinh/cosh
+    ]
+
+
+def test_hyperbolics_in_fixed_point_carry_the_precision_hint():
+    # The same trio in fixed-point at scale 6: each is transcendental (built from exp),
+    # so it rounds to the operand's scale and flags inexact with the min_fixed_point_
+    # precision offer. A negative argument keeps the sign (sinh and tanh are odd).
+    program = _annotated(
+        "sinh/cosh/tanh of 1.000000, then sinh of a negative argument",
+        "x = 1.000000\nsinh(x)\ncosh(x)\ntanh(x)\nsinh(-2.000000)",
+    )
+    hint = "inexact, rounded to 6 decimals — pass min_fixed_point_precision for more"
+    assert _values(_calc(program)) == [
+        f"1.175201 ({hint}; e.g. =10 → 1.1752011936)",
+        f"1.543081 ({hint}; e.g. =10 → 1.5430806348)",
+        f"0.761594 ({hint}; e.g. =10 → 0.7615941560)",
+        f"-3.626860 ({hint}; e.g. =10 → -3.6268604078)",  # odd: sinh(-2) = -sinh(2)
+    ]
+
+
+def test_hyperbolic_zero_landmarks_are_exact():
+    # The exact landmarks where the exp core need not run: sinh(0) = 0 and tanh(0) = 0,
+    # while cosh(0) = 1 (cosh's even minimum). Exact on the fixed-point grid — no
+    # rounding hint, the one place the hyperbolics escape inexactness.
+    program = _annotated(
+        "sinh(0) = tanh(0) = 0 and cosh(0) = 1, exact on the grid",
+        "sinh(0)\ncosh(0.000000)\ntanh(0)",
+    )
+    assert _values(_calc(program)) == [
+        "0 (exact)",
+        "1.000000 (exact)",  # scale preserved from the 0.000000 operand
+        "0 (exact)",
+    ]
+
+
+def test_hyperbolics_in_rational_keep_only_the_zero_landmarks():
+    # Rational is exact-or-refuse: the zero landmarks sinh(0)=0, cosh(0)=1, tanh(0)=0
+    # are representable, but a non-zero argument builds on exp (transcendental there),
+    # so the group aborts on the first non-zero call with that reason.
+    program = _annotated(
+        "the exact rational landmarks, then a non-zero cosh that refuses",
+        "sinh(0)\ncosh(0)\ntanh(0)\ncosh(1)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "hyperbolic cosine of a non-zero rational is transcendental"
+
+
+def test_inverse_hyperbolics_invert_the_forward_ones():
+    # The inverse hyperbolics, each reducing to a logarithm: asinh and acosh both take 2,
+    # atanh takes 0.5. Float, so all inexact. asinh(sinh) and acosh(cosh) round-trip — e.g.
+    # asinh(2) here is the angle whose sinh is 2.
+    program = _annotated(
+        "asinh and acosh of 2, atanh of 0.5 — the log-built inverse hyperbolics",
+        "asinh(2)\nacosh(2)\natanh(0.5)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "1.4436354751788103 (inexact)",  # ln(2 + sqrt(5))
+        "1.3169578969248166 (inexact)",  # ln(2 + sqrt(3))
+        "0.5493061443340548 (inexact)",  # ln(3)/2
+    ]
+
+
+def test_inverse_hyperbolics_in_fixed_point_carry_the_precision_hint():
+    # The same group in fixed-point at scale 6: each is transcendental (built from ln),
+    # so it rounds and flags inexact with the precision offer. asinh and atanh are odd, so
+    # negative arguments keep the sign (acosh's domain is x >= 1, so it has no negatives).
+    program = _annotated(
+        "asinh/acosh/atanh of positive args, then the odd negatives of asinh and atanh",
+        "asinh(2.000000)\nacosh(2.000000)\natanh(0.500000)\nasinh(-3.000000)\natanh(-0.900000)",
+    )
+    hint = "inexact, rounded to 6 decimals — pass min_fixed_point_precision for more"
+    assert _values(_calc(program)) == [
+        f"1.443635 ({hint}; e.g. =10 → 1.4436354752)",
+        f"1.316958 ({hint}; e.g. =10 → 1.3169578969)",
+        f"0.549306 ({hint}; e.g. =10 → 0.5493061443)",
+        f"-1.818446 ({hint}; e.g. =10 → -1.8184464592)",  # odd: asinh(-3) = -asinh(3)
+        f"-1.472219 ({hint}; e.g. =10 → -1.4722194896)",  # odd: atanh(-0.9) = -atanh(0.9)
+    ]
+
+
+def test_inverse_hyperbolic_landmarks_are_exact():
+    # The exact landmarks where the ln core need not run: asinh(0) = 0 and atanh(0) = 0,
+    # and acosh(1) = 0 (the bottom of acosh's domain, where the radicand vanishes). Exact
+    # on the fixed-point grid — the one place these escape inexactness.
+    program = _annotated(
+        "asinh(0) = atanh(0) = acosh(1) = 0, exact on the grid",
+        "asinh(0)\nacosh(1.000000)\natanh(0)",
+    )
+    assert _values(_calc(program)) == [
+        "0 (exact)",
+        "0.000000 (exact)",  # scale preserved from the 1.000000 operand
+        "0 (exact)",
+    ]
+
+
+def test_inverse_hyperbolics_in_rational_keep_only_the_landmarks():
+    # Rational is exact-or-refuse: the landmarks asinh(0)=0, acosh(1)=0, atanh(0)=0 are
+    # representable, but any other in-domain argument reduces to a transcendental log, so
+    # the group aborts on the first such call with that reason.
+    program = _annotated(
+        "the exact rational landmarks, then an asinh that refuses",
+        "asinh(0)\nacosh(1)\natanh(0)\nasinh(2)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "inverse hyperbolic sine of a non-zero rational is transcendental"
+
+
+def test_inverse_hyperbolics_refuse_outside_their_domains():
+    # The domain edges, like sqrt's negative refusal: acosh is undefined below 1 and atanh
+    # outside the open (-1, 1) (x = +/-1 would be +/-inf). Each aborts with a self-contained
+    # domain message — checked independently since the first error ends a program.
+    acosh_low = _annotated("acosh below its domain", "acosh(0.5)")
+    assert _calc(acosh_low)["error"] == (
+        "inverse hyperbolic cosine argument below the domain [1, inf)"
+    )
+    atanh_edge = _annotated("atanh at the domain boundary", "atanh(1.000000)")
+    assert _calc(atanh_edge)["error"] == (
+        "inverse hyperbolic tangent argument outside the domain (-1, 1)"
+    )
+
+
 def test_the_bare_constants_pi_and_e():
     # The nullary constants used bare (no parens) and inside an expression: pi, e, and
     # 2*pi. Floating-point gives the math module's doubles, all inexact.

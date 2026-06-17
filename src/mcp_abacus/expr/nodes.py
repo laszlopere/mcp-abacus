@@ -93,6 +93,12 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "log10": Value.log10,  # 28.18 — base-10 log; ln(x)/ln(10), exact on powers of ten
     "log2": Value.log2,  # 28.19 — base-2 log; ln(x)/ln(2), inexact except log2(1)=0
     "exp": Value.exp,  # 28.27 — e**x; reduce by ln2 + exp series, inexact/refuse off the grid
+    "sinh": Value.sinh,  # 40.2 — (e**x - e**-x)/2 via the exp core, inexact except sinh(0)=0
+    "cosh": Value.cosh,  # 40.2 — (e**x + e**-x)/2 via the exp core, inexact except cosh(0)=1
+    "tanh": Value.tanh,  # 40.2 — sinh/cosh via the exp core, inexact except tanh(0)=0
+    "asinh": Value.asinh,  # 40.3 — ln(x+sqrt(x^2+1)) via ln, all reals, except asinh(0)=0
+    "acosh": Value.acosh,  # 40.3 — ln(x+sqrt(x^2-1)) via ln, domain x>=1, except acosh(1)=0
+    "atanh": Value.atanh,  # 40.3 — ln((1+x)/(1-x))/2 via ln, domain |x|<1, except atanh(0)=0
     "sum": Value.sum_,  # 28.5 — variadic; repeated + via reduce, exact in every mode
     "product": Value.product,  # 28.6 — variadic; repeated * via reduce, may round (covering scale)
     "avg": Value.avg,  # 28.4 — variadic; sum / count, follows the mode's / rule
@@ -160,6 +166,12 @@ FUNCTION_HELP: dict[str, str] = {
     "log10": "base-10 log; exact on powers of ten, inexact otherwise, refuses x<=0",
     "log2": "base-2 log; inexact except log2(1)=0, refuses x<=0",
     "exp": "exponential e**x, inverse of log; inexact except exp(0)=1, rational refuses non-zero",
+    "sinh": "hyperbolic sine (e**x-e**-x)/2; inexact except sinh(0)=0, rational refuses non-zero",
+    "cosh": "hyperbolic cosine (e**x+e**-x)/2; inexact except cosh(0)=1, rational refuses non-zero",
+    "tanh": "hyperbolic tangent, range (-1,1); inexact except tanh(0)=0, refuses non-zero rational",
+    "asinh": "inverse hyperbolic sine, ln(x+sqrt(x^2+1)); all reals, inexact except asinh(0)=0",
+    "acosh": "inverse hyperbolic cosine, ln(x+sqrt(x^2-1)); domain x>=1, inexact except acosh(1)=0",
+    "atanh": "inverse hyperbolic tangent, ln((1+x)/(1-x))/2; |x|<1, inexact except atanh(0)=0",
     "sum": "total of the operands; exact in every type",
     "product": "product of the operands; may round in fixed-point/float",
     "avg": "arithmetic mean, sum/count; follows the type's / rule",

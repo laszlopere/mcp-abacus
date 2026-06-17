@@ -726,6 +726,55 @@ def _fp_ln(fp: FixedPoint) -> tuple[int, int]:
     return n * _ln10_scaled(working) + ln_r, working
 
 
+# --- internal inverse hyperbolics (40.3) --------------------------------------
+# Each reduces to the natural-log core (_fp_ln, 28.17) of a sqrt-built argument,
+# computed at _LN_GUARD guard digits and quantized half-to-even back to the
+# operand's scale. The forward hyperbolics (40.2) go the other way, through exp.
+# asinh/atanh are odd, so the Value methods fold the sign and these take |x|.
+
+
+def _fp_asinh(mantissa: int, decimals: int) -> int:
+    """asinh(|x|) for ``x == mantissa/10**decimals``, as a scaled int at ``decimals``
+    (40.3). ``asinh(x) == ln(x + sqrt(x**2 + 1))``; the caller folds the sign (asinh is
+    odd), so the NON-NEGATIVE argument keeps ``x + sqrt(...) >= 1`` — no cancellation
+    (for a negative x the two terms would nearly cancel)."""
+    w = decimals + _LN_GUARD
+    unity = 10**w
+    x = abs(mantissa) * 10 ** (w - decimals)  # |x| * unity, exact
+    root = math.isqrt(x * x + unity * unity)  # floor(sqrt(x**2 + 1) * unity)
+    ln_total, working = _fp_ln(FixedPoint(x + root, w))  # arg >= unity, so ln >= 0
+    out, _ = _fp_quantize(ln_total, 10 ** (working - decimals), 0)
+    return out
+
+
+def _fp_acosh(mantissa: int, decimals: int) -> int:
+    """acosh(x) for ``x == mantissa/10**decimals`` with ``x > 1`` (the caller handles
+    the ``x == 1`` landmark and refuses ``x < 1``), as a scaled int at ``decimals``
+    (40.3). ``acosh(x) == ln(x + sqrt(x**2 - 1))``; ``x > 1`` keeps the radicand
+    positive and the argument above 1."""
+    w = decimals + _LN_GUARD
+    unity = 10**w
+    x = mantissa * 10 ** (w - decimals)  # x * unity, x > 1
+    root = math.isqrt(x * x - unity * unity)  # floor(sqrt(x**2 - 1) * unity)
+    ln_total, working = _fp_ln(FixedPoint(x + root, w))
+    out, _ = _fp_quantize(ln_total, 10 ** (working - decimals), 0)
+    return out
+
+
+def _fp_atanh(mantissa: int, decimals: int) -> int:
+    """atanh(|x|) for ``x == mantissa/10**decimals`` with ``|x| < 1`` (the caller folds
+    the sign and refuses ``|x| >= 1``), as a scaled int at ``decimals`` (40.3).
+    ``atanh(x) == ln((1 + x)/(1 - x))/2`` — through the PUBLIC ln reduction, NOT the bare
+    ``_fp_atanh_series`` (which is ln's own core); the ``/2`` folds into the quantize."""
+    w = decimals + _LN_GUARD
+    unity = 10**w
+    x = abs(mantissa) * 10 ** (w - decimals)  # |x| * unity, 0 < x < unity
+    arg = (unity + x) * unity // (unity - x)  # floor(((1 + |x|)/(1 - |x|)) * unity) >= unity
+    ln_total, working = _fp_ln(FixedPoint(arg, w))
+    out, _ = _fp_quantize(ln_total, 2 * 10 ** (working - decimals), 0)  # ln(arg)/2
+    return out
+
+
 def _fp_exp_series(z: int, unity: int) -> int:
     """``exp(z/unity)`` scaled by ``unity``, as an integer (28.20.1, Path B).
 
@@ -744,6 +793,45 @@ def _fp_exp_series(z: int, unity: int) -> int:
         total += term
         k += 1
     return total
+
+
+def _fp_exp_ratio(fp: "FixedPoint") -> Fraction:
+    """``exp(x)`` for ``x == fp`` as an exact Fraction, UN-rounded (28.27 / 40.2).
+
+    The shared exp core: the all-plus Taylor series (``_fp_exp_series``) range-reduced
+    by ln(2) into ``2**k * exp(s)`` with ``s in [0, ln 2)`` — the ``2**k`` an exact
+    mantissa shift, only ``exp(s)`` summed. The working scale carries the result's
+    ``~k*log10(2)`` integer digits on top of the operand's so the shift stays accurate
+    to the last place; negative ``x`` is fine (``k < 0``). Returned as the raw rational
+    so a caller can quantize ONCE — ``exp`` (28.27) rounds it straight back, the
+    hyperbolics (40.2) combine ``exp(x)`` with ``exp(-x)`` before a single rounding.
+    """
+    d = fp.decimals
+    # exp(x) ~ 2**k grows with x, so the working scale must cover the result's integer
+    # digits; size it from a cheap first estimate of k (2**(k+1) bounds exp(x),
+    # len(str(...)) is its exact digit count).
+    coarse = d + _LN_GUARD
+    k_est = fp.mantissa * 10 ** (coarse - d) // _ln2_scaled(coarse)
+    headroom = len(str(1 << (k_est + 1))) if k_est > 0 else 0
+    working = d + _LN_GUARD + headroom
+    unity = 10**working
+    ln2 = _ln2_scaled(working)
+    x = fp.mantissa * 10 ** (working - d)  # x at the working scale, exact
+    k = x // ln2  # floor keeps s in [0, ln 2), where _fp_exp_series needs z >= 0
+    s = x - k * ln2
+    es = _fp_exp_series(s, unity)  # exp(s) * unity
+    num, den = (es << k, unity) if k >= 0 else (es, unity << -k)
+    return Fraction(num, den)
+
+
+def _fp_exp_pm(fp: "FixedPoint") -> tuple[Fraction, Fraction]:
+    """``(exp(x), exp(-x))`` as exact Fractions — the hyperbolics' two exponentials (40.2).
+
+    sinh/cosh/tanh all combine ``e**x`` and ``e**-x``; computing both un-rounded here
+    lets each combine then quantize once (no double rounding). The caller has already
+    handled the ``x == 0`` landmark, so neither exponential is the trivial 1.
+    """
+    return _fp_exp_ratio(fp), _fp_exp_ratio(FixedPoint(-fp.mantissa, fp.decimals))
 
 
 def _iroot(n: int, q: int) -> int:
@@ -2494,23 +2582,237 @@ class Value:
                     return Value(
                         Mode.FIXED_POINT, FixedPoint(10**fp.decimals, fp.decimals), exact=self.exact
                     )
-                d = fp.decimals
-                # exp(x) ~ 2**k grows with x, so the working scale must cover the
-                # result's integer digits; size it from a cheap first estimate of k
-                # (2**(k+1) bounds exp(x), len(str(...)) is its exact digit count).
-                coarse = d + _LN_GUARD
-                k_est = fp.mantissa * 10 ** (coarse - d) // _ln2_scaled(coarse)
-                headroom = len(str(1 << (k_est + 1))) if k_est > 0 else 0
-                working = d + _LN_GUARD + headroom
-                unity = 10**working
-                ln2 = _ln2_scaled(working)
-                x = fp.mantissa * 10 ** (working - d)  # x at the working scale, exact
-                k = x // ln2  # floor keeps s in [0, ln 2), where _fp_exp_series needs z >= 0
-                s = x - k * ln2
-                es = _fp_exp_series(s, unity)  # exp(s) * unity
-                num, den = (es << k, unity) if k >= 0 else (es, unity << -k)
-                mantissa, _ = _fp_quantize(num, den, d)
-                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, d), exact=False)
+                ratio = _fp_exp_ratio(fp)  # the un-rounded e**x core (28.27.1)
+                mantissa, _ = _fp_quantize(ratio.numerator, ratio.denominator, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def sinh(self) -> "Value":
+        """Hyperbolic sine ``(e**x - e**-x)/2`` (40.2) — transcendental like exp
+        (28.27), so inexact except the trivial sinh(0) = 0.
+
+        fixed-point: SUPPORTED via the exp core (_fp_exp_pm): combine the un-rounded
+            e**x and e**-x and round the half-difference ONCE to the operand's scale.
+            Always inexact except sinh(0) = 0, which is exact.
+        floating-point: math.sinh; unconditionally inexact.
+        rational: sinh of a rational is transcendental except sinh(0) = 0 (it is built
+            from exp, irrational at every non-zero rational); otherwise
+            NotRepresentableError, the exact-or-refuse stance of exp.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.sinh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # sinh(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError(
+                    "hyperbolic sine of a non-zero rational is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # sinh(0) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                ex, emx = _fp_exp_pm(fp)
+                r = (ex - emx) / 2
+                mantissa, _ = _fp_quantize(r.numerator, r.denominator, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def cosh(self) -> "Value":
+        """Hyperbolic cosine ``(e**x + e**-x)/2`` (40.2) — transcendental like exp
+        (28.27), so inexact except the trivial cosh(0) = 1 (the only exact landmark;
+        cosh's mirror of sinh/tanh's zero, since cosh is even with a minimum of 1).
+
+        fixed-point: SUPPORTED via the exp core (_fp_exp_pm): round the half-SUM of the
+            un-rounded e**x and e**-x once. Always inexact except cosh(0) = 1.
+        floating-point: math.cosh; unconditionally inexact.
+        rational: transcendental except cosh(0) = 1; otherwise NotRepresentableError,
+            the exact-or-refuse stance of exp.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.cosh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # cosh(0) = 1, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(1), exact=self.exact)
+                raise NotRepresentableError(
+                    "hyperbolic cosine of a non-zero rational is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # cosh(0) = 1, the only exact case
+                    return Value(
+                        Mode.FIXED_POINT, FixedPoint(10**fp.decimals, fp.decimals), exact=self.exact
+                    )
+                ex, emx = _fp_exp_pm(fp)
+                r = (ex + emx) / 2
+                mantissa, _ = _fp_quantize(r.numerator, r.denominator, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def tanh(self) -> "Value":
+        """Hyperbolic tangent ``(e**x - e**-x)/(e**x + e**-x)`` (40.2) — transcendental
+        like exp (28.27), so inexact except the trivial tanh(0) = 0. The denominator
+        cosh is never zero, so tanh has NO domain restriction (range (-1, 1)).
+
+        fixed-point: SUPPORTED via the exp core (_fp_exp_pm): round the ratio of the
+            un-rounded e**x - e**-x and e**x + e**-x once. Always inexact except
+            tanh(0) = 0.
+        floating-point: math.tanh; unconditionally inexact.
+        rational: transcendental except tanh(0) = 0; otherwise NotRepresentableError,
+            the exact-or-refuse stance of exp.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.tanh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # tanh(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError(
+                    "hyperbolic tangent of a non-zero rational is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # tanh(0) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                ex, emx = _fp_exp_pm(fp)
+                r = (ex - emx) / (ex + emx)  # cosh > 0, so the denominator never vanishes
+                mantissa, _ = _fp_quantize(r.numerator, r.denominator, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def asinh(self) -> "Value":
+        """Inverse hyperbolic sine ``ln(x + sqrt(x**2 + 1))`` (40.3) — the inverse of
+        sinh (40.2), transcendental like log (28.17), so inexact except asinh(0) = 0.
+        UNRESTRICTED domain: every real has an inverse hyperbolic sine, so (like atan,
+        28.16) no argument is ever refused.
+
+        fixed-point: SUPPORTED via the ln core (_fp_asinh). asinh is odd, so the sign is
+            folded off and restored — the magnitude runs on |x|, where ``x + sqrt(...)
+            >= 1`` avoids cancellation. Always inexact except asinh(0) = 0.
+        floating-point: math.asinh; unconditionally inexact.
+        rational: transcendental except asinh(0) = 0 (it reduces to a logarithm);
+            otherwise NotRepresentableError, the exact-or-refuse stance of log.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.asinh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # asinh(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError(
+                    "inverse hyperbolic sine of a non-zero rational is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # asinh(0) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                sign = -1 if fp.mantissa < 0 else 1  # asinh is odd; compute on |x|
+                magnitude = _fp_asinh(abs(fp.mantissa), fp.decimals)
+                return Value(
+                    Mode.FIXED_POINT, FixedPoint(sign * magnitude, fp.decimals), exact=False
+                )
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def acosh(self) -> "Value":
+        """Inverse hyperbolic cosine ``ln(x + sqrt(x**2 - 1))`` (40.3) — the inverse of
+        cosh (40.2), transcendental like log (28.17), so inexact except acosh(1) = 0.
+        DOMAIN x >= 1 (cosh's range): an argument below 1 raises NotRepresentableError in
+        every mode, like sqrt's negative refusal.
+
+        fixed-point: SUPPORTED via the ln core (_fp_acosh) for x > 1; always inexact
+            except acosh(1) = 0, which is exact (the radicand vanishes, ln(1) = 0).
+        floating-point: math.acosh; unconditionally inexact.
+        rational: acosh of a rational is irrational except acosh(1) = 0; any other
+            in-domain argument raises NotRepresentableError.
+        """
+        below = "inverse hyperbolic cosine argument below the domain [1, inf)"
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if self.payload < 1:
+                    raise NotRepresentableError(below)
+                return Value(Mode.FLOATING_POINT, math.acosh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload < 1:
+                    raise NotRepresentableError(below)
+                if self.payload == 1:  # acosh(1) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError(
+                    "inverse hyperbolic cosine of a rational above 1 is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa < 10**fp.decimals:  # x < 1 -> below the domain
+                    raise NotRepresentableError(below)
+                if fp.mantissa == 10**fp.decimals:  # acosh(1) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                magnitude = _fp_acosh(fp.mantissa, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(magnitude, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def atanh(self) -> "Value":
+        """Inverse hyperbolic tangent ``ln((1 + x)/(1 - x))/2`` (40.3) — the inverse of
+        tanh (40.2), transcendental like log (28.17), so inexact except atanh(0) = 0.
+        DOMAIN |x| < 1 (tanh's open range); x = +/-1 is +/-inf, so an argument with
+        |x| >= 1 raises NotRepresentableError in every mode.
+
+        fixed-point: SUPPORTED via the ln core (_fp_atanh) — through the public ln, NOT
+            the bare atanh series (which is ln's own internal core, 28.17.1). atanh is
+            odd, so the sign is folded off and restored. Always inexact except
+            atanh(0) = 0.
+        floating-point: math.atanh; unconditionally inexact.
+        rational: transcendental except atanh(0) = 0; any other in-domain argument
+            raises NotRepresentableError, the exact-or-refuse stance of log.
+        """
+        outside = "inverse hyperbolic tangent argument outside the domain (-1, 1)"
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if abs(self.payload) >= 1:
+                    raise NotRepresentableError(outside)
+                return Value(Mode.FLOATING_POINT, math.atanh(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if abs(self.payload) >= 1:
+                    raise NotRepresentableError(outside)
+                if self.payload == 0:  # atanh(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError(
+                    "inverse hyperbolic tangent of a non-zero rational is transcendental"
+                )
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if abs(fp.mantissa) >= 10**fp.decimals:  # |x| >= 1 -> outside the open domain
+                    raise NotRepresentableError(outside)
+                if fp.mantissa == 0:  # atanh(0) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                sign = -1 if fp.mantissa < 0 else 1  # atanh is odd; compute on |x|
+                magnitude = _fp_atanh(abs(fp.mantissa), fp.decimals)
+                return Value(
+                    Mode.FIXED_POINT, FixedPoint(sign * magnitude, fp.decimals), exact=False
+                )
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
