@@ -78,6 +78,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "pow": Value.pow,  # 28.20 — binary; the call form of **, reuses Value.pow (fixed-arity 2)
     "floor": Value.floor,  # 28.23 — round toward -inf; optional ndigits (1,2), mostly exact
     "ceil": Value.ceil,  # 28.24 — round toward +inf; mirror of floor, optional ndigits (1,2)
+    "round": Value.round_,  # 28.25 — round to nearest, ties to even; optional ndigits (1,2)
     "sin": Value.sin,  # 28.10 — transcendental; fixed-point Taylor series, else inexact/refuse
     "cos": Value.cos,  # 28.11 — sin's machinery; even Taylor series, else inexact/refuse
     "tan": Value.tan,  # 28.12 — sin/cos; fixed-point divides the two series, else inexact/refuse
@@ -140,6 +141,8 @@ FUNCTION_HELP: dict[str, str] = {
     "pow": "x to the power y; the call form of the ** operator",
     "floor": "round toward -inf; optional ndigits (default 0); exact except float with ndigits>0",
     "ceil": "round toward +inf; optional ndigits (default 0); exact except float with ndigits>0",
+    "round": "round to nearest, ties to even; optional ndigits (default 0); "
+    "exact except float with ndigits>0",
     "sin": "sine, radians; inexact except sin(0)=0, rational refuses non-zero",
     "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",
     "tan": "tangent, radians; inexact except tan(0)=0, undefined at odd multiples of pi/2",

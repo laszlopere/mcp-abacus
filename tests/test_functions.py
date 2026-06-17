@@ -475,6 +475,60 @@ def test_ceil_refuses_a_non_integer_ndigits(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # round (28.25): nearest, ties to EVEN (banker's). The defining ties — half
+        # goes to the even neighbour, NOT away from zero. Fixed-point is exact.
+        ("round(2.5)", None, "2 (exact)"),  # tie -> even (2), not 3
+        ("round(3.5)", None, "4 (exact)"),  # tie -> even (4)
+        ("round(-2.5)", None, "-2 (exact)"),  # tie -> even (-2)
+        ("round(0.5)", None, "0 (exact)"),
+        ("round(2.1)", None, "2 (exact)"),  # nearest, no tie
+        ("round(2.345, 2)", None, "2.34 (exact)"),  # true-decimal tie -> even (2.34)
+        ("round(2.355, 2)", None, "2.36 (exact)"),  # tie -> even (2.36)
+        ("round(2.75, 5)", None, "2.75000 (exact)"),  # finer than the value: held at scale 5
+        ("round(1250, -2)", None, "1200 (exact)"),  # tie -> even hundred (1200)
+        ("round(1350, -2)", None, "1400 (exact)"),  # tie -> even hundred (1400)
+        # Floating-point: half-even via the builtin; exact when it lands on an
+        # integer (ndigits <= 0), inexact when ndigits > 0.
+        ("round(2.5)", "floating-point", "2.0 (exact)"),
+        ("round(3.5)", "floating-point", "4.0 (exact)"),
+        ("round(-2.5)", "floating-point", "-2.0 (exact)"),
+        ("round(1250, -2)", "floating-point", "1200.0 (exact)"),
+        # 2.345 is just above 2.345 in binary, so the double rounds UP to 2.35 —
+        # diverging from fixed-point/rational's true-decimal 2.34, and inexact.
+        ("round(2.345, 2)", "floating-point", "2.35 (inexact)"),
+        # Rational: half-even via Fraction.__round__, exact in every case.
+        ("round(2.5)", "rational", "2 (exact)"),
+        ("round(3.5)", "rational", "4 (exact)"),
+        ("round(-2.5)", "rational", "-2 (exact)"),
+        ("round(1250, -2)", "rational", "1200 (exact)"),
+        ("round(2.345, 2)", "rational", "117/50 (exact)"),  # 234/100 -> 117/50 (the true 2.34)
+        ("round(1/3)", "rational", "0 (exact)"),
+        ("round(1/3, 2)", "rational", "33/100 (exact)"),
+    ],
+)
+def test_round(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # ndigits must be an integer in any mode — a fractional second argument
+        # refuses, exactly as floor/ceil (28.22/28.25).
+        ("round(2.5, 1.5)", None, "ndigits must be an integer"),
+        ("round(2.5, 0.5)", "floating-point", "ndigits must be an integer"),
+        ("round(2.5, 3/2)", "rational", "ndigits must be an integer"),
+    ],
+)
+def test_round_refuses_a_non_integer_ndigits(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # The BINARY pow(x, y) function — the call form of ** (28.20). Integer
         # exponent is exact in the exact modes, float rounds.
         ("pow(2, 10)", None, "1024 (exact)"),

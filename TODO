@@ -1266,7 +1266,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 -((-M) // 10**d); floating-point math.ceil; rational math.ceil.
                 ceil(2.1) -> 3, ceil(-2.7) -> -2. Canonical spelling ceil (the math
                 module / programming name), NOT ceiling.
-    [ ] 28.25.  round(x[, ndigits]) — round to NEAREST, ties to EVEN. DECISION
+    [x] 28.25.  round(x[, ndigits]) — round to NEAREST, ties to EVEN. DECISION
                 (2026-06-14): half-to-even (banker's) — round(2.5) -> 2, round(3.5) ->
                 4 — matching Python's builtin round, the IEEE 754 default, AND the
                 engine's existing fixed-point half-even quantize (sqrt, 22.4.2), so the

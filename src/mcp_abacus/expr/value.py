@@ -1589,6 +1589,54 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def round_(self, ndigits: "Value | None" = None) -> "Value":
+        """Round to NEAREST, ties to EVEN (28.25) — same operand + optional
+        ``ndigits`` shape as ``floor``/``ceil`` (28.23/28.24), but rounding to the
+        closest representable value, a tie going to the even neighbour (banker's
+        rounding): ``round(2.5) -> 2``, ``round(3.5) -> 4``, ``round(-2.5) -> -2``;
+        ``round(2.345, 2) -> 2.34``. Half-to-even matches Python's builtin ``round``,
+        the IEEE-754 default, and the engine's own fixed-point quantiser (sqrt,
+        22.4.2) — the whole engine rounds ONE way. The trailing underscore keeps the
+        name off the ``round`` builtin used below, as ``abs_`` does for ``abs``.
+
+        EXACT in every mode — rounding SELECTS a representable value, no compute —
+        EXCEPT floating-point with ``ndigits > 0``, where the n-decimal target is
+        not binary-representable; rounding a float to an INTEGER (ndigits <= 0) lands
+        on a whole multiple a double holds exactly, so it stays exact.
+        floating-point: builtin ``round(x, n)`` (already half-even); exact for
+            ndigits <= 0, inexact otherwise.
+        fixed-point: the engine's half-even quantiser on the scaled mantissa at the
+            target scale, held at scale ``max(0, n)``. Exact.
+        rational: ``round(Fraction, n)`` — Fraction.__round__ is half-even — back to
+            a Fraction. Exact.
+        """
+        n = 0 if ndigits is None else Value._as_ndigits(ndigits)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                # round(x, n) is half-even and returns a float for any int n; n <= 0
+                # lands on an integer-valued double (exact), n > 0 on a non-binary
+                # n-decimal target (inexact).
+                return Value(Mode.FLOATING_POINT, round(self.payload, n), exact=n <= 0)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                # Half-even round the mantissa to scale n via the engine quantiser
+                # (the same _fp_quantize sqrt/div use), then rescale to the result
+                # scale max(0, n): for n < 0 the round lands on tens/hundreds at scale 0.
+                if n >= fp.decimals:  # finer than the value: nothing to drop
+                    at_n = fp.mantissa * 10 ** (n - fp.decimals)
+                else:
+                    at_n, _ = _fp_quantize(fp.mantissa, 10 ** (fp.decimals - n), 0)
+                scale = max(0, n)
+                mantissa = at_n * 10 ** (scale - n)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=self.exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                return Value(Mode.RATIONAL, Fraction(round(self.payload, n)), exact=self.exact)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sum_(self, *others: "Value") -> "Value":
         """Total of one-or-more operands (28.5) — VARIADIC; repeated ``+``.
 
