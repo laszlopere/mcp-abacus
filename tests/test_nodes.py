@@ -146,6 +146,7 @@ def test_function_arities_match_the_registry():
         "floor": (1, 2),  # operand + optional ndigits — the first (1, 2) function (28.23)
         "ceil": (1, 2),  # operand + optional ndigits — mirror of floor (28.24)
         "round": (1, 2),  # operand + optional ndigits — round half-even (28.25)
+        "trunc": (1, 2),  # operand + optional ndigits — round toward zero (28.26)
         "sin": (1, 1),
         "cos": (1, 1),
         "tan": (1, 1),

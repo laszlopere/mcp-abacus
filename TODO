@@ -1277,7 +1277,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                   half-even, returns int / Fraction -> exact.
                 fixed-point: half-even on the scaled mantissa at the target scale,
                   exact.
-    [ ] 28.26.  trunc(x[, ndigits]) — round toward ZERO (drop the fraction): floor for
+    [x] 28.26.  trunc(x[, ndigits]) — round toward ZERO (drop the fraction): floor for
                 x >= 0, ceil for x < 0. Same shape and exactness story as floor (28.23).
                 floating-point math.trunc; fixed-point sign * (abs(M) // 10**d);
                 rational math.trunc. trunc(2.7) -> 2, trunc(-2.7) -> -2 (vs

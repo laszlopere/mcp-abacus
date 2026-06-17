@@ -529,6 +529,55 @@ def test_round_refuses_a_non_integer_ndigits(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # trunc (28.26): round toward ZERO — drop the fraction. The defining contrast
+        # with floor is on NEGATIVES (toward zero, not toward -inf). Fixed-point exact.
+        ("trunc(2.7)", None, "2 (exact)"),
+        ("trunc(-2.7)", None, "-2 (exact)"),  # toward zero -> -2 (floor gives -3)
+        ("trunc(-2.1)", None, "-2 (exact)"),
+        ("trunc(5)", None, "5 (exact)"),
+        ("trunc(2.759, 2)", None, "2.75 (exact)"),  # trunc at scale 2
+        ("trunc(-2.759, 2)", None, "-2.75 (exact)"),  # magnitude dropped, not -2.76
+        ("trunc(2.75, 5)", None, "2.75000 (exact)"),  # finer than the value: held at scale 5
+        ("trunc(1290, -2)", None, "1200 (exact)"),  # negative ndigits -> tens/hundreds
+        ("trunc(-1290, -2)", None, "-1200 (exact)"),
+        # Floating-point: exact when it lands on an integer (ndigits <= 0), inexact
+        # when ndigits > 0 (the n-decimal target is not binary-representable).
+        ("trunc(2.7)", "floating-point", "2.0 (exact)"),
+        ("trunc(-2.7)", "floating-point", "-2.0 (exact)"),
+        ("trunc(1290, -2)", "floating-point", "1200.0 (exact)"),
+        ("trunc(2.759, 2)", "floating-point", "2.75 (inexact)"),
+        # Rational: exact in every case (Fraction trunc of the shifted value).
+        ("trunc(2.7)", "rational", "2 (exact)"),
+        ("trunc(-2.7)", "rational", "-2 (exact)"),
+        ("trunc(1290, -2)", "rational", "1200 (exact)"),
+        ("trunc(2.759, 2)", "rational", "11/4 (exact)"),  # 275/100 -> 11/4
+        ("trunc(-7/2)", "rational", "-3 (exact)"),  # -3.5 toward zero -> -3 (floor gives -4)
+        ("trunc(1/3, 2)", "rational", "33/100 (exact)"),
+    ],
+)
+def test_trunc(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # ndigits must be an integer in any mode — a fractional second argument
+        # refuses, exactly as the rest of the family (28.22/28.26).
+        ("trunc(2.5, 1.5)", None, "ndigits must be an integer"),
+        ("trunc(2.5, 0.5)", "floating-point", "ndigits must be an integer"),
+        ("trunc(2.5, 3/2)", "rational", "ndigits must be an integer"),
+    ],
+)
+def test_trunc_refuses_a_non_integer_ndigits(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # The BINARY pow(x, y) function — the call form of ** (28.20). Integer
         # exponent is exact in the exact modes, float rounds.
         ("pow(2, 10)", None, "1024 (exact)"),

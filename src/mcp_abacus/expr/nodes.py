@@ -79,6 +79,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "floor": Value.floor,  # 28.23 — round toward -inf; optional ndigits (1,2), mostly exact
     "ceil": Value.ceil,  # 28.24 — round toward +inf; mirror of floor, optional ndigits (1,2)
     "round": Value.round_,  # 28.25 — round to nearest, ties to even; optional ndigits (1,2)
+    "trunc": Value.trunc,  # 28.26 — round toward zero (drop the fraction); optional ndigits (1,2)
     "sin": Value.sin,  # 28.10 — transcendental; fixed-point Taylor series, else inexact/refuse
     "cos": Value.cos,  # 28.11 — sin's machinery; even Taylor series, else inexact/refuse
     "tan": Value.tan,  # 28.12 — sin/cos; fixed-point divides the two series, else inexact/refuse
@@ -142,6 +143,8 @@ FUNCTION_HELP: dict[str, str] = {
     "floor": "round toward -inf; optional ndigits (default 0); exact except float with ndigits>0",
     "ceil": "round toward +inf; optional ndigits (default 0); exact except float with ndigits>0",
     "round": "round to nearest, ties to even; optional ndigits (default 0); "
+    "exact except float with ndigits>0",
+    "trunc": "round toward zero (drop the fraction); optional ndigits (default 0); "
     "exact except float with ndigits>0",
     "sin": "sine, radians; inexact except sin(0)=0, rational refuses non-zero",
     "cos": "cosine, radians; inexact except cos(0)=1, rational refuses non-zero",

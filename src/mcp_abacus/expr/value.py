@@ -1637,6 +1637,60 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def trunc(self, ndigits: "Value | None" = None) -> "Value":
+        """Round toward ZERO (28.26) — drop the fraction: ``floor`` for x >= 0,
+        ``ceil`` for x < 0, the same operand + optional ``ndigits`` shape and
+        exactness story as the rest of the family (28.23-28.25). ``trunc(2.7) -> 2``,
+        ``trunc(-2.7) -> -2`` (vs ``floor(-2.7) -> -3``); ``trunc(1290, -2) -> 1200``.
+        This is the explicit toward-zero function over ANY value — the same idea as
+        fixed-point's literal mantissa truncation in ``time`` (28.1.1), generalised.
+
+        EXACT in every mode — truncation SELECTS a representable value, no compute —
+        EXCEPT floating-point with ``ndigits > 0``, where the n-decimal target is
+        not binary-representable; truncating a float to an INTEGER (ndigits <= 0)
+        lands on a whole multiple a double holds exactly, so it stays exact.
+        floating-point: ``math.trunc`` to an int (ndigits <= 0, exact), else the
+            decimal shift ``trunc(x*10**n)/10**n`` (inexact).
+        fixed-point: ``sign * (abs(M) // 10**d)`` on the scaled mantissa — magnitude
+            floored, sign restored — held at scale ``max(0, n)``. Exact.
+        rational: ``math.trunc`` of the shifted fraction, back to a Fraction. Exact.
+        """
+        n = 0 if ndigits is None else Value._as_ndigits(ndigits)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if n <= 0:
+                    # Truncate to a whole multiple of 10**-n: an integer-valued
+                    # double, exactly representable. Pure-int scaling keeps it exact.
+                    unit = 10**-n
+                    whole = math.trunc(self.payload / unit) * unit
+                    return Value(Mode.FLOATING_POINT, float(whole), exact=True)
+                # n > 0: the n-decimal target is not binary-representable -> inexact.
+                unit = 10**n
+                shifted = math.trunc(self.payload * unit) / unit
+                return Value(Mode.FLOATING_POINT, shifted, exact=False)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                # Mantissa truncated to scale n via sign * (abs(M) // 10**d) — floor
+                # the magnitude, restore the sign (toward zero) — then rescale to the
+                # result scale max(0, n): for n < 0 it lands on tens/hundreds at scale 0.
+                if n >= fp.decimals:  # finer than the value: nothing to drop
+                    at_n = fp.mantissa * 10 ** (n - fp.decimals)
+                else:
+                    sign = -1 if fp.mantissa < 0 else 1
+                    at_n = sign * (abs(fp.mantissa) // 10 ** (fp.decimals - n))
+                scale = max(0, n)
+                mantissa = at_n * 10 ** (scale - n)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=self.exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                shift = Fraction(10) ** n
+                truncated = Fraction(math.trunc(self.payload * shift)) / shift
+                return Value(Mode.RATIONAL, truncated, exact=self.exact)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sum_(self, *others: "Value") -> "Value":
         """Total of one-or-more operands (28.5) — VARIADIC; repeated ``+``.
 
