@@ -107,7 +107,7 @@ class Mode(Enum):
     add one more.
     """
 
-    FLOATING_POINT = "floating-point"  # IEEE-754 double — C's "double", the default (19.1.1)
+    FLOATING_POINT = "floating-point"  # IEEE-754 double — C's "double" (19.1.1)
     FIXED_POINT = "fixed-point"  # scaled integer; exact, money/ERC-20-safe (19.1.2)
     RATIONAL = "rational"  # exact numerator/denominator; no irrationals (19.1.7)
 

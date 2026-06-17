@@ -404,6 +404,21 @@ def test_calculate_reports_errors_as_a_plain_message():
     assert result["value"] is None and result["exact"] is None and result["precision"] is None
 
 
+def test_tool_cross_references_are_bidirectional():
+    # TODO 41.13: each of the three evaluation tools must steer to BOTH siblings, so an
+    # LLM that lands on any one is pointed at the other two — not a one-way calculate ->
+    # {analyze, solver} fan-out that strands a reader on analyze or solver.
+    tools = {t.name: t.description for t in asyncio.run(mcp.list_tools())}
+    siblings = {
+        "calculate": ("analyze", "solver"),
+        "analyze": ("calculate", "solver"),
+        "solver": ("calculate", "analyze"),
+    }
+    for tool, refs in siblings.items():
+        for ref in refs:
+            assert f"`{ref}`" in tools[tool], f"{tool} never points to {ref}"
+
+
 def test_analyze_tool_has_optional_mode_and_floor_defaulting_to_fixed_point():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     schema = tools["analyze"].inputSchema

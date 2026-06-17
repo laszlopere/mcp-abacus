@@ -392,9 +392,11 @@ def calculate(
         Field(
             description=(
                 "Numeric type the WHOLE calculation runs in: 'fixed-point' "
-                "(default; exact scaled integer, money/ERC-20-safe), "
-                "'floating-point' (IEEE-754 double; aliases 'float64', 'double'), "
-                "or 'rational' (exact numerator/denominator)."
+                "(default; exact scaled integer, money/ERC-20-safe; alias 'decimal'), "
+                "'floating-point' (IEEE-754 double; aliases 'float64', 'double', "
+                "'float', 'ieee754'), or 'rational' (exact numerator/denominator; "
+                "aliases 'fraction', 'frac'). Note 'decimal' resolves to fixed-point, "
+                "NOT a decimal float. `help('types')` lists the full set."
             )
         ),
     ] = "fixed-point",
@@ -430,9 +432,9 @@ def calculate(
     `mode` is the numeric type the WHOLE calculation runs in — every intermediate
     result behaves exactly as that type would, so float rounding, fixed-point
     scale, and rational exactness each show through. Modes:
-      fixed-point   (default) exact scaled integer; money / ERC-20-safe
-      floating-point  IEEE-754 double; ~15-17 sig. digits; aliases float64, double
-      rational        exact numerator/denominator; no irrationals
+      fixed-point   (default) exact scaled integer; money / ERC-20-safe; alias decimal
+      floating-point  IEEE-754 double; ~15-17 sig. digits; aliases float64, double, float, ieee754
+      rational        exact numerator/denominator; no irrationals; aliases fraction, frac
 
     Grammar. Binary `+ - * / // %`; unary prefix `+ - ~`; `**` is POWER,
     right-assoc, binds tighter than unary minus: -2**2 == -(2**2). Bitwise
@@ -607,7 +609,9 @@ def analyze(
     but instead of one final value this returns the WHOLE parse tree, each node
     annotated with the Value it computed in that mode. Reach for it to see WHERE a
     surprising answer comes from: which sub-expression rounded, overflowed, or lost
-    precision, rather than only the rounded result.
+    precision, rather than only the rounded result. For just the final value use
+    `calculate`; to find the variable value(s) that drive an expression to a root or
+    extremum, use `solver`.
 
     `tree` is a multi-line string, one node per line, indented by depth (root last-
     applied operator at the top, literals at the leaves). Each line is
@@ -781,7 +785,9 @@ def solver(
     Without it the search would run at scale 0, flooring the variable to whole numbers
     and missing any non-integer solution, so the call is refused; pass it (e.g. 9), or
     switch to floating-point / rational, which resolve sub-unit values natively and
-    need no floor. See `calculate` and `help` for the shared grammar and modes.
+    need no floor. See `calculate` and `help` for the shared grammar and modes; if a
+    found value or objective looks off, `analyze` shows the per-node parse tree of the
+    expression (with the unknowns substituted) to reveal where it rounded or overflowed.
 
     The search is bounded by a hard 2-second time limit. If it has not converged by
     then it stops and reports the best value reached so far (a find-root that has not

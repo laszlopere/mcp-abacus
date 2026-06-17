@@ -19,13 +19,24 @@ from collections.abc import Callable
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
-from mcp_abacus.expr.value import MODE_HELP, Mode
+from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode
 
 
 def _types_section() -> str:
     # m.value is the wire name ("floating-point"); MODE_HELP is the single source for
-    # the one-liner — a missing entry raises, forcing co-update with the enum.
-    return "\n".join(f"{m.value} — {MODE_HELP[m]}" for m in Mode)
+    # the one-liner — a missing entry raises, forcing co-update with the enum. The
+    # accepted aliases (41.11) are derived from the live MODE_ALIASES map and grouped
+    # per mode, so every spelling resolve_mode honours is advertised here and the list
+    # cannot drift from what the engine actually accepts — `decimal` in particular
+    # resolving to fixed-point is now visible rather than a silent surprise.
+    aliases: dict[Mode, list[str]] = {m: [] for m in Mode}
+    for name, mode in MODE_ALIASES.items():
+        aliases[mode].append(name)
+    lines = []
+    for m in Mode:
+        suffix = f"; aliases: {', '.join(aliases[m])}" if aliases[m] else ""
+        lines.append(f"{m.value} — {MODE_HELP[m]}{suffix}")
+    return "\n".join(lines)
 
 
 def _language_section() -> str:

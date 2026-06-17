@@ -9,7 +9,7 @@ from mcp_abacus.expr import reference
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
-from mcp_abacus.expr.value import MODE_HELP, Mode
+from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode
 
 
 def test_types_section_lists_every_live_mode_with_its_description():
@@ -22,6 +22,23 @@ def test_types_section_lists_every_live_mode_with_its_description():
 def test_types_section_has_one_line_per_mode():
     lines = reference.render("types").splitlines()
     assert len(lines) == len(list(Mode))
+
+
+def test_types_section_advertises_every_accepted_mode_alias():
+    # TODO 41.11: every input-only alias resolve_mode honours must be documented, so a
+    # caller can never be silently surprised by one (the `decimal` -> fixed-point trap).
+    # Sourced from the live MODE_ALIASES map, so the help cannot drift from resolve_mode.
+    text = reference.render("types")
+    for alias in MODE_ALIASES:
+        assert alias in text, f"types help omits the {alias!r} alias"
+
+
+def test_types_section_lists_each_alias_on_its_target_modes_line():
+    # The alias must sit on the line for the mode it resolves TO — `decimal` under
+    # fixed-point, not floating-point — else the doc would mislead as badly as silence.
+    lines = {line.split(" — ", 1)[0]: line for line in reference.render("types").splitlines()}
+    for alias, mode in MODE_ALIASES.items():
+        assert alias in lines[mode.value], f"{alias!r} not on the {mode.value!r} line"
 
 
 def test_language_section_mentions_every_operator():

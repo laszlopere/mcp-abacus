@@ -26,6 +26,14 @@ def test_package_summary_names_the_three_real_modes_only():
     assert "decimal" not in summary
 
 
+def test_keywords_name_every_headline_mode():
+    # TODO 41.12: the keyword list is a discoverability surface, so it must carry all
+    # three headline modes the description advertises — 'rational' was the omission.
+    keywords = importlib.metadata.metadata("mcp-abacus")["Keywords"]
+    for mode in ("fixed-point", "rational"):
+        assert mode in keywords, f"Keywords omit {mode!r}: {keywords!r}"
+
+
 def test_distribution_declares_classifiers_for_every_supported_python():
     # TODO 41.9: the distribution carries trove classifiers (audience, OS, topic, and
     # one per supported Python) for metadata completeness. The Python classifiers must

@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "László Pere", email = "226979892+laszlopere@users.noreply.github.com" },
 ]
-keywords = ["mcp", "calculator", "ieee-754", "fixed-point", "twos-complement"]
+keywords = ["mcp", "calculator", "ieee-754", "fixed-point", "rational", "twos-complement"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
