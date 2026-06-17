@@ -1,45 +1,87 @@
-  Rounding family — floor / ceil / round
-
-  1. I'm boxing up 230 home-made cookies into bags of 7 to sell at the fair. How
+  I'm boxing up 230 home-made cookies into bags of 7 to sell at the fair. How
   many full bags can I make, and how many cookies will be left over for me to
-  nibble? (→ floor, with remainder)
-  2. A school outing has 154 children and each minibus seats 17. How many minibuses do we need to book so that nobody
-  gets left behind? (→ ceil)
-  3. Dinner came to 47 euros and I want to leave an 18% tip, but I'd like to hand over a round number of euros to keep
-  the cash simple. What should I pay, rounded to the nearest euro? (→ round)
-  4. My fuel receipt says I pumped 38.6 litres, but my mileage logbook only takes whole litres. What do I write down?
-  (→ round / floor depending on intent)
+  nibble? 
+  
+  A school outing has 154 children and each minibus seats 17. How many minibuses
+  do we need to book so that nobody gets left behind? 
+  
+  Dinner came to 47 euros and I want to leave an 18% tip, but I'd like to hand
+  over a round number of euros to keep the cash simple. What should I pay,
+  rounded to the nearest euro?
+  
+  My fuel receipt says I pumped 38.6 litres, but my mileage logbook only takes
+  whole litres. What do I write down?
 
-  Exponential change — exp
-
-  5. I left a bottle of fizzy water open and it goes flat steadily, losing about
+  I left a bottle of fizzy water open and it goes flat steadily, losing about
   the same share of its bubbles every hour. If it lost a quarter of its fizz in
   the first hour, how much is still left after a six-hour evening? 
 
-  6. My savings sit in an account that grows continuously at a steady yearly
+  My savings sit in an account that grows continuously at a steady yearly
   rate of 4%. If I leave 5,000 in it untouched for three years, what will it
   have grown to? 
 
-  7. My back garden drops by about 1 metre over a 12-metre run from the house to
+  My back garden drops by about 1 metre over a 12-metre run from the house to
   the fence. How many degrees of slope is that? 
 
-  8. A delivery ramp rises 30 centimetres, and the sloped surface of the ramp
+  A delivery ramp rises 30 centimetres, and the sloped surface of the ramp
   itself is 2 metres long. What angle does it make with the ground, in degrees?
 
-  9. My last six electricity bills were 88, 92, 79, 105, 96 and 84 euros. How
+  My last six electricity bills were 88, 92, 79, 105, 96 and 84 euros. How
   much do my bills typically swing from one month to the next? 
 
-  10. I timed my morning jog on five different days and got 27, 31, 26, 29 and
+  I timed my morning jog on five different days and got 27, 31, 26, 29 and
   33 minutes. How consistent am I — what's the typical spread in those times? 
 
-  11. Walking to the station I go 600 metres along one street, then turn the
+  Walking to the station I go 600 metres along one street, then turn the
   corner and go 800 metres along the next.  If there were a footpath cutting
   straight across, how long would that shortcut be?
 
-  12. I want to check whether a new monitor will sit on my desk. The desk is 70
+  I want to check whether a new monitor will sit on my desk. The desk is 70
   centimetres deep and 140 centimetres wide — what's the straight-line distance
   from one corner to the opposite one? 
 
+  A rumour at my office doubles the number of people who've heard it every
+  single day, starting from just me. How many days until the whole 1,000-person
+  building knows? 
+
+  My friend texts that she's 200 metres east and 150 metres south of where I'm
+  standing in the park. What compass bearing do I turn to so I'm facing straight
+  at her? 
+
+  I've got 48 red and 36 blue balloons and want to make identical party bundles
+  using every balloon, with as many bundles as possible. How many bundles, and
+  what's in each? 
+
+  Two buses pull out of the depot together; one returns every 12 minutes, the
+  other every 18. How long until they next leave at the very same moment? 
+
+  I have six framed photos and one long shelf. How many different left-to-right
+  orders could I arrange them in?
+
+  Eight sprinters line up for the final. In how many different ways can the
+  gold, silver and bronze medals end up being handed out?
+
+  From my ten-person book club we draw four names to host next month's meeting.
+  How many different groups of four could we end up with? 
+
+  Where a value sits — percentile
+
+  The ten kids in the class scored 52, 61, 68, 70, 73, 75, 80, 84, 88 and 95 on
+  the test. What score marks the cut-off for the top tenth of the class? 
+
+  My investment grew 10% the first year, dropped 20% the second, then grew 30%
+  the third. What single steady yearly growth rate would have left me exactly
+  where I ended up?
+
+  I drove out to the coast at 60 km/h and crawled back along the very same road
+  at 40 km/h. What was my average speed for the round trip? 
+
+  Over several weeks I jotted down each day's temperature and how many ice
+  creams my van sold. Do hotter days really go hand-in-hand with more sales, and
+  how tightly? 
+
+  I'm borrowing 15,000 for a car at 6% a year, paying it off in equal monthly
+  instalments over four years. How much is each monthly payment? 
 
 
 
