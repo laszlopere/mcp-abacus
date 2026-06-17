@@ -385,3 +385,130 @@ def test_brent_parabolic_rejects_the_multiple_form():
     payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="brent-parabolic")
     assert payload["solution"] is None and payload["solutions"] is None
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+# --- REGRESSION: floating-point answers snap onto their clean value -----------
+# The drift these tests once reproduced: on a problem whose true answer is a whole
+# number, the floating-point search settled a few ULPs away — 4.999999999999984 for
+# 5, 3.9999999717 for 4 — because the search stops within the bracket-width tolerance
+# (_FLOAT_X_TOL) and the fixed-point / rational grid polish that would re-snap it is
+# skipped in float mode (float has no grid). The fix is its float counterpart,
+# solver._float_snap_polish: after convergence it re-probes the CLEAN roundings of the
+# best point (0..6 decimals) through the same evaluate_objective best-tracking, which
+# adopts one only when it is no worse. So a clean root / optimum snaps onto its exact
+# value, while an irrational answer (whose rounding is strictly worse) is left alone —
+# the objective itself is the discriminator (the "irrational stays put" tests below
+# guard that). The assertions use exact `==` (no pytest.approx) on purpose: approx
+# would paper over the very drift these tests exist to catch. Both objective kinds
+# (root-finding and optimisation) are covered for each engine; Brent's parabola pins a
+# smooth extremum exactly, so it is exercised on the kinked |expr| of a root.
+
+
+def test_golden_section_root_snaps_to_an_integer():
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5, not 4.999999999999984",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8)
+    assert payload["error"] is None
+    assert payload["algorithm"] == "golden-section-search"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_golden_section_maximum_snaps_to_an_integer():
+    program = _annotated(
+        "find-maximum of 10 - (x - 4)**2 over [0, 8] in floating-point\n"
+        "the peak is at x = 4 exactly; snap polish returns a clean 4, not 3.9999999717159223",
+        "10 - (x - 4)**2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, objective="find-maximum")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "golden-section-search"
+    assert _num(payload["solution"]) == 4.0
+
+
+def test_brent_parabolic_root_snaps_to_an_integer():
+    program = _annotated(
+        "find-root of x**2 - 25 over [0, 10] in floating-point via Brent\n"
+        "the root in range is x = 5 exactly; snap polish returns a clean 5, not 5.000000000000054",
+        "x**2 - 25",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=10, algorithm="brent-parabolic")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_nelder_mead_root_snaps_to_an_integer():
+    program = _annotated(
+        "find-root of x**2 - 49 over [0, 12] in floating-point via Nelder-Mead\n"
+        "the root in range is x = 7 exactly; snap polish returns a clean 7, not 7.000000000000183",
+        "x**2 - 49",
+    )
+    payload = _solve(program, variables={"x": [0, 12]}, algorithm="nelder-mead")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "nelder-mead"
+    assert _num(payload["solution"]) == 7.0
+
+
+def test_nelder_mead_two_variable_minimum_snaps_to_integers():
+    program = _annotated(
+        "find-minimum of (x - 3)**2 + (y - 7)**2 over x in [0, 6], y in [0, 12]\n"
+        "the single minimum is at (3, 7) exactly; snap polish returns clean 3 and 7",
+        "(x - 3)**2 + (y - 7)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 6], "y": [0, 12]},
+        objective="find-minimum",
+        algorithm="nelder-mead",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == 3.0
+    assert found["y"] == 7.0
+
+
+def test_root_snaps_to_a_clean_half_integer():
+    # The ladder is decimals, not just integers: a root at 1.5 that drifts to ~1.4999998
+    # snaps at one decimal place. Rounding to the NEAREST integer (1 or 2) is rejected —
+    # it is not a root — so only the genuinely-clean 1.5 is adopted.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 4] in floating-point\nthe root is x = 1.5 exactly",
+        "2*x - 3",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=4)
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 1.5
+
+
+def test_irrational_root_is_not_snapped():
+    # The guard: sqrt(2) is irrational, so no clean rounding is a root — every probe is
+    # strictly worse than the converged point and best-tracking keeps the latter. The
+    # answer stays ~1.41421 and is NOT snapped to 1, 1.4, or any short decimal.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] in floating-point\n"
+        "the root is sqrt(2) ~ 1.41421 — irrational, so it must stay put, not snap",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2)
+    assert payload["error"] is None
+    found = _num(payload["solution"])
+    assert found == pytest.approx(2**0.5, abs=1e-6)
+    assert found != 1.0 and found != 2.0 and found != 1.4
+
+
+def test_irrational_optimum_is_not_snapped():
+    # The same guard for an extremum: (x**2 - 2)**2 bottoms out at x = sqrt(2); a rounded
+    # x gives a strictly larger value, so the minimiser is left at ~1.41421, not snapped.
+    program = _annotated(
+        "find-minimum of (x**2 - 2)**2 over [0, 2] in floating-point\n"
+        "the minimiser is sqrt(2) ~ 1.41421 — irrational, so it must not snap to 1 or 1.4",
+        "(x**2 - 2)**2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, objective="find-minimum")
+    assert payload["error"] is None
+    found = _num(payload["solution"])
+    assert found == pytest.approx(2**0.5, abs=1e-5)
+    assert found != 1.0 and found != 1.4

@@ -13,6 +13,7 @@ bracket. Both minimise the same folded objective, so every objective works on ei
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -204,6 +205,7 @@ _TIME_LIMIT_SECONDS = 2.0  # hard wall-clock cap: a pathological program can mak
 _FLOAT_X_TOL = 1e-12  # float bracket-width stop — a double resolves no finer near 1
 _FLOAT_RESIDUAL_TOL = 1e-6  # float solve acceptance: |expr| this small counts as a root
 _RATIONAL_SEARCH_DECIMALS = 12  # rational has no scale of its own; search at this one
+_FLOAT_SNAP_DECIMALS = 6  # float snap-polish ladder: try clean roundings to 0..6 decimals
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +276,59 @@ def _tolerances(mode: Mode, scale: int) -> tuple[float, float]:
             raise ValueError(f"unsupported mode: {mode!r}")
 
 
+def _round_decimals(x: float, ndigits: int) -> float:
+    """Round ``x`` to ``ndigits`` decimal places through the language's own round().
+
+    Goes the long way round — float -> Value -> ``Value.round_`` -> float — so the snap
+    polish reuses the SAME rounding the expression language exposes (``round()``, value.py)
+    rather than a private re-implementation. In floating-point mode this is exactly Python's
+    half-to-even ``round(x, ndigits)``, but routing through Value keeps the two in lockstep
+    if the language's rounding ever changes.
+    """
+    nd = Value.from_real(float(ndigits), Mode.FLOATING_POINT, 0)
+    return Value.from_real(x, Mode.FLOATING_POINT, 0).round_(nd).to_float()
+
+
+def _float_snap_polish(
+    centre: list[float],
+    probe: Callable[[list[float]], float],
+    bounds: list[tuple[float, float]],
+    cap: int = _FLOAT_SNAP_DECIMALS,
+) -> None:
+    """Floating-point counterpart to the fixed-point / rational grid polish (31.7).
+
+    Floating-point has no grid to polish, so a converged candidate can sit a few ULPs off a
+    clean value — 4.999999999999984 for 5, 3.9999999717 for 4. Re-probe the CLEAN roundings
+    of ``centre`` (to 0, 1, …, ``cap`` decimal places) and let the caller's best-across-all
+    tracking adopt one only when it is STRICTLY better: a clean root gives ``|expr| = 0`` and
+    a clean optimum gives the exact extremum, either strictly below the drifted residual,
+    while an irrational answer's rounding is a step AWAY from the true minimiser and so is
+    strictly worse and rejected. The objective itself is the discriminator — no closeness
+    threshold is needed. Ascending ``k`` with strict ``<`` means the cleanest representation
+    (fewest decimals) is the one kept.
+
+    ``probe`` is the engine's ``evaluate_objective`` adapted to take a point as a list, so the
+    single-variable (golden / Brent) and multivariable (Nelder-Mead) engines share one helper;
+    it has the same best-tracking side effect and ``+inf``-on-domain-error behaviour. For each
+    ``k`` both the WHOLE point rounded together (the clean lattice point — one shot for an
+    all-clean answer, robust to a non-separable objective) and each axis rounded ALONE (so a
+    mix of one clean and one irrational coordinate still cleans the clean axis) are probed.
+    Every probe is clamped to ``bounds`` so a rounding never escapes the caller's box — the
+    single-variable engines do not otherwise clamp. Mirrors grid polish: fixed centre, no
+    compounding, side effect through ``probe`` only; the caller skips it on timeout.
+    """
+
+    def clamp(point: list[float]) -> list[float]:
+        return [min(max(point[i], lo), hi) for i, (lo, hi) in enumerate(bounds)]
+
+    for k in range(cap + 1):
+        probe(clamp([_round_decimals(c, k) for c in centre]))  # the whole clean lattice point
+        for i in range(len(centre)):  # then each axis on its own, others left as found
+            trial = list(centre)
+            trial[i] = _round_decimals(centre[i], k)
+            probe(clamp(trial))
+
+
 def search(
     node: Node,
     variable: str,
@@ -315,7 +370,7 @@ def search(
     best_solution: Value | None = None
     best_value: Value | None = None
 
-    def evaluate_objective(x: float) -> float:
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float:
         nonlocal best_obj, best_solution, best_value
         candidate = Value.from_real(x, mode, scale)
         store = VariableStore()
@@ -327,7 +382,10 @@ def search(
                 raise  # a constant the program never set — structural, surface it
             return math.inf  # a domain error at THIS candidate — steer the search away
         obj = fold_objective(raw, objective).to_float()
-        if obj < best_obj:
+        # The search loop keeps the strict best; snap polish passes accept_ties so a clean
+        # rounding that merely TIES (a flat optimum the drifted point already reached to the
+        # last ULP) still replaces it with the tidier value.
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
             best_obj, best_solution, best_value = obj, candidate, raw
         return obj
 
@@ -365,6 +423,16 @@ def search(
         centre = best_solution.to_float()
         for k in (-2, -1, 1, 2):
             evaluate_objective(centre + k * step)
+
+    # Float snap polish: the float counterpart to the grid polish above (the two are mutually
+    # exclusive by mode), re-probing the clean roundings of the best point so a drifted answer
+    # like 4.999...84 lands on the clean 5 when it is genuinely no worse (_float_snap_polish).
+    if best_solution is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            [best_solution.to_float()],
+            lambda point: evaluate_objective(point[0], accept_ties=True),
+            [(lower, upper)],
+        )
 
     if best_solution is None or best_value is None:
         limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
@@ -438,7 +506,7 @@ def brent_parabolic(
     best_solution: Value | None = None
     best_value: Value | None = None
 
-    def evaluate_objective(x: float) -> float:
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float:
         nonlocal best_obj, best_solution, best_value
         candidate = Value.from_real(x, mode, scale)
         store = VariableStore()
@@ -450,7 +518,9 @@ def brent_parabolic(
                 raise  # a constant the program never set — structural, surface it
             return math.inf  # a domain error at THIS candidate — steer the search away
         obj = fold_objective(raw, objective).to_float()
-        if obj < best_obj:
+        # accept_ties: snap polish replaces the best on a tie with the tidier rounding; the
+        # search loop (accept_ties=False) keeps its strict best. See search() for the why.
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
             best_obj, best_solution, best_value = obj, candidate, raw
         return obj
 
@@ -525,6 +595,15 @@ def brent_parabolic(
         centre = best_solution.to_float()
         for k in (-2, -1, 1, 2):
             evaluate_objective(centre + k * step)
+
+    # Float snap polish, identical to golden-section's: the float counterpart to the grid
+    # polish above, snapping a drifted answer onto its clean rounding when no worse.
+    if best_solution is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            [best_solution.to_float()],
+            lambda point: evaluate_objective(point[0], accept_ties=True),
+            [(lower, upper)],
+        )
 
     if best_solution is None or best_value is None:
         limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
@@ -610,7 +689,7 @@ def nelder_mead(
     def clamp(point: list[float]) -> list[float]:
         return [min(max(point[i], lowers[i]), uppers[i]) for i in range(n)]
 
-    def evaluate_objective(point: list[float]) -> float:
+    def evaluate_objective(point: list[float], *, accept_ties: bool = False) -> float:
         nonlocal best_obj, best_point, best_solution, best_value
         candidates = tuple(Value.from_real(point[i], mode, scale) for i in range(n))
         store = VariableStore()
@@ -623,7 +702,9 @@ def nelder_mead(
                 raise  # a constant the program never set — structural, surface it
             return math.inf  # a domain error at THIS point — steer the simplex away
         obj = fold_objective(raw, objective).to_float()
-        if obj < best_obj:
+        # accept_ties: snap polish replaces the best on a tie with the tidier rounding; the
+        # simplex loop (accept_ties=False) keeps its strict best. See search() for the why.
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
             best_obj = obj
             best_point, best_solution, best_value = list(point), candidates, raw
         return obj
@@ -696,6 +777,16 @@ def nelder_mead(
                 probe = list(centre)
                 probe[i] = centre[i] + k * step
                 evaluate_objective(clamp(probe))
+
+    # Float snap polish: the float counterpart to the grid polish above. _float_snap_polish
+    # rounds each axis (and the whole point) onto its clean value and lets best-tracking adopt
+    # the result when no worse — so a drifted (2.999…, 6.999…) lands on (3, 7).
+    if best_point is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            list(best_point),
+            lambda point: evaluate_objective(point, accept_ties=True),
+            list(zip(lowers, uppers, strict=True)),
+        )
 
     box = ", ".join(f"{names[i]} in [{lowers[i]}, {uppers[i]}]" for i in range(n))
     if best_solution is None or best_value is None:
