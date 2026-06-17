@@ -29,15 +29,16 @@
   9. My last six electricity bills were 88, 92, 79, 105, 96 and 84 euros. How
   much do my bills typically swing from one month to the next? 
 
-  10. I timed my morning jog on five different days and got 27, 31, 26, 29 and 33 minutes. How consistent am I —
-  what's the typical spread in those times? (→ sample stddev)
+  10. I timed my morning jog on five different days and got 27, 31, 26, 29 and
+  33 minutes. How consistent am I — what's the typical spread in those times? 
 
-  Straight-line distance — hypot
+  11. Walking to the station I go 600 metres along one street, then turn the
+  corner and go 800 metres along the next.  If there were a footpath cutting
+  straight across, how long would that shortcut be?
 
-  11. Walking to the station I go 600 metres along one street, then turn the corner and go 800 metres along the next.
-  If there were a footpath cutting straight across, how long would that shortcut be? (→ hypot)
-  12. I want to check whether a new monitor will sit on my desk. The desk is 70 centimetres deep and 140 centimetres
-  wide — what's the straight-line distance from one corner to the opposite one? (→ hypot)
+  12. I want to check whether a new monitor will sit on my desk. The desk is 70
+  centimetres deep and 140 centimetres wide — what's the straight-line distance
+  from one corner to the opposite one? 
 
 
 
