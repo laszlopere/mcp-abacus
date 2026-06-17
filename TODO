@@ -1960,4 +1960,14 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                user-facing default is fixed-point everywhere. Engine-internal (cannot
                mislead a client), cosmetic only.
 
+[ ] 42.  SOLVER: compare candidate objectives in-mode, not via to_float(). The
+         folded objective is a mode-faithful Value but every engine reduces it with
+         .to_float() to drive the search (solver.py:384/520/704), capping the
+         DECISION at ~16 significant digits. Fails on large-offset/flat-near-solution
+         objectives (e.g. 1e6+(x-3)^2): variation below the offset's last mantissa
+         digit vanishes and the search stalls. Use Value._compare (already same-mode,
+         cheap); needs a "worse-than-any-Value" sentinel for the +inf domain penalty
+         and Value forms of best_obj (residual test + message). NOTE: only lifts the
+         decision ceiling — positions/bracket/tolerances stay float, so sub-float
+         resolution needs the search geometry in exact arithmetic too (bigger change).
 
