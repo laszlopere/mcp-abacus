@@ -1938,5 +1938,30 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                resources/prompts and none are exposed today.
     [x] 41.9.  Add classifiers to pyproject.toml (License, Python versions, Topic)
                for metadata completeness.
+    [ ] 41.10. Document analyze's per-node `· error <residual> ≈ <approx>` segment.
+               describe() (value.py:2555-2556) appends it for every inexact
+               fixed-point node, but analyze's return-shape docstring (server.py:617-
+               620) lists only the hex / ≈ fragments — the residual is undocumented.
+               Worse, "error" collides with the reply's `error` failure channel, so a
+               reader may misread `· error -1/2` as "this node failed". Document it and
+               consider renaming the fragment (residual / rounding).
+    [ ] 41.11. Document (or trim) the unadvertised mode aliases. resolve_mode accepts
+               decimal->fixed-point, float/ieee754->floating-point, fraction/frac->
+               rational (value.py:134-142), but every tool description advertises only
+               float64/double. decimal->fixed-point is the trap: a caller expecting
+               decimal-FLOAT silently gets fixed-point, no error to learn from (the
+               resolved-name echo is the only tell). List the alias set or drop the
+               misleading ones.
+    [ ] 41.12. Add "rational" to pyproject keywords (pyproject.toml:16). It is one of
+               the three headline modes yet absent from the keyword list — a
+               discoverability gap against the description's own three-mode claim.
+    [ ] 41.13. Make the tool cross-references bidirectional. calculate points to BOTH
+               analyze and solver, but analyze mentions only calculate (never solver)
+               and solver mentions only calculate/help (never analyze). An LLM that
+               lands on analyze or solver is never steered to the sibling diagnostic.
+    [ ] 41.14. Fix the stale value.py:110 comment — FLOATING_POINT is labelled "the
+               default (19.1.1)", left from when it was the first mode built; the
+               user-facing default is fixed-point everywhere. Engine-internal (cannot
+               mislead a client), cosmetic only.
 
 
