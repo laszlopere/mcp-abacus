@@ -175,6 +175,7 @@ def test_function_arities_match_the_registry():
         "variance": (1, None),
         "stddev": (1, None),
         "gcd": (1, None),  # 40.7 — variadic, minimum one operand
+        "lcm": (1, None),  # 40.8 — variadic, minimum one operand
         "pi": (0, 0),  # nullary constant (29.2)
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)

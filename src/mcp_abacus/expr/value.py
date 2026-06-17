@@ -1927,8 +1927,8 @@ class Value:
     def _as_integer(self, what: str) -> int:
         """This Value as a signed Python int, REFUSING any fractional part (40.7).
 
-        The integer-domain gate shared by the integer-only functions (gcd, 40.7;
-        lcm, 40.8 to come): an operand is read as a plain ``int`` in whatever mode
+        The integer-domain gate shared by the integer-only functions (gcd/lcm,
+        40.7/40.8): an operand is read as a plain ``int`` in whatever mode
         the run is in, and a non-integer — fixed-point with a fractional part, a
         rational with denominator != 1, a non-whole float — REFUSES with
         ``NotRepresentableError``, the exact-or-refuse stance. The exactness FLAG is
@@ -1976,6 +1976,25 @@ class Value:
             self._same_mode(other, "gcd")
             ints.append(other._as_integer("gcd"))
         return Value._from_scaled_int(math.gcd(*ints), 0, self.mode)
+
+    def lcm(self, *others: "Value") -> "Value":
+        """Least common multiple of one-or-more operands (40.8) — VARIADIC; ``math.lcm``.
+
+        The multiplicative twin of ``gcd`` (40.7): same VARIADIC shape, same
+        same-mode enforcement, and the SAME integer-only DOMAIN — each operand goes
+        through ``_as_integer``, so a fractional fixed-point value, a rational with
+        denominator != 1, or a non-whole float REFUSES. EXACT in EVERY mode: the
+        fold ``lcm(a, b) = |a*b| / gcd(a, b)`` stays in the integers, so no rounding
+        and no inexact flag. ``lcm(a)`` is ``|a|`` (the one-operand fold), sign is
+        dropped (a multiple is taken in magnitude), and ANY zero operand makes the
+        whole result 0 (0 shares every multiple), matching ``math.lcm``. The result
+        is a whole number at scale 0 in fixed-point.
+        """
+        ints = [self._as_integer("lcm")]
+        for other in others:
+            self._same_mode(other, "lcm")
+            ints.append(other._as_integer("lcm"))
+        return Value._from_scaled_int(math.lcm(*ints), 0, self.mode)
 
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root

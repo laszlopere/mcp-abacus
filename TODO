@@ -1811,7 +1811,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                with a fractional part, rational with denominator != 1, a float
                that is not whole) refuses, the exact-or-refuse stance. Sign is
                dropped (gcd works on magnitudes); gcd(0, 0) = 0.
-    [ ] 40.8.  lcm(...) — least common multiple, VARIADIC like gcd, EXACT in
+    [x] 40.8.  lcm(...) — least common multiple, VARIADIC like gcd, EXACT in
                every mode via lcm(a, b) = |a*b| / gcd(a, b) folded across the
                operands. Same integer-only DOMAIN and refusal as gcd; any zero
                operand makes lcm 0.

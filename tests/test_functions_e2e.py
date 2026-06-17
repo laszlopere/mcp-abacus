@@ -169,6 +169,54 @@ def test_gcd_refuses_a_non_integer_operand():
     assert payload["error"] == "gcd requires integer operands"
 
 
+def test_lcm_over_integers_folds_and_absorbs_zero():
+    # The variadic lcm mirrors gcd: it folds across three operands, reduces to the
+    # single-operand identity lcm(a) = |a|, DROPS the sign, and ANY zero operand makes
+    # the whole result 0 (0 shares every multiple). All exact — the fold stays in the
+    # integers — including from whole-valued .00 literals.
+    program = _annotated(
+        "lcm folds magnitudes, ignores sign, and collapses to 0 on a zero operand",
+        "lcm(2, 3, 4)\nlcm(-4, 6)\nlcm(7)\nlcm(0, 5)\nlcm(0, 0)\nlcm(4.00, 6.00)",
+    )
+    assert _values(_calc(program)) == [
+        "12 (exact)",  # lcm(2, 3, 4)
+        "12 (exact)",  # sign dropped: lcm(4, 6)
+        "7 (exact)",  # single-operand identity lcm(a) = |a|
+        "0 (exact)",  # any zero operand -> 0
+        "0 (exact)",  # lcm(0, 0) = 0
+        "12 (exact)",  # whole-valued .00 literals are integer-domain
+    ]
+
+
+def test_gcd_and_lcm_satisfy_the_product_identity():
+    # The reason to group: two legs feed both functions through one shared scope, and
+    # gcd(a, b) * lcm(a, b) == |a * b| — the classic identity. With a = 12, b = 18 the
+    # gcd is 6, the lcm 36, and both products equal 216. All exact integer math.
+    program = _annotated(
+        "gcd(a,b) * lcm(a,b) equals a*b through one shared scope",
+        "a = 12\nb = 18\ngcd(a, b)\nlcm(a, b)\ngcd(a, b) * lcm(a, b)\na * b",
+    )
+    assert _values(_calc(program)) == [
+        "6 (exact)",  # gcd(12, 18)
+        "36 (exact)",  # lcm(12, 18)
+        "216 (exact)",  # gcd * lcm
+        "216 (exact)",  # == a * b
+    ]
+
+
+def test_lcm_refuses_a_non_integer_operand():
+    # lcm shares gcd's integer-only DOMAIN: a fixed-point value with a fractional part
+    # aborts the whole program with the parallel self-contained reason — the earlier
+    # exact lcm is discarded with it.
+    program = _annotated(
+        "a fractional operand mid-group aborts lcm",
+        "lcm(4, 6)\nlcm(2.5, 5)",
+    )
+    payload = _calc(program)
+    assert payload["values"] is None
+    assert payload["error"] == "lcm requires integer operands"
+
+
 def test_population_spread_on_the_textbook_set():
     # variance and its square root stddev on the textbook set with mean 5, squared-
     # deviation sum 32: /8 = 4, and sqrt(4) = 2 is a perfect square, so both stay exact.
@@ -525,6 +573,19 @@ def test_gcd_in_rational_is_exact_on_integers_and_refuses_a_true_fraction():
     payload = _calc(program, mode="rational")
     assert payload["values"] is None
     assert payload["error"] == "gcd requires integer operands"
+
+
+def test_lcm_in_rational_is_exact_on_integers_and_refuses_a_true_fraction():
+    # lcm in rational mirrors gcd: denominator-1 operands fold to an exact integer, but
+    # a true fraction (denominator != 1) is not integer-valued and aborts the group on
+    # the same integer-only domain.
+    program = _annotated(
+        "rational lcm: exact over integers, then a 1/2 that refuses",
+        "lcm(2, 3, 4)\nlcm(1/2, 3)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "lcm requires integer operands"
 
 
 # --- a domain refusal aborts the whole group ---------------------------------
