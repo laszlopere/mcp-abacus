@@ -698,6 +698,80 @@ def test_integral_non_name_variable_aborts_the_group():
     assert payload["error"] == "integral's variable (2nd argument) must be a name"
 
 
+# --- diff: the numerical-derivative special form (40.17) ---------------------
+
+
+def test_diff_polynomials_through_the_grid():
+    # diff(expr, var, at) is a SPECIAL FORM: the 1st argument is the unevaluated expression
+    # and the 2nd a bare variable NAME, not values. The five-point central difference is
+    # exact for polynomials up to degree 4, so these land on the true slope — yet a
+    # finite-difference quotient only APPROXIMATES, so every line is flagged inexact. The
+    # group covers a linear, a quadratic and a cubic expression, plus a constant (the
+    # variable need not occur — its slope is 0). Pinned at scale 4 so the digits are stable.
+    program = _annotated(
+        "derivatives of low-degree polynomials, including a constant",
+        "diff(2 * x + 1, x, 0)\ndiff(x**2, x, 3)\ndiff(x**3, x, 2)\ndiff(1, x, 0)",
+    )
+    assert _values(_calc(program, floor=4)) == [
+        "2.0000 (inexact, rounded to 4 decimals)",  # d/dx (2x+1) = 2
+        "6.0000 (inexact, rounded to 4 decimals)",  # d/dx x**2 at 3 = 6
+        "12.0000 (inexact, rounded to 4 decimals)",  # d/dx x**3 at 2 = 12
+        "0.0000 (inexact, rounded to 4 decimals)",  # constant: slope 0
+    ]
+
+
+def test_diff_reads_a_shared_assignment():
+    # The reason to group: the expression re-evaluates in a child scope seeded from the
+    # program's, so a leading assignment (a = 3) feeds the derivative while the
+    # differentiation variable x shadows the per-sample point. d/dx (3*x) = 3, exact-valued
+    # in rational but still flagged inexact (a finite-difference quotient).
+    program = _annotated(
+        "an outer assignment feeds the differentiated expression through the shared scope",
+        "a = 3\ndiff(a * x, x, 2)",
+    )
+    assert _values(_calc(program, mode="rational")) == ["3 (inexact)"]
+
+
+def test_diff_in_rational_is_inexact_even_when_the_value_is_whole():
+    # Contrast with the rational group below: where sqrt/cbrt stay EXACT on a clean result,
+    # the derivative is inexact in EVERY mode — the stencil is exact for these low-degree
+    # expressions so the value is a whole fraction, but it stands for the true derivative it
+    # only approximates, so the honest flag is inexact.
+    program = _annotated(
+        "rational derivatives: whole-valued, yet flagged inexact (a difference quotient)",
+        "diff(x**2, x, 3)\ndiff(x**3, x, 2)\ndiff(x, x, 5)",
+    )
+    assert _values(_calc(program, mode="rational")) == [
+        "6 (inexact)",
+        "12 (inexact)",
+        "1 (inexact)",
+    ]
+
+
+def test_diff_transcendental_rounds_at_the_floor():
+    # A transcendental expression is not stencil-exact, so the result is a genuine
+    # approximation that rounds to the operand scale and flags inexact. d/dx sin(x) at 1 =
+    # cos(1) ≈ 0.5403; at scale 4 the quotient lands on 0.5405.
+    program = _annotated(
+        "the slope of sine at x = 1, d/dx sin(x) = cos(1) ≈ 0.5403",
+        "diff(sin(x), x, 1)",
+    )
+    assert _values(_calc(program, floor=4)) == ["0.5405 (inexact, rounded to 4 decimals)"]
+
+
+def test_diff_non_name_variable_aborts_the_group():
+    # The 2nd argument MUST be a bare name (the variable to differentiate against); a literal
+    # is not, so the whole program aborts with a self-contained reason — the earlier exact
+    # derivative is discarded with it, like any mid-group domain refusal.
+    program = _annotated(
+        "a non-name differentiation variable aborts the program",
+        "diff(x**2, x, 3)\ndiff(x, 5, 0)",
+    )
+    payload = _calc(program)
+    assert payload["values"] is None
+    assert payload["error"] == "diff's variable (2nd argument) must be a name"
+
+
 # --- rational: exact selection and exact fractions ---------------------------
 
 

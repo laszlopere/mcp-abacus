@@ -1668,3 +1668,92 @@ def test_integral_masks_its_bound_variable_in_referenced_names():
     # a free reference — only genuinely free names (here `t`) leak out, which keeps the
     # dummy from being mistaken for a solver unknown when an integral is nested.
     assert parse("integral(x*t, x, 0, 1)").referenced_names() == frozenset({"t"})
+
+
+# --- diff(expr, var, at): the numerical-derivative special form (40.17) -------
+# diff's SIBLING special form (40.18 integral): `expr` is the unevaluated expression and
+# `var` a bare NAME, not values. A five-point central difference in the active mode (no
+# float shadow); the result is ALWAYS inexact (a finite-difference quotient only
+# approximates the derivative). The stencil is EXACT for polynomials up to degree 4, so a
+# low-degree expression lands on the true slope in every mode — still flagged inexact —
+# which keeps these assertions deterministic.
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "value"),
+    [
+        # Quadratic and cubic are stencil-exact, so they land on the true derivative even at
+        # the integer grid (scale 0, where the step is one unit) and at a raised floor.
+        ("diff(x**2, x, 3)", None, None, "6 (inexact, rounded to 0 decimals "
+         "— pass min_fixed_point_precision for more)"),
+        ("diff(x**2, x, 3)", None, 4, "6.0000 (inexact, rounded to 4 decimals)"),
+        ("diff(x**3, x, 2)", None, 4, "12.0000 (inexact, rounded to 4 decimals)"),
+        # Exact-valued and flagged inexact in rational, across degrees 0..3.
+        ("diff(x**2, x, 3)", "rational", None, "6 (inexact)"),
+        ("diff(x**3, x, 2)", "rational", None, "12 (inexact)"),
+        ("diff(2*x+1, x, 0)", "rational", None, "2 (inexact)"),
+        # A constant expression: var need not occur; the slope is 0 (still inexact).
+        ("diff(1, x, 0)", "rational", None, "0 (inexact)"),
+        ("diff(x, x, 5)", "rational", None, "1 (inexact)"),
+    ],
+)
+def test_diff(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
+
+
+def test_diff_reads_outer_variables():
+    # The expression re-evaluates in a child store seeded from the run's, so it can read an
+    # outer binding (k) while the differentiation variable (x) shadows the per-sample point.
+    # d/dx (k*x) = k = 3, stencil-exact in rational.
+    assert _value("k = 3\ndiff(k*x, x, 2)", "rational") == "3 (inexact)"
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "expected"),
+    [
+        # A transcendental expression: not stencil-exact, so the result only approximates —
+        # assert closeness rather than an exact string. d/dx sin(x) at 1 = cos(1) ≈ 0.5403;
+        # d/dx exp(x) at 1 = e ≈ 2.71828.
+        ("diff(sin(x), x, 1)", "floating-point", None, 0.5403023058681398),
+        ("diff(exp(x), x, 1)", "floating-point", None, 2.718281828459045),
+        ("diff(sin(x), x, 1)", None, 6, 0.5403023058681398),
+    ],
+)
+def test_diff_transcendental_is_close(expression, mode, floor, expected):
+    rendered = _value(expression, mode, floor)
+    number, annotation = rendered.split(" ", 1)
+    assert annotation.startswith("(inexact")
+    assert abs(float(number) - expected) < 1e-4
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # The 2nd argument must be a bare name: a literal or a constant nullary (pi/e) is not.
+        ("diff(x, 5, 0)", None, "diff's variable (2nd argument) must be a name"),
+        ("diff(x, pi, 0)", None, "diff's variable (2nd argument) must be a name"),
+        # A transcendental expression in rational mode refuses at the sample, like sin does
+        # everywhere — surfaced as the expression's own line-tagged error. (sin'(0) too: the
+        # samples sit at ±h, non-zero rationals, so sine refuses there even though the point
+        # is 0.)
+        ("diff(sin(x), x, 1)", "rational", "sine of a non-zero rational is irrational"),
+        ("diff(sin(x), x, 0)", "rational", "sine of a non-zero rational is irrational"),
+    ],
+)
+def test_diff_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_diff_arity_is_a_parse_error():
+    # Fixed arity 3, wired through FUNCTION_ARITIES like every call — wrong count is caught
+    # at parse, before evaluation, the same as a misused ordinary function.
+    payload = _calc("diff(x, x)")
+    assert payload["value"] is None
+    assert "takes 3 argument(s)" in payload["error"]
+
+
+def test_diff_masks_its_bound_variable_in_referenced_names():
+    # The differentiation variable is BOUND (a dummy the form rebinds per sample), so it is
+    # not a free reference — only genuinely free names (here `t`) leak out, which keeps the
+    # dummy from being mistaken for a solver unknown when a diff is nested.
+    assert parse("diff(x*t, x, 0)").referenced_names() == frozenset({"t"})

@@ -1875,7 +1875,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                positive operands (a zero makes a term undefined — ZeroDivisionError;
                mixed signs are ill-defined, refuse). No sqrt, so it follows avg's
                division stance: EXACT in rational, may round in fixed-point/float.
-    [ ] 40.17. diff(expr, var, at) — numerical derivative of an expression w.r.t. a
+    [x] 40.17. diff(expr, var, at) — numerical derivative of an expression w.r.t. a
                named variable, evaluated at a point. Like the solver, `expr`/`var`
                are an unevaluated program + a free variable NAME, not values — so it
                is solver-adjacent, not an ordinary 40.x operand-method. Inherently

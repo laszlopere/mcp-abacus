@@ -139,6 +139,7 @@ _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
 # call's user arguments in the operand-method sense).
 _SPECIAL_FORM_ARITIES: dict[str, tuple[int, int | None]] = {
     "integral": (4, 4),  # 40.18 — integral(expr, var, a, b); definite integral, always inexact
+    "diff": (3, 3),  # 40.17 — diff(expr, var, at); numerical derivative, always inexact
 }
 _SPECIAL_FORM_NAMES: frozenset[str] = frozenset(_SPECIAL_FORM_ARITIES)
 
@@ -209,6 +210,9 @@ FUNCTION_HELP: dict[str, str] = {
     "integral": "definite integral of an expression over [a, b] w.r.t. the variable NAMED by "
     "the 2nd arg (1st arg is the unevaluated integrand, 2nd a bare name — NOT values); "
     "adaptive-Simpson quadrature, always inexact",
+    "diff": "numerical derivative of an expression at a point w.r.t. the variable NAMED by "
+    "the 2nd arg (1st arg is the unevaluated expression, 2nd a bare name, 3rd the point — "
+    "NOT values); five-point central difference, always inexact",
 }
 
 

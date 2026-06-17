@@ -180,6 +180,7 @@ def test_function_arities_match_the_registry():
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)
         "integral": (4, 4),  # special form (40.18) — fixed arity 4, not read off a signature
+        "diff": (3, 3),  # special form (40.17) — fixed arity 3, not read off a signature
     }
 
 
