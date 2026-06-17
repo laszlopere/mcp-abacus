@@ -1233,7 +1233,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 rational: exact ONLY when numerator and denominator are BOTH perfect
                   cubes (incl. negative numerator — odd root); else
                   NotRepresentableError, the same exact-or-refuse stance as sqrt.
-    [ ] 28.22.  OPTIONAL-ARG ARITY — the (1, 2) call shape: a REQUIRED first operand
+    [x] 28.22.  OPTIONAL-ARG ARITY — the (1, 2) call shape: a REQUIRED first operand
                 plus ONE OPTIONAL trailing argument. The prerequisite for the ndigits
                 forms of the rounding family (28.23-28.26), the way nullary support
                 (29) preceded pi()/time(). SMALL: _arity_of (22.2) already reads a

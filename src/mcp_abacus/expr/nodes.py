@@ -170,13 +170,18 @@ def _arity_of(func: Callable[..., Value]) -> tuple[int, int | None]:
     self IS the first operand, so a unary method like sqrt(self) is (1, 1) and a
     binary one (self, other) is (2, 2). A ``*args`` (VAR_POSITIONAL) tail makes the
     max unbounded — sum_(self, *others) is (1, None) — so variadic funcs declare a
-    MINIMUM, not a fixed count. Reading it off the method keeps it from drifting
-    from _FUNCS, the same invariant the single-count form had.
+    MINIMUM, not a fixed count. A positional param that carries a DEFAULT is OPTIONAL
+    (22.8): it lifts the max but not the min, so round(self, ndigits=None) reads
+    (1, 2) — a required operand plus one optional trailing arg (the consuming method
+    reads that arg as a Python int; the count is not validated here). Reading it off
+    the method keeps it from drifting from _FUNCS, the same invariant the single-count
+    form had.
     """
     params = inspect.signature(func).parameters.values()
-    required = sum(1 for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD))
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    required = sum(1 for p in positional if p.default is p.empty)
     variadic = any(p.kind is p.VAR_POSITIONAL for p in params)
-    return (required, None if variadic else required)
+    return (required, None if variadic else len(positional))
 
 
 # Arity range per function (min, max|None). The parser (22.2) and FuncCall both

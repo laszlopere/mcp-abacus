@@ -19,6 +19,7 @@ from mcp_abacus.expr.nodes import (
     Sequence,
     UnaryOp,
     Var,
+    _arity_of,
 )
 
 
@@ -166,6 +167,22 @@ def test_function_arities_match_the_registry():
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)
     }
+
+
+def test_arity_of_treats_defaulted_param_as_optional():
+    # 28.22: a positional param WITH A DEFAULT is optional — it lifts the max, not
+    # the min. round(self, ndigits=None) reads (1, 2): one required operand plus one
+    # optional trailing arg. The prerequisite shape for floor/ceil/round/trunc.
+    def round_(self, ndigits=None): ...
+    assert _arity_of(round_) == (1, 2)
+
+    # A required param still counts toward the min; a *args tail still wins the max.
+    def two_or_more(self, other, *rest): ...
+    assert _arity_of(two_or_more) == (2, None)
+
+    # All-required is unchanged (regression guard for the existing funcs).
+    def binary(self, other): ...
+    assert _arity_of(binary) == (2, 2)
 
 
 def test_empty_lexeme_raises():

@@ -63,6 +63,10 @@ Conventions:
   - unary `def f(self)` → `(1, 1)`
   - binary `def f(self, other)` → `(2, 2)`
   - variadic `def f(self, *others)` → `(1, None)` (declares a *minimum*)
+  - optional trailing arg `def f(self, ndigits=None)` → `(1, 2)` (28.22): a
+    positional param **with a default** is optional — it lifts the max, not the min.
+    The absent arg is filled by the Python default at dispatch, so the body must
+    handle `ndigits=None`. The `floor`/`ceil`/`round`/`trunc` family uses this shape.
 
 ## Step 2 — register the name in `nodes.py`
 
