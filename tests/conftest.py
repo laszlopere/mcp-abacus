@@ -97,6 +97,17 @@ def _human_readable_trace(request, monkeypatch):
             )
         _append(expression, "" if solution is None else str(solution))
 
+    def _record_calculate(arguments, payload) -> None:
+        # `calculate` returns a per-line `values` breakdown, not a single solution: the
+        # Result block lists one "<expr> = <value>" line per answered line (so a grouped
+        # program shows every function's result), or the plain error when it aborted.
+        expression = (arguments or {}).get("expression", "")
+        if payload.get("error") is not None:
+            _append(expression, payload["error"])
+            return
+        lines = [f"{entry['source']} = {entry['value']}" for entry in (payload.get("values") or [])]
+        _append(expression, "\n".join(lines))
+
     original_mcp_call = mcp.call_tool
 
     @functools.wraps(original_mcp_call)
@@ -109,6 +120,11 @@ def _human_readable_trace(request, monkeypatch):
         if name == "solver":
             blocks = result[0] if isinstance(result, tuple) else result
             _record(arguments, json.loads(blocks[0].text))
+        elif name == "calculate" and request.module.__name__ == "test_functions_e2e":
+            # The grouped function tests frame each `calculate` program the same way:
+            # gated to that module so other calculate-driven tests stay unaffected.
+            blocks = result[0] if isinstance(result, tuple) else result
+            _record_calculate(arguments, json.loads(blocks[0].text))
         return result
 
     original_client_call = ClientSession.call_tool
@@ -449,6 +465,45 @@ def _compact_solver_e2e_trace(request, monkeypatch):
             print("\n")  # blank line(s) between cases
 
 
+def _compact_functions_e2e_trace(request, monkeypatch):
+    """For test_functions_e2e.py under -v: print each calculate call as REQUEST / REPLY.
+
+    The grouped tests drive the in-process `calculate` tool (mcp.call_tool) with multi-
+    line programs, so each call is recorded at that seam and, at teardown, printed as
+    the request arguments and the full reply payload — the actual JSON the tool sends
+    back, `values` array and all — each as a 2-space-indented block, a blank line
+    separating the cases. Mirrors _compact_solver_e2e_trace, for `calculate`.
+    """
+    from mcp_abacus.server import mcp
+
+    rows: list[tuple[dict, dict]] = []  # (request args, reply payload)
+    original_call_tool = mcp.call_tool
+
+    @functools.wraps(original_call_tool)
+    async def traced_call_tool(name, arguments=None, *args, **kwargs):
+        result = await original_call_tool(name, arguments, *args, **kwargs)
+        if name == "calculate":
+            blocks = result[0] if isinstance(result, tuple) else result
+            rows.append((arguments or {}, json.loads(blocks[0].text)))
+        return result
+
+    monkeypatch.setattr(mcp, "call_tool", traced_call_tool)
+    yield
+
+    if rows:
+
+        def _indent(text: str) -> str:
+            return "\n".join("  " + line for line in text.splitlines())
+
+        print()  # step off pytest's "test-id" progress line
+        for request_args, reply in rows:
+            print("\nREQUEST:")
+            print(_indent(json.dumps(request_args, indent=2)))
+            print("\nREPLY:")
+            print(_indent(json.dumps(reply, indent=2)))
+            print("\n")  # blank line(s) between cases
+
+
 def _compact_functions_trace(request, monkeypatch):
     """For test_functions.py under -v: print each call as "expression [mode] = value".
 
@@ -606,6 +661,13 @@ def _verbose_trace(request, monkeypatch):
         # test_functions.py gets the compact "expression [mode] = value" view,
         # sourced from the in-process `calculate` tool seam.
         yield from _compact_functions_trace(request, monkeypatch)
+        return
+
+    if request.module.__name__ == "test_functions_e2e":
+        # test_functions_e2e.py gets the REQUEST / REPLY JSON view, recorded at the in-
+        # process `calculate` tool seam so the pair is the real request and the real
+        # multi-line reply (the `values` breakdown) the tool sends back, like solver_e2e.
+        yield from _compact_functions_e2e_trace(request, monkeypatch)
         return
 
     if request.module.__name__ == "test_variables_e2e":
