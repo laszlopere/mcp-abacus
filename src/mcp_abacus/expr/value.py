@@ -1538,6 +1538,57 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def ceil(self, ndigits: "Value | None" = None) -> "Value":
+        """Round toward POSITIVE infinity (28.24) — the mirror of ``floor`` (28.23),
+        same shape (operand + optional ``ndigits`` count, default 0) and same
+        per-mode exactness story. ``ceil(2.1) -> 3``, ``ceil(-2.7) -> -2``;
+        ``ceil(1234, -2) -> 1300`` (negative ndigits rounds to tens/hundreds).
+
+        EXACT in every mode — ceiling SELECTS a representable value, no compute —
+        EXCEPT floating-point with ``ndigits > 0``, where the n-decimal target is
+        not binary-representable; ceiling a float to an INTEGER (ndigits <= 0) lands
+        on a whole multiple a double holds exactly, so it stays exact.
+        floating-point: ``math.ceil`` to an int (ndigits <= 0, exact), else the
+            decimal shift ``ceil(x*10**n)/10**n`` (inexact).
+        fixed-point: ``-((-M) // 10**d)`` on the scaled mantissa — ceiling is
+            ``-floor(-x)`` — held at scale ``max(0, n)``. Exact.
+        rational: ``math.ceil`` of the shifted fraction, back to a Fraction. Exact.
+        """
+        n = 0 if ndigits is None else Value._as_ndigits(ndigits)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if n <= 0:
+                    # Ceil to a whole multiple of 10**-n: an integer-valued double,
+                    # exactly representable. Pure-int scaling keeps it exact.
+                    unit = 10**-n
+                    whole = math.ceil(self.payload / unit) * unit
+                    return Value(Mode.FLOATING_POINT, float(whole), exact=True)
+                # n > 0: the n-decimal target is not binary-representable -> inexact.
+                unit = 10**n
+                shifted = math.ceil(self.payload * unit) / unit
+                return Value(Mode.FLOATING_POINT, shifted, exact=False)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                # Mantissa ceiled to scale n via -((-M) // 10**d) (-floor(-x)), then
+                # rescaled to the result scale max(0, n): for n < 0 the ceil lands on
+                # tens/hundreds carried at scale 0.
+                if n >= fp.decimals:  # finer than the value: nothing to drop
+                    at_n = fp.mantissa * 10 ** (n - fp.decimals)
+                else:
+                    at_n = -((-fp.mantissa) // 10 ** (fp.decimals - n))
+                scale = max(0, n)
+                mantissa = at_n * 10 ** (scale - n)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=self.exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                shift = Fraction(10) ** n
+                ceiled = Fraction(math.ceil(self.payload * shift)) / shift
+                return Value(Mode.RATIONAL, ceiled, exact=self.exact)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sum_(self, *others: "Value") -> "Value":
         """Total of one-or-more operands (28.5) — VARIADIC; repeated ``+``.
 

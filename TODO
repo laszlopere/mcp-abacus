@@ -1261,7 +1261,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                 rational: math.floor(Fraction) -> int; ndigits floors the shifted
                   fraction. Exact.
                 floor(2.7) -> 2, floor(-2.1) -> -3.
-    [ ] 28.24.  ceil(x[, ndigits]) — round toward POSITIVE infinity; the mirror of
+    [x] 28.24.  ceil(x[, ndigits]) — round toward POSITIVE infinity; the mirror of
                 floor (28.23). Same shape and per-mode exactness story. fixed-point via
                 -((-M) // 10**d); floating-point math.ceil; rational math.ceil.
                 ceil(2.1) -> 3, ceil(-2.7) -> -2. Canonical spelling ceil (the math

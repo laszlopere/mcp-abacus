@@ -429,6 +429,52 @@ def test_floor_refuses_a_non_integer_ndigits(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # ceil (28.24): round toward +inf, the mirror of floor. Fixed-point snaps to
+        # the grid, always exact.
+        ("ceil(2.1)", None, "3 (exact)"),
+        ("ceil(-2.7)", None, "-2 (exact)"),  # toward +inf, not away from zero
+        ("ceil(5)", None, "5 (exact)"),
+        ("ceil(2.751, 2)", None, "2.76 (exact)"),  # ceil at scale 2
+        ("ceil(2.75, 5)", None, "2.75000 (exact)"),  # finer than the value: held at scale 5
+        ("ceil(1234, -2)", None, "1300 (exact)"),  # negative ndigits -> tens/hundreds
+        # Floating-point: exact when it lands on an integer (ndigits <= 0), inexact
+        # when ndigits > 0 (the n-decimal target is not binary-representable).
+        ("ceil(2.1)", "floating-point", "3.0 (exact)"),
+        ("ceil(-2.7)", "floating-point", "-2.0 (exact)"),
+        ("ceil(1234, -2)", "floating-point", "1300.0 (exact)"),
+        ("ceil(2.751, 2)", "floating-point", "2.76 (inexact)"),
+        # Rational: exact in every case (Fraction ceil of the shifted value).
+        ("ceil(2.1)", "rational", "3 (exact)"),
+        ("ceil(-2.7)", "rational", "-2 (exact)"),
+        ("ceil(1234, -2)", "rational", "1300 (exact)"),
+        ("ceil(2.751, 2)", "rational", "69/25 (exact)"),  # 276/100 -> 69/25
+        ("ceil(1/3)", "rational", "1 (exact)"),
+        ("ceil(1/3, 2)", "rational", "17/50 (exact)"),  # 34/100 -> 17/50
+    ],
+)
+def test_ceil(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # ndigits must be an integer in any mode — a fractional second argument
+        # refuses, exactly as floor (28.22/28.24).
+        ("ceil(2.5, 1.5)", None, "ndigits must be an integer"),
+        ("ceil(2.5, 0.5)", "floating-point", "ndigits must be an integer"),
+        ("ceil(2.5, 3/2)", "rational", "ndigits must be an integer"),
+    ],
+)
+def test_ceil_refuses_a_non_integer_ndigits(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # The BINARY pow(x, y) function — the call form of ** (28.20). Integer
         # exponent is exact in the exact modes, float rounds.
         ("pow(2, 10)", None, "1024 (exact)"),
