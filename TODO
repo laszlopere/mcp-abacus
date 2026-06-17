@@ -1770,3 +1770,8 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                precision refusal and that float/rational still solve precision-free.
 
 
+[ ] 40.  TIER 2 FUNCTIONS
+    [ ] 40.1.  atan2(y, x) — correct-quadrant angle; atan alone can't
+               disambiguate.
+
+
