@@ -1596,8 +1596,12 @@ def test_time_rational_through_the_tool_does_not_refuse():
     ("expression", "mode", "floor", "value"),
     [
         # Linear is Simpson-exact even at fixed-point scale 0 (midpoints stay on the grid).
-        ("integral(x, x, 0, 2)", None, None, "2 (inexact, rounded to 0 decimals "
-         "— pass min_fixed_point_precision for more)"),
+        (
+            "integral(x, x, 0, 2)",
+            None,
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)",
+        ),
         # Raising the fixed-point floor carries the precision through the quadrature.
         ("integral(x, x, 0, 2)", None, 4, "2.0000 (inexact, rounded to 4 decimals)"),
         ("integral(x**2, x, 0, 3)", None, 4, "9.0000 (inexact, rounded to 4 decimals)"),
@@ -1682,8 +1686,12 @@ def test_integral_masks_its_bound_variable_in_referenced_names():
     [
         # Quadratic and cubic are stencil-exact, so they land on the true derivative even at
         # the integer grid (scale 0, where the step is one unit) and at a raised floor.
-        ("diff(x**2, x, 3)", None, None, "6 (inexact, rounded to 0 decimals "
-         "— pass min_fixed_point_precision for more)"),
+        (
+            "diff(x**2, x, 3)",
+            None,
+            None,
+            "6 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)",
+        ),
         ("diff(x**2, x, 3)", None, 4, "6.0000 (inexact, rounded to 4 decimals)"),
         ("diff(x**3, x, 2)", None, 4, "12.0000 (inexact, rounded to 4 decimals)"),
         # Exact-valued and flagged inexact in rational, across degrees 0..3.
