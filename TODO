@@ -1646,10 +1646,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                — the standard time-value-of-money trio, each a closed-form formula
                over the operand evaluator; the amortisation case named in the
                research. May need an internal pow over the active type (have it).
-    [ ] 36.5.  These are dollar-and-cents operations: recommend fixed-point in the
-               docstrings, honour rounding mode (34), and keep the exact/inexact
-               verdict so a rounded interest figure is never silently presented as
-               exact.
 
 
 [ ] 37.  UNIT CONVERSION  (web research 2026-06-14: comprehensive competitors lead
