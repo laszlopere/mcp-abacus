@@ -1096,6 +1096,25 @@ def test_explain_inexact_fixed_point_rounding_reports_the_residual():
     assert "min_fixed_point_precision" not in text  # never promised — may not help
 
 
+def test_describe_labels_the_residual_fragment_rounding_not_error():
+    # A rounded fixed-point node appends `· rounding <residual> ≈ <approx>` to its
+    # describe() line (41.10). The label is "rounding", NOT "error" — the analyze
+    # reply's top-level `error` field is the failure channel, so an "error" label
+    # would read as "this node failed" rather than "this node rounded".
+    rounded = Value(Mode.FIXED_POINT, FixedPoint(33, 2), exact=False, error=Fraction(-1, 300))
+    line = rounded.describe()
+    assert line.endswith("· rounding -1/300 ≈ -0.00333333333333333333333333…")
+    assert "· error" not in line  # the collision the rename avoids
+
+
+def test_describe_omits_the_rounding_fragment_when_nothing_rounded():
+    # Exact and irrational (no recorded residual) values carry no `rounding` fragment.
+    exact = Value(Mode.FIXED_POINT, FixedPoint(450, 2), exact=True)
+    irrational = Value(Mode.FIXED_POINT, FixedPoint(141, 2), exact=False)  # √2 truncation
+    assert "rounding" not in exact.describe()
+    assert "rounding" not in irrational.describe()
+
+
 def test_explain_inexact_fixed_point_irrational_has_no_residual():
     # An irrational fixed-point result (no recorded error) is named inexact in every
     # type, with no error figure and no promised fix.

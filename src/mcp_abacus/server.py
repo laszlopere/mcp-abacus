@@ -615,21 +615,28 @@ def analyze(
     followed by ` · `-separated per-mode details: the value in hex (fixed-point as
     M@D with whole-byte digits, `@<scale>` dropped at scale 0; float as raw IEEE-754
     bits), or a rational's decimal approximation. The `<scale>` is the fixed-point
-    decimal scale (omitted for modes without one). For example `(1 + 1/2) * 3` in
-    fixed-point:
+    decimal scale (omitted for modes without one). A fixed-point node that ROUNDED
+    its result also carries a final `· rounding <residual> ≈ <approx>` fragment: the
+    exact signed residual `stored − true` (a fraction, bounded by half a unit in the
+    last place) and its decimal approximation. It is named `rounding`, NOT `error`,
+    on purpose — the reply's top-level `error` field is the failure channel, so a
+    `rounding` label keeps "this node rounded" from being misread as "this node
+    failed". For example `(1 + 1/2) * 3` in fixed-point:
 
         BINARY_MUL Value = 3 (fixed-point[0], inexact) · hex 0x03
           BINARY_ADD Value = 1 (fixed-point[0], inexact) · hex 0x01
             LITERAL "1" Value = 1 (fixed-point[0], exact) · hex 0x01
-            BINARY_DIV Value = 0 (fixed-point[0], inexact) · hex 0x00
+            BINARY_DIV Value = 0 (fixed-point[0], inexact) · hex 0x00 · rounding -1/2 ≈ -0.5
               LITERAL "1" Value = 1 (fixed-point[0], exact) · hex 0x01
               LITERAL "2" Value = 2 (fixed-point[0], exact) · hex 0x02
           LITERAL "3" Value = 3 (fixed-point[0], exact) · hex 0x03
 
     — the `1/2 = 0` leaf (inexact, scale 0) makes plain that fixed-point rounded the
-    half away, so the product is 3, not 4.5, and every node above it inherits the
-    inexactness. (Raise min_fixed_point_precision, or use a different mode, to keep
-    those digits.)
+    half away (its `rounding -1/2` is the exact half discarded), so the product is 3,
+    not 4.5, and every node above it inherits the inexactness. Those ancestors show no
+    `rounding` fragment: they introduced no rounding of their own, only carried the
+    leaf's. (Raise min_fixed_point_precision, or use a different mode, to keep those
+    digits.)
 
     On success `tree` is the rendering and `error` is null; on a bad mode, an invalid
     min_fixed_point_precision, or a malformed/erroring expression, `tree` is null and

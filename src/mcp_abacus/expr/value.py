@@ -2553,7 +2553,9 @@ class Value:
         verdict = "exact" if self.exact else "inexact"
         parts = [f"{self.to_string()} ({type_part}, {verdict})", *self.details()]
         if self.error is not None:  # "how inexact": the exact residual this rounding introduced
-            parts.append(f"error {self.error} ≈ {_approx_decimal(self.error)}")
+            # Labelled "rounding", not "error" — the reply's `error` field is the failure
+            # channel, so `· error -1/2` would read as "this node failed" (it did not).
+            parts.append(f"rounding {self.error} ≈ {_approx_decimal(self.error)}")
         return " · ".join(parts)
 
     def explain_inexact(self) -> str:

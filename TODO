@@ -1938,7 +1938,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                resources/prompts and none are exposed today.
     [x] 41.9.  Add classifiers to pyproject.toml (License, Python versions, Topic)
                for metadata completeness.
-    [ ] 41.10. Document analyze's per-node `· error <residual> ≈ <approx>` segment.
+    [x] 41.10. Document analyze's per-node `· error <residual> ≈ <approx>` segment.
                describe() (value.py:2555-2556) appends it for every inexact
                fixed-point node, but analyze's return-shape docstring (server.py:617-
                620) lists only the hex / ≈ fragments — the residual is undocumented.
