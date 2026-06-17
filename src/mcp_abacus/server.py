@@ -262,7 +262,8 @@ def calculate(
     of a binary op must share ONE type — there is no implicit promotion. Group
     with `( )`. Functions: call as `name(arg, ...)` — e.g. `sqrt`, `sin`, `sum`;
     each argument evaluates in the active type. For the full set and their
-    argument counts call `help('functions')`. Literals: decimals
+    argument counts call `help('functions')`. Constants: `pi` and `e` are usable
+    bare (no parentheses), e.g. `2*pi`; assigning to them is an error. Literals: decimals
     `12 3.14 .5 1e3 2.5e-4`; base integers
     `0x1F 0b1010 0o17`; fixed-point `M@D == M x 10^-D`, where M MUST be
     base-prefixed (0x/0o/0b) — a DECIMAL mantissa is INVALID: both `123@2` and

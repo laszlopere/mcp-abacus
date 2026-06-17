@@ -1057,6 +1057,23 @@ def test_nullary_rational_refuses(expression, mode, error):
 
 
 @pytest.mark.parametrize(
+    ("bare", "called"),
+    [("pi", "pi()"), ("e", "e()"), ("2 * pi", "2 * pi()"), ("e ** 2", "e() ** 2")],
+)
+@pytest.mark.parametrize("mode", ["floating-point", "fixed-point"])
+def test_bare_constant_matches_the_call_form(bare, called, mode):
+    # The bare constant (29.6) is sugar for the nullary call, so it evaluates byte-for-byte
+    # the same in every mode — derived fixed-point scale included (the floor of 0 here).
+    assert _calc(bare, mode) == _calc(called, mode)
+
+
+def test_bare_constant_rational_refuses_like_the_call():
+    # Same irrational refusal as pi()/e() — the sugar changes only the syntax (29.6).
+    assert _calc("pi", "rational")["error"] == "pi is irrational; no rational value"
+    assert _calc("e", "rational")["error"] == "e is irrational; no rational value"
+
+
+@pytest.mark.parametrize(
     ("expression", "floor", "value"),
     [
         # No literal to derive a scale from: the nullary sits at the default floor of

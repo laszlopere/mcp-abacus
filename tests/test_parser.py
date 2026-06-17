@@ -291,6 +291,25 @@ def test_nullary_call_evaluates_end_to_end():
     assert result.exact is False
 
 
+def test_bare_constant_parses_to_the_nullary_call():
+    # pi/e are reserved constants (29.6): a bare NAME with NO '(' parses to the SAME
+    # nullary FuncCall as pi()/e(), so the constant reads like a literal. Only pi/e
+    # get this — every other bare NAME stays a Var (asserted in test_variables).
+    assert parse("pi") == FuncCall("pi", (), line=1)
+    assert parse("e") == FuncCall("e", (), line=1)
+    # And it composes like an atom: 2*pi is 2*(pi), tighter than * (29.6 / 29.2).
+    assert parse("2 * pi") == BinOp("*", Number("2", line=1), FuncCall("pi", (), line=1), line=1)
+
+
+def test_assigning_to_a_constant_is_a_parse_error():
+    # pi/e are reserved (29.6): binding one would shadow the constant, so the target
+    # is rejected at parse time rather than silently rebinding. time() is NOT reserved.
+    with pytest.raises(ParseError, match=r"'pi' is a constant and cannot be assigned"):
+        parse("pi = 3")
+    with pytest.raises(ParseError, match=r"'e' is a constant and cannot be assigned"):
+        parse("e = 2")
+
+
 def test_function_call_evaluates_end_to_end():
     # sqrt is wired through nodes._FUNCS to Value.sqrt; a perfect square is exact.
     result = parse("sqrt(16) + 1").evaluate(Mode.FIXED_POINT)

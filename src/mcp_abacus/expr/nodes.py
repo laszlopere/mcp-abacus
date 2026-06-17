@@ -109,6 +109,15 @@ _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
 }
 
 
+# The nullaries that double as bare constants (29.6): pi and e may be written WITHOUT
+# parentheses, so `2*pi` reads the constant like a literal. The parser turns a bare
+# `pi`/`e` into the same nullary FuncCall as `pi()`/`e()`, so evaluation is identical.
+# time() is NOT here — it reads the clock, an action that stays an explicit call. These
+# names are also reserved: assigning to them (`pi = ...`) is a parse error. Every name
+# here MUST be a key of _NULLARY_FUNCS (a constant is a nullary that omits its parens).
+CONSTANT_NAMES: frozenset[str] = frozenset({"pi", "e"})
+
+
 # One-line semantics per callable (21.2.3), the help-tool counterpart to the
 # registries above: the inline comments next to _FUNCS/_NULLARY_FUNCS are code,
 # not data, so the reference cannot render them — this table promotes them to
@@ -140,8 +149,10 @@ FUNCTION_HELP: dict[str, str] = {
     "median": "middle operand by value; odd count exact, even averages the two middles",
     "variance": "population variance, sum of squared deviations / n",
     "stddev": "population standard deviation, sqrt of variance",
-    "pi": "circle constant pi; inexact in fixed-point/float, rational refuses",
-    "e": "Euler's number e; inexact in fixed-point/float, rational refuses",
+    "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, "
+    "rational refuses",
+    "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, "
+    "rational refuses",
     "time": "current Unix epoch seconds; exact except in float",
 }
 

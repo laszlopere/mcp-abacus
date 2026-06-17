@@ -67,6 +67,14 @@ def test_bare_name_parses_to_a_var_reference():
     assert tree == Var("x", line=1)
 
 
+def test_constant_lookalike_names_still_parse_to_a_var():
+    # Only the EXACT names pi/e are reserved constants (29.6) — names that merely
+    # contain them stay ordinary variables, so the sugar is not over-broad.
+    assert parse("pie") == Var("pie", line=1)
+    assert parse("ex") == Var("ex", line=1)
+    assert parse("epsilon") == Var("epsilon", line=1)
+
+
 def test_newline_separated_statements_parse_to_a_sequence():
     tree = parse("x = 1\nx + 2")
     assert isinstance(tree, Sequence)

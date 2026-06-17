@@ -173,3 +173,27 @@ def test_undefined_variable_refuses_with_a_plain_message(expression, error):
     payload = _calc(expression)
     assert payload["error"] == error
     assert payload["value"] is None
+
+
+# --- pi/e are reserved constants: assigning to one is rejected (29.6) -------
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        ("pi = 3", "'pi' is a constant and cannot be assigned"),
+        ("e = 2", "'e' is a constant and cannot be assigned"),
+        # The guard fires on the assignment target even mid-program, before later lines.
+        ("x = 1\npi = 4", "'pi' is a constant and cannot be assigned"),
+    ],
+)
+def test_assigning_to_a_constant_refuses(expression, error):
+    payload = _calc(expression)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_bare_constant_works_through_the_tool():
+    # The benchmarks regression (29.6): `2*pi` once errored "undefined variable: pi";
+    # now it resolves to the constant like any literal would.
+    assert _value("2 * pi", "floating-point") == "6.283185307179586 (inexact)"

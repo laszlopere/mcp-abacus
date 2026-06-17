@@ -14,7 +14,10 @@ function calls ``NAME '(' (expr (',' expr)*)? ')'`` (22.2 — tightest binding, 
 like ``pi()``, 29.2; the call's name and arity are validated here against
 nodes.FUNCTION_ARITIES, unknown-name/wrong-arity being parse errors), and bare
 NAME variable references (30.4 — a NAME NOT followed by ``(``, distinct from a
-call). Parens only shape the tree — no Group node. Above the whole chain sits the
+call). A bare NAME in nodes.CONSTANT_NAMES (``pi``/``e``, 29.6) is the EXCEPTION:
+it parses to the nullary call rather than a Var, so the constant reads like a
+literal; those names are reserved, so assigning to one is a parse error. Parens
+only shape the tree — no Group node. Above the whole chain sits the
 loosest-precedence assignment ``NAME '=' expr`` (30.3), recognised only at
 statement level. The left-assoc binary levels run on a Pratt binding-power table;
 assignment/unary/power/atom are plain descent.
@@ -40,6 +43,7 @@ from mcp_abacus.expr.lexer import (
     tokenize,
 )
 from mcp_abacus.expr.nodes import (
+    CONSTANT_NAMES,
     FUNCTION_ARITIES,
     Assign,
     BinOp,
@@ -173,6 +177,12 @@ class _Parser:
         name = self._peek()
         after = self._peek_at(1)
         if name.kind == NAME and after.kind == OP and after.lexeme == "=":
+            if name.lexeme in CONSTANT_NAMES:
+                # pi/e are reserved constants (29.6) — binding one would shadow the
+                # constant, so reject it at the target rather than silently rebind.
+                raise ParseError(
+                    f"{name.lexeme!r} is a constant and cannot be assigned", name.line
+                )
             self._advance()  # NAME
             self._advance()  # '='
             return Assign(name.lexeme, self.expression(), line=name.line)
@@ -215,6 +225,10 @@ class _Parser:
             # is a variable reference (30.4). The two forms are kept distinct here.
             if self._peek().kind == LPAREN:
                 return self._call(token)
+            if token.lexeme in CONSTANT_NAMES:
+                # Bare pi / e are reserved constants (29.6) — the same nullary call
+                # as pi()/e(), so they evaluate identically without the parentheses.
+                return FuncCall(token.lexeme, (), line=token.line)
             return Var(token.lexeme, line=token.line)
         if token.kind == LPAREN:
             # Inside the parens NEWLINE is insignificant — bracketing is the one way

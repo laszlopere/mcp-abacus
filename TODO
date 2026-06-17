@@ -1372,6 +1372,14 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      category contrast to pi/e/tau (transcendental), same
                      multi-mode behaviour. (ln2/ln10 deferred: derivable as
                      log(2)/log(10), so convenience not new capability.)
+    [x] 29.6.  BARE CONSTANTS — pi and e usable WITHOUT parens, so `2*pi` reads
+               the constant like a literal. The parser turns a bare NAME in
+               nodes.CONSTANT_NAMES into the SAME nullary FuncCall as pi()/e()
+               (29.2), so evaluation is identical in every mode. These names are
+               RESERVED: assigning to one (`pi = ...`) is a parse error, not a
+               shadowing rebind (30.3). time() is excluded — a clock read is an
+               action, not a constant, so it keeps its parens. (tau/phi from 29.5
+               would join CONSTANT_NAMES when added.)
 
 
 [ ] 30.  VARIABLES  (named values: `x = expr` assignment + bare-name
