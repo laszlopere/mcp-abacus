@@ -88,8 +88,8 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "acos": Value.acos,  # 28.15 — arccosine; pi/2 - asin(x), domain |x|<=1, else inexact/refuse
     "atan": Value.atan,  # 28.16 — arctangent; the arctan series itself, all reals, else inexact
     "atan2": Value.atan2,  # 40.1 — binary; quadrant-aware angle of (x, y), else inexact/refuse
-    "log": Value.log,  # 28.17 — NATURAL log; base-10 reduce + atanh series, else inexact/refuse
-    "ln": Value.log,  # 28.17 — alias of log (the canonical natural-log spelling)
+    "log": Value.log,  # 28.17/40.10 — NATURAL log unary; log(x, base) two-arg general log
+    "ln": Value.ln,  # 28.17 — natural-log-only wrapper kept UNARY (log overloads, ln does not)
     "log10": Value.log10,  # 28.18 — base-10 log; ln(x)/ln(10), exact on powers of ten
     "log2": Value.log2,  # 28.19 — base-2 log; ln(x)/ln(2), inexact except log2(1)=0
     "exp": Value.exp,  # 28.27 — e**x; reduce by ln2 + exp series, inexact/refuse off the grid
@@ -163,8 +163,9 @@ FUNCTION_HELP: dict[str, str] = {
     "acos": "arccosine, radians in [0, pi]; domain |x|<=1, inexact except acos(1)=0",
     "atan": "arctangent, radians in (-pi/2, pi/2); all reals, inexact except atan(0)=0",
     "atan2": "two-arg arctangent; quadrant angle of (x,y) in (-pi,pi], inexact off atan2(0,x>=0)=0",
-    "log": "natural log, base e; inexact except log(1)=0, refuses x<=0",
-    "ln": "natural log; alias of log",
+    "log": "natural log base e; the two-arg log(x, base) is the general logarithm "
+    "log(x)/log(base), exact only on integer powers; refuses x<=0 or base<=0/base=1",
+    "ln": "natural log; the strictly unary spelling of log(x)",
     "log10": "base-10 log; exact on powers of ten, inexact otherwise, refuses x<=0",
     "log2": "base-2 log; inexact except log2(1)=0, refuses x<=0",
     "exp": "exponential e**x, inverse of log; inexact except exp(0)=1, rational refuses non-zero",

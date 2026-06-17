@@ -1821,7 +1821,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                follows the mode (the fixed-point/rational/float spelling of the
                three values). DECIDE whether an inexact operand yields an exact
                sign (the classification is certain) or carries the flag like abs.
-    [ ] 40.10. log(x, base) — general logarithm log(x)/log(base), the TWO-ARG
+    [x] 40.10. log(x, base) — general logarithm log(x)/log(base), the TWO-ARG
                form flagged in the 28.17-28.19 naming note (today only the unary
                natural log and log10/log2 exist). Reuses the _fp_ln core (28.17.1)
                for both x and the base; exact only where the quotient lands on the

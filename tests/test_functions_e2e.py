@@ -253,6 +253,85 @@ def test_logarithms_exact_on_powers_of_ten():
     assert _values(_calc(program)) == ["3 (exact)", "-3.000 (exact)"]
 
 
+def test_general_logarithm_exact_on_integer_powers():
+    # The two-arg log(x, base) (40.10) lands the whole exponent EXACTLY when x is an
+    # integer power of the base — including negative powers and the trivial log(1, b).
+    program = _annotated(
+        "log(x, base): the general logarithm, exact on integer powers",
+        "log(8, 2)\nlog(81, 3)\nlog(1024, 2)\nlog(1, 7)\nlog(0.25, 2)",
+    )
+    assert _values(_calc(program)) == [
+        "3 (exact)",  # 2**3
+        "4 (exact)",  # 3**4
+        "10 (exact)",  # 2**10
+        "0 (exact)",  # base**0 == 1 for any base
+        "-2.00 (exact)",  # 2**-2 == 0.25, scale 2 from the literal
+    ]
+
+
+def test_general_logarithm_outdoes_log2_on_a_power_of_two():
+    # log2 reduces base-10, so even log2(8) only ROUNDS to 3; the two-arg log(8, 2)
+    # detects the integer power directly and is EXACT — the reason both exist.
+    program = _annotated(
+        "log(8, 2) is exact where log2(8) merely rounds",
+        "log2(8)\nlog(8, 2)",
+    )
+    assert _values(_calc(program)) == [
+        "3 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)",
+        "3 (exact)",
+    ]
+
+
+def test_general_logarithm_inexact_off_a_power_carries_the_precision_hint():
+    # Off an integer power the result is transcendental: it rounds to the operand's
+    # scale and flags inexact. Pinned at scale 10 (a floor) so the digits are stable.
+    program = _annotated(
+        "log(10, 2) and log(100, 3) — transcendental, rounded at scale 10",
+        "log(10, 2)\nlog(100, 3)",
+    )
+    assert _values(_calc(program, floor=10)) == [
+        "3.3219280949 (inexact, rounded to 10 decimals)",  # log2(10)
+        "4.1918065486 (inexact, rounded to 10 decimals)",  # log3(100)
+    ]
+
+
+def test_general_logarithm_in_rational_is_exact_or_refuses():
+    # Rational is exact-or-refuse: an integer-power landmark returns the exponent as a
+    # Fraction; a non-power base is transcendental and refused (value is None).
+    program = _annotated(
+        "log(x, base) in rational: integer powers exact, else refused",
+        "log(8, 2)\nlog(1 / 4, 2)",
+    )
+    assert _values(_calc(program, mode="rational")) == ["3 (exact)", "-2 (exact)"]
+
+    refusal = _calc("log(10, 3)", mode="rational")
+    assert refusal["values"] is None
+    assert "transcendental" in refusal["error"]
+
+
+def test_general_logarithm_in_floating_point_is_always_inexact():
+    # binary64 carries no exactness: even log(8, 2) and log(100, 10), whole-number
+    # results, are flagged inexact in floating-point — the mode's blanket rule.
+    program = _annotated(
+        "log(x, base) in floating-point: whole results still inexact",
+        "log(8, 2)\nlog(100, 10)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == ["3.0 (inexact)", "2.0 (inexact)"]
+
+
+def test_general_logarithm_refuses_a_bad_base_or_argument():
+    # DOMAIN: x > 0 AND base > 0, base != 1. Each refusal is line-tagged with no values.
+    for code, fragment in [
+        ("log(8, 1)", "base must be positive and not 1"),
+        ("log(8, -2)", "base must be positive and not 1"),
+        ("log(8, 0)", "base must be positive and not 1"),
+        ("log(-8, 2)", "non-positive value"),
+    ]:
+        payload = _calc(code)
+        assert payload["values"] is None, code
+        assert fragment in payload["error"], code
+
+
 def test_variables_feed_a_group_of_functions():
     # A shared scope is the reason to group: a and b are assigned once and read by every
     # following line — the Pythagorean hypotenuse of (3,4), the larger leg, and the sum.

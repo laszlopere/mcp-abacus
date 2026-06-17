@@ -698,6 +698,33 @@ def _power_of_ten_exponent(n: int) -> int | None:
     return j if 10**j == n else None
 
 
+def _integer_log(x: Fraction, base: Fraction) -> int | None:
+    """The integer ``k`` with ``base**k == x`` exactly, or None (40.10).
+
+    The exact landmark of the two-arg ``log(x, base)``: when ``x`` is a whole power
+    of the base the result is that exponent with no rounding — ``log(8, 2) == 3``,
+    ``log(1, base) == 0``, ``log(1/4, 2) == -2``. ``x`` and ``base`` are POSITIVE
+    rationals and ``base != 1`` (the caller guards the domain). A float estimate of
+    ``log_base(x)`` narrows the search to a few candidate exponents, each VERIFIED
+    by exact ``Fraction`` exponentiation, so a near-miss is rejected — only a true
+    power returns. A candidate exponent past ``_INTEGER_LOG_LIMIT`` is skipped: its
+    exact power would be astronomically large and is never a landmark in practice.
+    """
+    if x == 1:
+        return 0  # base**0 == 1 for every base
+    try:
+        estimate = math.log(float(x)) / math.log(float(base))
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return None
+    for k in {math.floor(estimate), math.ceil(estimate), round(estimate)}:
+        if abs(k) <= _INTEGER_LOG_LIMIT and base**k == x:
+            return k
+    return None
+
+
+_INTEGER_LOG_LIMIT = 4096  # cap on the candidate exponent _integer_log will verify
+
+
 def _fp_ln(fp: FixedPoint) -> tuple[int, int]:
     """Natural log of a POSITIVE fixed-point value (28.17), as a scaled int.
 
@@ -2470,14 +2497,17 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
-    def log(self) -> "Value":
-        """NATURAL logarithm, base e (28.17; bare ``log`` is ln, with the ``ln``
-        alias) — transcendental, so inexact except the trivial log(1) = 0. DOMAIN
-        x > 0: a non-positive operand (x = 0 is -inf, x < 0 undefined) raises
-        NotRepresentableError in every mode, mirroring sqrt's negative refusal.
+    def log(self, base: "Value | None" = None) -> "Value":
+        """NATURAL logarithm base e when unary (28.17; bare ``log`` is ln, with the
+        ``ln`` alias); the GENERAL logarithm ``log(x)/log(base)`` when a second
+        operand supplies the base (40.10). Transcendental, so inexact except the
+        trivial log(1) = 0. DOMAIN x > 0: a non-positive operand (x = 0 is -inf,
+        x < 0 undefined) raises NotRepresentableError in every mode, mirroring
+        sqrt's negative refusal.
 
         The PRIMITIVE the log family reduces to: log10/log2 (28.18/28.19) are this
-        divided by the ln(10)/ln(2) constant.
+        divided by the ln(10)/ln(2) constant, and the two-arg ``log(x, base)``
+        (``_log_base``) is the ratio of two of these.
 
         fixed-point: SUPPORTED via base-10 reduction + an atanh series (the _fp_ln
             core, 28.17): ``x == r*10**n`` so ``ln(x) == n*ln(10) + 2*atanh((r-1)/
@@ -2489,6 +2519,8 @@ class Value:
             Weierstrass); otherwise NotRepresentableError, the exact-or-refuse stance
             of sqrt.
         """
+        if base is not None:
+            return self._log_base(base)
         match self.mode:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
@@ -2513,6 +2545,74 @@ class Value:
                 # Round the working-scale natural log back to the operand's scale.
                 mantissa, _ = _fp_quantize(ln_total, 10 ** (working - fp.decimals), 0)
                 return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def ln(self) -> "Value":
+        """Natural logarithm base e — the ``ln`` spelling of unary ``log`` (28.17).
+
+        Kept a strictly UNARY method on purpose: ``log`` overloads to ``log(x, base)``
+        (40.10, arity (1, 2)), but ``ln`` means natural-log-only, so its arity stays
+        (1, 1). A thin wrapper, not a registry alias of ``log``, for exactly that.
+        """
+        return self.log()
+
+    def _log_base(self, base: "Value") -> "Value":
+        """General logarithm ``log(x)/log(base)`` — the two-arg ``log(x, base)`` (40.10).
+
+        DOMAIN x > 0 AND base > 0, base != 1 (a non-positive or unit base has no
+        logarithm); refused in every mode like the unary log's x <= 0. EXACT only
+        when x is an integer power of base — log(8, 2) = 3, log(1, base) = 0,
+        log(base, base) = 1 (``_integer_log``) — which lands the whole exponent with
+        no rounding; every other case is transcendental.
+
+        fixed-point: the integer-power landmark returns that exponent verbatim;
+            otherwise the ratio of two _fp_ln cores (28.17), whose working scales
+            cancel in the quotient, quantized half-to-even to the wider operand's
+            scale; inexact.
+        floating-point: math.log(x, base); unconditionally inexact, even on a landmark.
+        rational: exact only on an integer-power landmark (the result exponent);
+            otherwise transcendental -> NotRepresentableError, the exact-or-refuse
+            stance of the unary log.
+        """
+        exact = self._same_mode(base, "log")
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float) and isinstance(base.payload, float)
+                if self.payload <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                if base.payload <= 0 or base.payload == 1:
+                    raise NotRepresentableError("logarithm base must be positive and not 1")
+                return Value(Mode.FLOATING_POINT, math.log(self.payload, base.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction) and isinstance(base.payload, Fraction)
+                if self.payload <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                if base.payload <= 0 or base.payload == 1:
+                    raise NotRepresentableError("logarithm base must be positive and not 1")
+                k = _integer_log(self.payload, base.payload)
+                if k is not None:
+                    return Value(Mode.RATIONAL, Fraction(k), exact=exact)
+                raise NotRepresentableError("logarithm with a non-power base is transcendental")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint) and isinstance(base.payload, FixedPoint)
+                x_fp, b_fp = self.payload, base.payload
+                if x_fp.mantissa <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                if b_fp.mantissa <= 0 or b_fp.mantissa == 10**b_fp.decimals:
+                    raise NotRepresentableError("logarithm base must be positive and not 1")
+                scale = max(x_fp.decimals, b_fp.decimals)
+                x_fr = Fraction(x_fp.mantissa, 10**x_fp.decimals)
+                b_fr = Fraction(b_fp.mantissa, 10**b_fp.decimals)
+                k = _integer_log(x_fr, b_fr)
+                if k is not None:
+                    return Value(Mode.FIXED_POINT, FixedPoint(k * 10**scale, scale), exact=exact)
+                ln_x, wx = _fp_ln(x_fp)
+                ln_b, wb = _fp_ln(b_fp)
+                # log_base(x) == ln(x)/ln(base) == (ln_x/10**wx)/(ln_b/10**wb)
+                #             == (ln_x * 10**wb) / (ln_b * 10**wx); the scales cancel.
+                mantissa, _ = _fp_quantize(ln_x * 10**wb, ln_b * 10**wx, scale)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=False)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
