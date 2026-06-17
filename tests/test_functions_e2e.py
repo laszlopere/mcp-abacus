@@ -123,6 +123,52 @@ def test_aggregates_over_one_dataset():
     ]
 
 
+def test_gcd_over_integers_drops_sign_and_folds_zero():
+    # The variadic gcd over integer operands: it folds across three, reduces to the
+    # single-operand identity gcd(a) = |a|, DROPS the sign (works on magnitudes), and
+    # treats a 0 operand as the identity (gcd(0, n) = n). All exact — pure integer math
+    # on the fixed-point grid, even from .00-scaled literals that are whole-valued.
+    program = _annotated(
+        "gcd folds magnitudes, ignores sign, and absorbs a zero operand",
+        "gcd(54, 24, 6)\ngcd(-12, 8)\ngcd(42)\ngcd(0, 5)\ngcd(0, 0)\ngcd(12.00, 8.00)",
+    )
+    assert _values(_calc(program)) == [
+        "6 (exact)",  # gcd(54, 24, 6)
+        "4 (exact)",  # sign dropped: gcd(12, 8)
+        "42 (exact)",  # single-operand identity gcd(a) = |a|
+        "5 (exact)",  # gcd(0, n) = n
+        "0 (exact)",  # gcd(0, 0) = 0
+        "4 (exact)",  # whole-valued .00 literals are integer-domain
+    ]
+
+
+def test_gcd_in_floating_point_is_flagged_inexact():
+    # gcd is pure integer math, but float labels every result inexact (binary64 carries
+    # no exactness here) — so even the whole-number gcd reads as a .0 inexact double,
+    # the same convention sum/avg follow in this mode.
+    program = _annotated(
+        "gcd in floating-point: integer value, inexact flag",
+        "gcd(54, 24, 6)\ngcd(-12, 8)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "6.0 (inexact)",
+        "4.0 (inexact)",
+    ]
+
+
+def test_gcd_refuses_a_non_integer_operand():
+    # gcd's DOMAIN is integer-valued operands only (the exact-or-refuse stance): a
+    # fixed-point value with a fractional part aborts the whole program with a plain,
+    # self-contained reason — the earlier exact gcd is discarded with it.
+    program = _annotated(
+        "a fractional operand mid-group aborts gcd",
+        "gcd(12, 8)\ngcd(2.5, 5)",
+    )
+    payload = _calc(program)
+    assert payload["values"] is None
+    assert payload["error"] == "gcd requires integer operands"
+
+
 def test_population_spread_on_the_textbook_set():
     # variance and its square root stddev on the textbook set with mean 5, squared-
     # deviation sum 32: /8 = 4, and sqrt(4) = 2 is a perfect square, so both stay exact.
@@ -466,6 +512,19 @@ def test_rational_keeps_functions_exact_or_refuses():
         "3/2 (exact)",  # cbrt(27/8): both parts perfect cubes
         "1/3 (exact)",
     ]
+
+
+def test_gcd_in_rational_is_exact_on_integers_and_refuses_a_true_fraction():
+    # In rational mode gcd of denominator-1 values is exact integer math (no scale to
+    # round to is irrelevant — there's no rounding), but a true fraction (denominator
+    # != 1) is not integer-valued and aborts the group, the same integer-only domain.
+    program = _annotated(
+        "rational gcd: exact over integers, then a 1/2 that refuses",
+        "gcd(54, 24, 6)\ngcd(1/2, 3)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "gcd requires integer operands"
 
 
 # --- a domain refusal aborts the whole group ---------------------------------

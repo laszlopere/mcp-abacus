@@ -1924,6 +1924,59 @@ class Value:
         """
         return self.variance(*others).sqrt()
 
+    def _as_integer(self, what: str) -> int:
+        """This Value as a signed Python int, REFUSING any fractional part (40.7).
+
+        The integer-domain gate shared by the integer-only functions (gcd, 40.7;
+        lcm, 40.8 to come): an operand is read as a plain ``int`` in whatever mode
+        the run is in, and a non-integer — fixed-point with a fractional part, a
+        rational with denominator != 1, a non-whole float — REFUSES with
+        ``NotRepresentableError``, the exact-or-refuse stance. The exactness FLAG is
+        irrelevant (an inexact ``2.0`` is still the integer 2); only integrality
+        matters. The same per-mode test ``_as_ndigits`` (28.22) uses, but kept
+        separate: that reads an unsigned-or-signed COUNT, this a value operand, and
+        ``what`` names the caller in the refusal message.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if not self.payload.is_integer():
+                    raise NotRepresentableError(f"{what} requires integer operands")
+                return int(self.payload)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                whole, frac = divmod(fp.mantissa, 10**fp.decimals)
+                if frac != 0:
+                    raise NotRepresentableError(f"{what} requires integer operands")
+                return whole
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload.denominator != 1:
+                    raise NotRepresentableError(f"{what} requires integer operands")
+                return self.payload.numerator
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def gcd(self, *others: "Value") -> "Value":
+        """Greatest common divisor of one-or-more operands (40.7) — VARIADIC; ``math.gcd``.
+
+        The integer-only cousin of ``sum_``/``max_`` (28.5/28.2): ``self`` is the
+        first operand, so ``gcd(a)`` is ``|a|`` (the one-operand fold). EXACT in
+        EVERY mode — pure integer arithmetic on the operand magnitudes never leaves
+        the grid, so no rounding and no inexact flag — and same-mode is enforced
+        like every variadic. DOMAIN is integer-valued operands only: each goes
+        through ``_as_integer``, so a fixed-point value with a fractional part, a
+        rational with denominator != 1, or a non-whole float REFUSES. Sign is
+        dropped (``math.gcd`` works on magnitudes) and ``gcd(0, 0)`` is 0. The
+        result is a whole number at scale 0 in fixed-point.
+        """
+        ints = [self._as_integer("gcd")]
+        for other in others:
+            self._same_mode(other, "gcd")
+            ints.append(other._as_integer("gcd"))
+        return Value._from_scaled_int(math.gcd(*ints), 0, self.mode)
+
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root
         lands exactly on the mode's own grid. A negative operand has no real

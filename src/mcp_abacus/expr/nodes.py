@@ -107,6 +107,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "median": Value.median,  # 28.7 — variadic; order-only, odd selects (exact), even averages
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
+    "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
 }
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
@@ -180,6 +181,7 @@ FUNCTION_HELP: dict[str, str] = {
     "median": "middle operand by value; odd count exact, even averages the two middles",
     "variance": "population variance, sum of squared deviations / n",
     "stddev": "population standard deviation, sqrt of variance",
+    "gcd": "greatest common divisor of the operands; integer-only, sign-dropped, exact everywhere",
     "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
     "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",

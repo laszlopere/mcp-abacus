@@ -1805,7 +1805,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                BINARY fixed-arity 2 like comb. EXACT for integer n >= k >= 0
                (a product of k consecutive integers); k < 0 or k > n is 0.
                Non-integer arguments go through gamma (inexact/refuse, per 40.4).
-    [ ] 40.7.  gcd(...) — greatest common divisor, VARIADIC (the sum/max shape,
+    [x] 40.7.  gcd(...) — greatest common divisor, VARIADIC (the sum/max shape,
                math.gcd), EXACT in every mode (pure integer math, no rounding).
                DOMAIN integer-valued operands only — a non-integer (fixed-point
                with a fractional part, rational with denominator != 1, a float
