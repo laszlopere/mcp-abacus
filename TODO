@@ -1144,7 +1144,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                   k, k possibly negative like 1/10, 1/100), where it is k exactly;
                   otherwise NotRepresentableError. A cleaner exact set than sqrt's
                   perfect-square, and the analogue of it for logs.
-    [ ] 28.19.  log2(x) — base-2 logarithm == log(x) / ln(2) (28.17 + the ln(2)
+    [x] 28.19.  log2(x) — base-2 logarithm == log(x) / ln(2) (28.17 + the ln(2)
                 constant 28.17.2). UNARY operand-method, the two-step add; planned
                 with ln/log10 because this engine is bit-oriented (entropy / bit-
                 width work). Same domain (x > 0, else NotRepresentableError) and

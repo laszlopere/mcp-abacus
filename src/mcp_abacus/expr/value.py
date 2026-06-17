@@ -2051,6 +2051,53 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def log2(self) -> "Value":
+        """BASE-2 logarithm == log(x) / ln(2) (28.19) — transcendental like log
+        (28.17), planned with the log family because this engine is bit-oriented
+        (entropy / bit-width work). DOMAIN x > 0; a non-positive operand raises
+        NotRepresentableError in every mode, like log.
+
+        Unlike log10 the argument reduction is base 10, NOT base 2, so a power of
+        two does NOT fall out exactly — the ONLY exact landmark is the trivial
+        log2(1) = 0. (A base-2 reduction would land powers of two exactly but
+        breaks the shared base-10 ln core; not worth a second reduction path.)
+
+        fixed-point: SUPPORTED. Reuse the _fp_ln core and divide by the ln(2)
+            constant at the working scale (the scale cancels in the ratio),
+            quantizing half-to-even to the operand's scale; inexact except
+            log2(1) = 0.
+        floating-point: math.log2; unconditionally inexact.
+        rational: log2 of a rational is irrational except log2(1) = 0; otherwise
+            NotRepresentableError, the exact-or-refuse stance of log.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                if self.payload <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                return Value(Mode.FLOATING_POINT, math.log2(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                if self.payload == 1:  # log2(1) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("base-2 logarithm of a non-unit rational is irrational")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa <= 0:
+                    raise NotRepresentableError("logarithm of a non-positive value")
+                if fp.mantissa == 10**fp.decimals:  # log2(1) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                ln_total, working = _fp_ln(fp)
+                # log2 == ln(x) / ln(2); the working scale cancels in the ratio,
+                # so quantize the bare quotient to the operand's scale.
+                mantissa, _ = _fp_quantize(ln_total, _ln2_scaled(working), fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def exp(self) -> "Value":
         """The exponential e**x (28.27), the INVERSE of log/ln (28.17) —
         transcendental, so inexact except the trivial exp(0) = 1.

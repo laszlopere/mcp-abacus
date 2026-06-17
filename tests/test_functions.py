@@ -1023,6 +1023,61 @@ def test_log10_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # log2(1) = 0 is the ONLY exact landmark in every exact mode — unlike log10,
+        # the base-10 reduction does NOT land powers of two exactly (28.19).
+        ("log2(1)", None, "0 (exact)"),
+        ("log2(1)", "rational", "0 (exact)"),
+        # A power of two is NOT exact: it divides ln(x)/ln(2) like any other argument
+        # and is flagged inexact even though the quotient lands on a whole number.
+        ("log2(2)", None, "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision for more)"),
+        (
+            "log2(8.000000)",
+            None,
+            "3.000000 (inexact, rounded to 6 decimals — pass min_fixed_point_precision for more)",
+        ),
+        # binary64 uses math.log2 and is unconditionally inexact, even on a power of two.
+        ("log2(2)", "floating-point", "1.0 (inexact)"),
+        ("log2(8)", "floating-point", "3.0 (inexact)"),
+        ("log2(0.5)", "floating-point", "-1.0 (inexact)"),
+        # A non-power-of-two fixed-point argument divides ln(x)/ln(2), inexact.
+        (
+            "log2(50.000000)",  # ~5.6439, between two powers of two
+            None,
+            "5.643856 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 5.6438561898)",
+        ),
+    ],
+)
+def test_log2(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+_RATIONAL_LOG2_REFUSAL = "base-2 logarithm of a non-unit rational is irrational"
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # Same non-positive refusal as log, in every mode...
+        ("log2(0)", None, "logarithm of a non-positive value"),
+        ("log2(-5)", None, "logarithm of a non-positive value"),
+        ("log2(0)", "floating-point", "logarithm of a non-positive value"),
+        ("log2(0)", "rational", "logarithm of a non-positive value"),
+        # ...and rational refuses anything but the unit (even a power of two like 8).
+        ("log2(2)", "rational", _RATIONAL_LOG2_REFUSAL),
+        ("log2(8)", "rational", _RATIONAL_LOG2_REFUSAL),
+        ("log2(1/3)", "rational", _RATIONAL_LOG2_REFUSAL),
+    ],
+)
+def test_log2_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # exp(0) = 1 is the one exact case in every mode (transcendental otherwise),
         # the inverse landmark of log(1) = 0.
         ("exp(0)", None, "1 (exact)"),
