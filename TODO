@@ -1879,5 +1879,34 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                positive operands (a zero makes a term undefined — ZeroDivisionError;
                mixed signs are ill-defined, refuse). No sqrt, so it follows avg's
                division stance: EXACT in rational, may round in fixed-point/float.
+    [ ] 40.17. diff(expr, var, at) — numerical derivative of an expression w.r.t. a
+               named variable, evaluated at a point. Like the solver, `expr`/`var`
+               are an unevaluated program + a free variable NAME, not values — so it
+               is solver-adjacent, not an ordinary 40.x operand-method. Inherently
+               inexact in every mode (a finite-difference quotient).
+    [ ] 40.18. integral(expr, var, a, b) — definite integral of an expression w.r.t.
+               a named variable over [a, b]. Same solver-adjacent shape as diff
+               (40.17): `expr`/`var` are an unevaluated program + a free variable
+               NAME, not values. Inherently inexact in every mode (a numerical
+               quadrature).
+    [ ] 40.19. sum(i, 1, n, expr) / product(i, 1, n, expr) — range summation (Σ) and
+               product (Π): fold `expr` over the index variable `i` from 1 to n.
+               Solver-adjacent shape like diff/integral (40.17/40.18) — `expr`/`i`
+               are an unevaluated program + a free variable NAME, not values — but a
+               FINITE EXACT fold over integer steps, so unlike diff/integral it keeps
+               the per-mode exactness of the body (no truncation of its own). NB the
+               name collides with the existing variadic sum(...) (28.x).
+    [ ] 40.20. hypot(x, ...) — Euclidean norm sqrt(x1**2 + x2**2 + ...), VARIADIC
+               (the sum shape), an ordinary value-taking operand-method (not
+               solver-adjacent). Every real allowed. Inherits sqrt's stance (19.5.2):
+               inexact in float/fixed-point, rational exact only for a perfect square.
+    [ ] 40.21. clamp(x, lo, hi) — constrain x to [lo, hi] = min(hi, max(lo, x)),
+               TERNARY fixed-arity 3. EXACT in every mode (comparison + selection, no
+               arithmetic — the sign(x) stance, 40.9), works on any value. DOMAIN
+               lo <= hi (else refuse).
+    [ ] 40.22. lerp(a, b, t) — linear interpolation a + (b - a)*t, TERNARY fixed-arity
+               3. Plain arithmetic (no sqrt), so the avg/division stance: EXACT in
+               rational, may round in fixed-point/float. t unrestricted (t outside
+               [0, 1] extrapolates).
 
 

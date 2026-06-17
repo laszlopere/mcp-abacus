@@ -191,31 +191,16 @@
 
   Tier 1 — things I had to work around this session
 
-  - floor / ceil / round / trunc — the biggest gap. The Uniswap getAmountIn
-    answer is literally floor(…) + 1 at wei precision, and abacus has no
-    rounding function, so I computed 40 decimals and read off the digits by hand
-    to get the …799 → …800 wei result. In fixed-point mode these would make
-    on-chain integer math exact and one-shot. High value given your crypto bent.
   - Sample stddev / variance (or a sample=true variant) — stddev is
     population-only, so for the 4·8·15·16·23·42 set I had to multiply by
     sqrt(n/(n−1)) by hand to get the n−1 version. Both conventions are needed
     often enough to be first-class.
-  - hypot(x, …) (Euclidean norm) — the ladder, rafter, and café-distance
-    problems all reduce to √(Σ squares). A hypot avoids spelling out sqrt(a**2 +
-    b**2) and is numerically safer.
 
   Tier 3 — solver / analysis upgrades (bigger lifts, high leverage)
 
-  - Numerical derivative diff(expr, var, at) — I kept reasoning "set the
-    derivative to zero" by hand (avg-cost minimum, MC = AC). Exposing this would
-    let the solver find optima analytically and verify them.
-  - Definite integral integral(expr, var, a, b) — accumulation/area; a natural
-    complement to the root/optimum solver.
   - Native solver constraints (equality + inequality) — the €1,000 ad-budget
     problem forced me to hand-roll a −50*max(0, s+g−1000)² penalty. A real
     subject_to would be cleaner and less hacky than tuning penalty weights.
-  - Range summation / product (Σ, Π notation) — sum(i, 1, n, expr) for series
-    and finance.
 
   Tier 4 — domain packs (optional, fits your usage)
 
