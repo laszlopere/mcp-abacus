@@ -142,7 +142,7 @@ def test_function_arities_match_the_registry():
         "abs": (1, 1),
         "sqrt": (1, 1),
         "cbrt": (1, 1),
-        "pow": (2, 2),  # the only BINARY function — fixed arity 2 (28.20)
+        "pow": (2, 2),  # BINARY — fixed arity 2 (28.20); atan2 is the other (40.1)
         "floor": (1, 2),  # operand + optional ndigits — the first (1, 2) function (28.23)
         "ceil": (1, 2),  # operand + optional ndigits — mirror of floor (28.24)
         "round": (1, 2),  # operand + optional ndigits — round half-even (28.25)
@@ -154,6 +154,7 @@ def test_function_arities_match_the_registry():
         "asin": (1, 1),
         "acos": (1, 1),
         "atan": (1, 1),
+        "atan2": (2, 2),  # BINARY — fixed arity 2 (40.1)
         "log": (1, 1),
         "ln": (1, 1),
         "log10": (1, 1),

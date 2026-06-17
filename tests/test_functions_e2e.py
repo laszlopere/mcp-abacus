@@ -225,6 +225,65 @@ def test_inverse_trigonometry_returns_the_landmark_angles():
     ]
 
 
+def test_atan2_distinguishes_the_four_quadrants():
+    # The reason atan2 exists: plain atan(y/x) collapses (1,1) and (-1,-1) onto the same
+    # pi/4, blind to the quadrant. atan2(y, x) reads BOTH signs, so the same |y/x| = 1
+    # fans out to the four diagonal angles pi/4, 3pi/4, -3pi/4, -pi/4 across (-pi, pi].
+    program = _annotated(
+        "atan2 over the four sign combinations of (x, y) = (+/-1, +/-1)",
+        "atan2(1, 1)\natan2(1, -1)\natan2(-1, -1)\natan2(-1, 1)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "0.7853981633974483 (inexact)",  # quadrant I:  pi/4
+        "2.356194490192345 (inexact)",  # quadrant II:  3pi/4
+        "-2.356194490192345 (inexact)",  # quadrant III: -3pi/4
+        "-0.7853981633974483 (inexact)",  # quadrant IV: -pi/4
+    ]
+
+
+def test_atan2_on_the_axes_reaches_the_landmark_angles():
+    # The axis cases atan alone cannot do: atan2(0, x>0) = 0 (the only exact landmark),
+    # atan2(y>0, 0) = pi/2 where the ratio is undefined, and atan2(0, x<0) = pi, the full
+    # half-turn at the top of the (-pi, pi] range.
+    program = _annotated(
+        "atan2 along the axes: 0, pi/2 and pi",
+        "atan2(0, 1)\natan2(1, 0)\natan2(0, -1)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "0.0 (inexact)",  # +x axis
+        "1.5707963267948966 (inexact)",  # +y axis: pi/2
+        "3.141592653589793 (inexact)",  # -x axis: pi
+    ]
+
+
+def test_atan2_in_fixed_point_is_exact_on_axis_and_rounds_off_it():
+    # Fixed-point at scale 6: the +x-axis landmark atan2(0, 1) is EXACT 0, while the
+    # quadrant-II diagonal atan2(1, -1) = 3pi/4 is transcendental, so it rounds to the
+    # operand's scale and carries the min_fixed_point_precision offer.
+    program = _annotated(
+        "atan2 in fixed-point: exact 0 on the axis, rounded 3pi/4 off it",
+        "atan2(0, 1)\natan2(1.000000, -1.000000)",
+    )
+    hint = "inexact, rounded to 6 decimals — pass min_fixed_point_precision for more"
+    assert _values(_calc(program)) == [
+        "0 (exact)",
+        f"2.356194 ({hint}; e.g. =10 → 2.3561944902)",  # 3pi/4
+    ]
+
+
+def test_atan2_in_rational_stays_exact_only_on_the_positive_x_axis():
+    # Rational is exact-or-refuse: atan2(0, x>=0) = 0 is the single representable angle
+    # (any non-zero rational point's angle involves pi or an irrational arctan), so the
+    # axis line is exact and a diagonal point aborts the program with that reason.
+    program = _annotated(
+        "the lone exact rational atan2, then a diagonal point that refuses",
+        "atan2(0, 1)\natan2(0, 5)\natan2(1, 1)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == ("angle of a rational point is irrational except atan2(0, x>=0) = 0")
+
+
 def test_logarithms_and_exponential_are_inverses():
     # The log/exp family in one group: log(e) and exp(0)/exp(1) show the inverse pair,
     # and log10/log2 hit clean integer results on their own bases' powers. Float, so all

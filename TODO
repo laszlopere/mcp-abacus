@@ -1767,7 +1767,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 
 
 [ ] 40.  TIER 2 FUNCTIONS
-    [ ] 40.1.  atan2(y, x) — correct-quadrant angle; atan alone can't
+    [x] 40.1.  atan2(y, x) — correct-quadrant angle; atan alone can't
                disambiguate.
     [ ] 40.2.  sinh, cosh, tanh — the hyperbolic functions, each a UNARY
                operand-method (the sqrt/sin/exp shape). All reduce to exp

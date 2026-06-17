@@ -2243,6 +2243,73 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def atan2(self, other: "Value") -> "Value":
+        """Two-argument arctangent ``atan2(y, x)`` — the angle in radians of the point
+        ``(x, y)`` measured from the positive x-axis, in ``(-pi, pi]`` (40.1). Unlike
+        plain ``atan(y/x)`` (28.16) it knows the QUADRANT from the two signs, so it
+        distinguishes ``(x, y)`` from ``(-x, -y)`` and is defined when ``x == 0``.
+        ``self`` is ``y``, ``other`` is ``x`` (the math.atan2 argument order). The
+        BINARY fixed-arity-2 shape (pow, 28.20). Transcendental, so inexact except the
+        single exact landmark ``atan2(0, x>=0) == 0`` (which, by the math.atan2
+        convention, also fixes ``atan2(0, 0) == 0``).
+
+        fixed-point: SUPPORTED. The base angle ``atan(|y/x|)`` is the arctan series at
+            ``max scale + _PI_GUARD`` guard digits — the ratio fed in directly as
+            ``|y|/|x|`` so no division rounds first — then offset by ``pi``/``pi/2``
+            (the internal pi, 28.10.1) for the quadrant and rounded half-to-even back
+            to the covering scale. Always inexact except the zero landmark.
+        floating-point: math.atan2; unconditionally inexact.
+        rational: irrational except ``atan2(0, x>=0) == 0`` (any other point's angle is
+            a non-zero multiple/sum involving pi or an irrational arctan); otherwise
+            NotRepresentableError, the exact-or-refuse stance shared with atan.
+        """
+        exact = self._same_mode(other, "atan2")
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float) and isinstance(other.payload, float)
+                return Value(
+                    Mode.FLOATING_POINT, math.atan2(self.payload, other.payload), exact=False
+                )
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
+                if (
+                    self.payload == 0 and other.payload >= 0
+                ):  # atan2(0, x>=0) = 0, the only exact case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=exact)
+                raise NotRepresentableError(
+                    "angle of a rational point is irrational except atan2(0, x>=0) = 0"
+                )
+            case Mode.FIXED_POINT:
+                a, b = self._fp_pair(other)  # a = y, b = x
+                scale = max(a.decimals, b.decimals)  # the covering result scale (19.1.2)
+                if a.mantissa == 0 and b.mantissa >= 0:  # atan2(0, x>=0) = 0, the only exact case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, scale), exact=exact)
+                working = scale + _PI_GUARD
+                unity = 10**working
+                if a.mantissa == 0:  # y = 0, x < 0: theta = pi
+                    theta = _pi_scaled(working)
+                elif b.mantissa == 0:  # x = 0, y != 0: theta = +/- pi/2
+                    theta = _pi_scaled(working) // 2
+                    if a.mantissa < 0:
+                        theta = -theta
+                else:
+                    # base = atan(|y/x|) in [0, pi/2], the ratio fed in un-rounded.
+                    ny = abs(a.mantissa) * 10**b.decimals  # |y| and |x| at a common scale
+                    nx = abs(b.mantissa) * 10**a.decimals
+                    if ny <= nx:  # |y/x| <= 1: the arctan series argument is in range
+                        base = _fp_arctan_series(ny * unity // nx, unity)
+                    else:  # |y/x| > 1: atan(t) = pi/2 - atan(1/t), with 1/t = |x/y| <= 1
+                        base = _pi_scaled(working) // 2 - _fp_arctan_series(nx * unity // ny, unity)
+                    if b.mantissa > 0:  # quadrants I/IV: theta = +/- base
+                        theta = base if a.mantissa > 0 else -base
+                    else:  # x < 0, quadrants II/III: theta = +/-(pi - base)
+                        pi = _pi_scaled(working)
+                        theta = pi - base if a.mantissa > 0 else base - pi
+                mantissa, _ = _fp_quantize(theta, 10 ** (working - scale), 0)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, scale), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def log(self) -> "Value":
         """NATURAL logarithm, base e (28.17; bare ``log`` is ln, with the ``ln``
         alias) — transcendental, so inexact except the trivial log(1) = 0. DOMAIN
