@@ -2550,6 +2550,86 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def degrees(self) -> "Value":
+        """Convert an angle from radians to degrees: ``x * 180/pi`` (40.11). UNIT
+        scaling, NOT a trig function — every real converts, no domain limit (the
+        bridge OUT of the radians-only trig family, 28.10). Multiplies by an
+        irrational (1/pi), so inexact except the trivial degrees(0) = 0.
+
+        fixed-point: SUPPORTED via the internal pi (29.3/28.10.1). Form the exact
+            ratio ``m * 180 * 10**working / (pi_scaled(working) * 10**decimals)`` and
+            round half-to-even to the operand's scale; ``working`` carries the
+            argument's integer digits plus guard so pi's last place never reaches the
+            result. Inexact except degrees(0) = 0, which is exact.
+        floating-point: math.degrees; unconditionally inexact.
+        rational: pi has no rational value, so degrees(x) is irrational except
+            degrees(0) = 0; otherwise NotRepresentableError, the exact-or-refuse stance.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.degrees(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # degrees(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("degrees of a non-zero rational is irrational (pi)")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # degrees(0) = 0, the only exact fixed-point case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                int_digits = len(str(abs(fp.mantissa) // 10**fp.decimals))
+                working = fp.decimals + int_digits + _PI_GUARD
+                pi = _pi_scaled(working)
+                # x * 180/pi, the d's cancel: mantissa = round(m * 180 / pi).
+                num = fp.mantissa * 180 * 10**working
+                den = pi * 10**fp.decimals
+                mantissa, _ = _fp_quantize(num, den, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def radians(self) -> "Value":
+        """Convert an angle from degrees to radians: ``x * pi/180`` (40.11) — the
+        inverse of ``degrees`` (the bridge INTO the radians-only trig family, 28.10).
+        UNIT scaling, NOT a trig function: every real converts, no domain limit.
+        Multiplies by an irrational (pi), so inexact except the trivial radians(0) = 0.
+
+        fixed-point: SUPPORTED via the internal pi (29.3/28.10.1). Form the exact
+            ratio ``m * pi_scaled(working) / (180 * 10**(decimals + working))`` and
+            round half-to-even to the operand's scale; ``working`` carries the
+            argument's integer digits plus guard so pi's last place never reaches the
+            result. Inexact except radians(0) = 0, which is exact.
+        floating-point: math.radians; unconditionally inexact.
+        rational: pi has no rational value, so radians(x) is irrational except
+            radians(0) = 0; otherwise NotRepresentableError, the exact-or-refuse stance.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, math.radians(self.payload), exact=False)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                if self.payload == 0:  # radians(0) = 0, the only exact rational case
+                    return Value(Mode.RATIONAL, Fraction(0), exact=self.exact)
+                raise NotRepresentableError("radians of a non-zero rational is irrational (pi)")
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                if fp.mantissa == 0:  # radians(0) = 0, the only exact fixed-point case
+                    return Value(Mode.FIXED_POINT, FixedPoint(0, fp.decimals), exact=self.exact)
+                int_digits = len(str(abs(fp.mantissa) // 10**fp.decimals))
+                working = fp.decimals + int_digits + _PI_GUARD
+                pi = _pi_scaled(working)
+                # x * pi/180, the d's cancel: mantissa = round(m * pi / 180).
+                num = fp.mantissa * pi
+                den = 180 * 10 ** (fp.decimals + working)
+                mantissa, _ = _fp_quantize(num, den, fp.decimals)
+                return Value(Mode.FIXED_POINT, FixedPoint(mantissa, fp.decimals), exact=False)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def log(self, base: "Value | None" = None) -> "Value":
         """NATURAL logarithm base e when unary (28.17; bare ``log`` is ln, with the
         ``ln`` alias); the GENERAL logarithm ``log(x)/log(base)`` when a second

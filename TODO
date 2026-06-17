@@ -1836,7 +1836,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                with a default -> optional) or special-case the registry. Settle
                that before implementing — it is the one piece here that touches the
                call machinery, not just a new Value method.
-    [ ] 40.11. degrees(x) / radians(x) — angle unit conversion, each UNARY:
+    [x] 40.11. degrees(x) / radians(x) — angle unit conversion, each UNARY:
                degrees(x) = x * 180/pi, radians(x) = x * pi/180 (the trig family
                is radians-only, 28.10, so these bridge to/from degrees). Both
                multiply by an irrational (pi), so the per-pi stance: float inexact;

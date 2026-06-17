@@ -155,6 +155,8 @@ def test_function_arities_match_the_registry():
         "acos": (1, 1),
         "atan": (1, 1),
         "atan2": (2, 2),  # BINARY — fixed arity 2 (40.1)
+        "degrees": (1, 1),  # 40.11 — radians -> degrees
+        "radians": (1, 1),  # 40.11 — degrees -> radians
         "log": (1, 2),  # 40.10 — log(x) natural log, log(x, base) general log
         "ln": (1, 1),
         "log10": (1, 1),

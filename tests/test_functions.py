@@ -1164,6 +1164,83 @@ def test_atan_refuses_a_non_zero_rational_with_a_line_tagged_error():
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # degrees(x) = x*180/pi, radians(x) = x*pi/180 — unit scaling, NOT trig (40.11).
+        # The trivial 0 is the only exact case: 0 times anything is 0, scale preserved.
+        ("degrees(0)", None, "0 (exact)"),
+        ("radians(0)", None, "0 (exact)"),
+        ("degrees(0.00)", None, "0.00 (exact)"),  # scale preserved on the exact zero
+        ("radians(0.00)", None, "0.00 (exact)"),
+        ("degrees(0)", "rational", "0 (exact)"),  # rational allows only the zero
+        ("radians(0)", "rational", "0 (exact)"),
+        ("degrees(0)", "floating-point", "0.0 (inexact)"),  # binary64 is always inexact
+        ("radians(0)", "floating-point", "0.0 (inexact)"),
+        # Fixed-point multiplies by the internal pi (29.3); inexact, rounded to the
+        # operand's scale. degrees(1) ~ 57.2958 and radians(180) ~ 3.1416 round to a
+        # whole number at scale 0.
+        (
+            "degrees(1)",
+            None,
+            "57 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 57.2958)",
+        ),
+        (
+            "radians(180)",
+            None,
+            "3 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 3.1416)",
+        ),
+        (
+            "radians(90.000000)",  # pi/2 at scale 6
+            None,
+            "1.570796 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.5707963268)",
+        ),
+        (
+            "degrees(3.141593)",  # ~ pi radians -> ~ 180 degrees
+            None,
+            "180.000020 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 180.0000198478)",
+        ),
+        # Negatives convert with the sign carried through (no domain limit, every real).
+        (
+            "degrees(-1.000000)",
+            None,
+            "-57.295780 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → -57.2957795131)",
+        ),
+        (
+            "radians(-180.000000)",
+            None,
+            "-3.141593 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → -3.1415926536)",
+        ),
+        # binary64 uses math.degrees / math.radians, unconditionally inexact.
+        ("degrees(1)", "floating-point", "57.29577951308232 (inexact)"),
+        ("radians(180)", "floating-point", "3.141592653589793 (inexact)"),
+    ],
+)
+def test_degrees_and_radians(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # pi has no rational value, so any non-zero argument refuses (exact-or-refuse);
+        # NB no domain refusal — every real converts, the zero alone stays exact.
+        ("degrees(1)", "degrees of a non-zero rational is irrational (pi)"),
+        ("radians(180)", "radians of a non-zero rational is irrational (pi)"),
+    ],
+)
+def test_degrees_and_radians_refuse_a_non_zero_rational(expression, error):
+    payload = _calc(expression, "rational")
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # log(1) = 0 is the one exact case in every mode (transcendental otherwise);
         # `ln` is the alias, so ln(1) matches.
         ("log(1)", None, "0 (exact)"),
