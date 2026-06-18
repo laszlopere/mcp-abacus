@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mcp-abacus"
 version = "0.3.0.dev0"
-description = "An MCP server for type-faithful calculation: evaluate expressions bit-for-bit in fixed-point, IEEE-754 floating-point, or exact rational mode, with every result labelled exact or inexact."
+description = "High-precision calculator MCP server: arithmetic plus calculus — derivatives, integrals, and equation solving — evaluated in fixed-point, IEEE-754 floating-point, or exact rational mode, with every result labelled exact or inexact."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "László Pere", email = "226979892+laszlopere@users.noreply.github.com" },
 ]
-keywords = ["mcp", "calculator", "ieee-754", "fixed-point", "rational", "twos-complement"]
+keywords = ["mcp", "calculator", "arithmetic", "math", "calculus", "derivative", "integral", "solver", "equation", "high-precision", "decimal", "ieee-754", "fixed-point", "rational"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
