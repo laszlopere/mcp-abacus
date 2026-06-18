@@ -4,13 +4,17 @@
 """FastMCP application for mcp-abacus. All tools register on this app."""
 
 import platform
+from collections.abc import Sequence as AbcSequence
 from importlib.metadata import version
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import Field
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ContentBlock
+from pydantic import Field, ValidationError
 
 from mcp_abacus import __version__
+from mcp_abacus.errors import format_validation_error
 from mcp_abacus.expr import parser, reference
 from mcp_abacus.expr.lexer import LexError
 from mcp_abacus.expr.nodes import Assign, EvalError, Node, Sequence
@@ -36,7 +40,30 @@ from mcp_abacus.solver import (
     validate_unknown,
 )
 
-mcp = FastMCP(
+
+class _AbacusFastMCP(FastMCP):
+    """FastMCP that reshapes argument-validation errors for the model (TODO 43.2).
+
+    FastMCP wraps a failed pydantic argument validation as a ToolError whose
+    `__cause__` is the ValidationError. We catch that one case and re-raise with
+    a concise, field-naming message (errors.format_validation_error); the SDK
+    still returns it as an `isError` result. Tool-body failures (their own
+    Lex/Parse/Eval/Solver errors) are untouched -- those carry a different cause
+    or none, so they fall through unchanged.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> AbcSequence[ContentBlock] | dict[str, Any]:
+        try:
+            return await super().call_tool(name, arguments)
+        except ToolError as exc:
+            if isinstance(exc.__cause__, ValidationError):
+                raise ToolError(format_validation_error(name, exc.__cause__)) from exc.__cause__
+            raise
+
+
+mcp = _AbacusFastMCP(
     "mcp-abacus",
     instructions=(
         "A calculator for language models: type-faithful arithmetic you can trust "

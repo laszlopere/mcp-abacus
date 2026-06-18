@@ -1976,15 +1976,39 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 [ ] 43.  Help the AI to send acceptable JSON requests.  (LLMs sometimes send
          invalid JSON strings to the MCP server; help them succeed instead of
          failing the call.)
-    [ ] 43.1.  Tolerant-parse / JSON-repair fallback. When strict json.loads()
+    [x] 43.1.  Tolerant-parse / JSON-repair fallback. When strict json.loads()
                throws, retry once through a lenient parser before giving up. The
                classic offenders an LLM produces:
+                 - stringified / double-encoded arguments: a nested object (or the
+                   whole args blob) sent as a JSON STRING instead of an object,
+                   e.g. "arguments": "{\"variable\": \"n\"}". RESEARCH (2026-06-18)
+                   says this is the MOST common offender in the wild, not the three
+                   below (FastMCP #932, continue #5590, opencode #8102). Fix it
+                   the way the community does: at the PARAM-MODEL boundary, accept
+                   `dict | str` and json.loads() if it arrives as a string. This
+                   also answers the 43-wide interception-point question — the
+                   repair lives at the arg boundary, NOT inside the tool body,
+                   because FastMCP parses args before our code runs (server.py
+                   has no json.loads today).
                  - unquoted barewords ("variable": n -> "n")
                  - single quotes instead of double
                  - trailing commas
-    [ ] 43.2.  Make the JSON parse error message actionable (so a model
+               Library option: json-repair (pure Python, zero deps, built for
+               LLM output) covers all of the above incl. barewords; json5 does
+               NOT (rejects bareword VALUES). Tradeoff vs. a ~30-line hand-rolled
+               preprocessor is the project's mcp+stdlib-only stance (2.4/16.2.3).
+    [x] 43.2.  Make the JSON parse error message actionable (so a model
                self-corrects instead of looping): be as specific as possible in
-               the JSON parse error message.
+               the JSON parse error message. Best-practice refinements (research
+               2026-06-18, MCPcat error-handling guide + MCP fault taxonomy
+               arxiv 2603.05637):
+                 - split the JSON-RPC codes: -32700 (parse error, "fix request
+                   format") vs -32602 (invalid params) — distinct signals.
+                 - name the exact field + expected-vs-received, e.g. "Argument
+                   'quantity' expected an integer, but received 'five'"; never a
+                   raw stack trace.
+                 - return isError=True with descriptive TextContent so the model
+                   gets the message instead of the loop crashing; validate early.
     [ ] 43.3.  Simplify the solver calls. For single-variable solves, if
                `variable` is omitted, auto-detect the sole free name in the
                expression (12*n - (450 + 3*n) has exactly one). This won't fix
