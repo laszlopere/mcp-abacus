@@ -1972,3 +1972,22 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          decision ceiling — positions/bracket/tolerances stay float, so sub-float
          resolution needs the search geometry in exact arithmetic too (bigger change).
 
+
+[ ] 43.  Help the AI to send acceptable JSON requests.  (LLMs sometimes send
+         invalid JSON strings to the MCP server; help them succeed instead of
+         failing the call.)
+    [ ] 43.1.  Tolerant-parse / JSON-repair fallback. When strict json.loads()
+               throws, retry once through a lenient parser before giving up. The
+               classic offenders an LLM produces:
+                 - unquoted barewords ("variable": n -> "n")
+                 - single quotes instead of double
+                 - trailing commas
+    [ ] 43.2.  Make the JSON parse error message actionable (so a model
+               self-corrects instead of looping): be as specific as possible in
+               the JSON parse error message.
+    [ ] 43.3.  Simplify the solver calls. For single-variable solves, if
+               `variable` is omitted, auto-detect the sole free name in the
+               expression (12*n - (450 + 3*n) has exactly one). This won't fix
+               malformed JSON on its own, but it removes the most error-prone
+               field from the common case so there's less to get wrong.
+
