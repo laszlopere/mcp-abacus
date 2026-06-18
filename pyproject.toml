@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-abacus"
-version = "0.3.0.dev0"
+version = "0.3.0"
 description = "High-precision calculator MCP server: arithmetic plus calculus — derivatives, integrals, and equation solving — evaluated in fixed-point, IEEE-754 floating-point, or exact rational mode, with every result labelled exact or inexact."
 readme = "README.md"
 requires-python = ">=3.10"
