@@ -1,0 +1,259 @@
+================================================================================
+HOWTO: Tolerating LLM-mangled JSON in an MCP server
+================================================================================
+What we learned building mcp-abacus's TODO 43 (43.1 tolerant-parse fallback +
+43.2 actionable error messages). Reusable recipe for any FastMCP/Python MCP
+server. Offline, no behaviour change for well-formed input.
+
+--------------------------------------------------------------------------------
+THE PROBLEM
+--------------------------------------------------------------------------------
+LLMs sometimes send a tool call's `arguments` as broken JSON. The offenders,
+most-common first:
+
+  1. STRINGIFIED / double-encoded args: the whole object (or a nested field)
+     arrives as a JSON *string* instead of an object, e.g.
+         "arguments": "{\"expression\": \"1+2\"}"
+     This is the #1 offender in the wild (FastMCP issue #932, continue #5590,
+     opencode #8102), NOT the textbook syntax slips below.
+  2. unquoted barewords:  {"variable": n}      (means "n")
+  3. single quotes instead of double:  {'expression': '1+2'}
+  4. trailing commas:  {"expression": "1+2",}
+
+Default outcome: the call fails before your tool code runs, and the model gets a
+cryptic protocol error it cannot act on -> it retries blindly and loops.
+
+--------------------------------------------------------------------------------
+KEY INSIGHT: WHERE IT FAILS (so you know where to fix it)
+--------------------------------------------------------------------------------
+Trace the inbound path before writing any code. For the MCP Python SDK + FastMCP:
+
+  transport (stdio) parses each line -> JSONRPCMessage   <-- params loosely typed
+    -> session._receive_loop validates ClientRequest      <-- STRICT pydantic
+       (CallToolRequestParams.arguments: dict|None)
+    -> lowlevel call_tool handler (jsonschema; FastMCP disables it)
+    -> FastMCP.call_tool -> ToolManager -> Tool.run
+       -> pydantic validates args against the tool's model  <-- STRICT pydantic
+       -> your tool function finally runs
+
+Two distinct failure layers, two distinct fixes:
+
+  A. STRINGIFIED args (offender 1) die at the SESSION's strict ClientRequest
+     validation -- BEFORE any FastMCP/tool hook. `arguments` is `dict|None`, so a
+     string is rejected. You cannot catch this inside a tool.
+     IMPORTANT: the bytes are only still a *string* you can repair at the
+     loosely-typed JSONRPCRequest.params level, i.e. between the transport and
+     the session. That is the one place to intervene.
+
+  B. WELL-FORMED-JSON-but-wrong-shape (missing field, wrong type) dies later, in
+     FastMCP's per-tool pydantic validation, surfaced as an isError result whose
+     text is full of pydantic noise + a errors.pydantic.dev URL.
+
+Verify your own stack the same way (these one-liners are gold):
+    python -c "import mcp.types as t; print(t.CallToolRequestParams.model_fields)"
+    python -c "from mcp.server.fastmcp import FastMCP; import inspect; \
+               print(inspect.getsource(FastMCP.run_stdio_async))"
+    python -c "from mcp.server.fastmcp.tools.base import Tool; import inspect; \
+               print(inspect.getsource(Tool.run))"
+
+--------------------------------------------------------------------------------
+WHAT DID NOT WORK (don't waste time here)
+--------------------------------------------------------------------------------
+- Monkeypatching the SDK pydantic types (adding a before-validator to
+  CallToolRequestParams.arguments to accept dict|str). pydantic v2 collects
+  validators at class-creation; setattr + model_rebuild() does NOT register a
+  new one, and the parent union (ClientRequest) caches its core schema, so the
+  patch silently doesn't run. Fragile and version-bound even if forced.
+- Hooking FastMCP.call_tool for offender 1: too late -- the request already
+  died at session validation. (It IS the right place for fix B, though.)
+
+--------------------------------------------------------------------------------
+FIX 43.1 -- TOLERANT PARSE via a STDIO STREAM INTERPOSER
+--------------------------------------------------------------------------------
+Repair `arguments` while it is still the loosely-typed JSONRPCRequest.params,
+before the session's strict validation. No SDK types touched.
+
+Dependency: `json-repair` (pure Python, zero deps, built for LLM output; fixes
+all four offenders incl. bareword VALUES). `json5` does NOT fix bareword values.
+Tradeoff: it's a new runtime dep vs. a ~30-line hand-rolled preprocessor;
+re-quoting correctly (quotes/escapes inside strings) is exactly the fiddly part
+json-repair exists for, so the dep usually wins.
+
+Pure core (handles offender 1's payload + 2/3/4 inside it):
+
+    import json
+    from json_repair import loads as repair_loads
+
+    def repair_arguments(arguments):
+        if not isinstance(arguments, str):
+            return arguments                # already an object -> untouched
+        try:
+            parsed = json.loads(arguments)  # strict first (cheap, common)
+        except ValueError:
+            try:
+                parsed = repair_loads(arguments)
+            except ValueError:
+                return arguments
+        return parsed if isinstance(parsed, dict) else arguments
+
+  GOTCHA: json-repair returns "" (or {}) for unsalvageable junk -- it never
+  raises. ALWAYS guard `isinstance(parsed, dict)` and hand the ORIGINAL back on
+  failure, so you don't mask a real error with silent garbage.
+
+Wire it by interposing the stdio read stream (replace FastMCP.run() with your
+own runner; this only relies on stable message shapes, not private internals):
+
+    import anyio
+    from mcp.server.stdio import stdio_server
+    from mcp.shared.message import SessionMessage
+
+    async def run_stdio_repaired(mcp):
+        async with stdio_server() as (read_stream, write_stream):
+            send, recv = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+            async def pump():
+                async with send:
+                    async for item in read_stream:
+                        if isinstance(item, SessionMessage):
+                            item = repair(item)      # see process_incoming below
+                        await send.send(item)
+            async with anyio.create_task_group() as tg, recv:
+                tg.start_soon(pump)
+                await mcp._mcp_server.run(
+                    recv, write_stream,
+                    mcp._mcp_server.create_initialization_options(),
+                )
+                tg.cancel_scope.cancel()
+
+    # main(): anyio.run(lambda: run_stdio_repaired(mcp))
+
+Rebuild a repaired message (narrow to JSONRPCRequest so mypy + correctness
+agree -- notifications have no .id):
+
+    from mcp.types import JSONRPCMessage, JSONRPCRequest
+
+    def repair(message):
+        root = message.message.root
+        if not isinstance(root, JSONRPCRequest) or root.method != "tools/call":
+            return message
+        params = root.params
+        if not isinstance(params, dict) or not isinstance(params.get("arguments"), str):
+            return message
+        fixed = repair_arguments(params["arguments"])
+        if not isinstance(fixed, dict):
+            return message       # (43.2 turns this into a parse error instead)
+        new_root = root.model_copy(update={"params": {**params, "arguments": fixed}})
+        return SessionMessage(message=JSONRPCMessage(new_root), metadata=message.metadata)
+
+--------------------------------------------------------------------------------
+FIX 43.2 -- ACTIONABLE ERRORS (so the model self-corrects in one turn)
+--------------------------------------------------------------------------------
+Best practice (MCPcat error-handling guide; MCP fault taxonomy arXiv 2603.05637):
+distinct JSON-RPC codes, name the field, expected-vs-received, never a stack
+trace, return as a tool result the model actually reads.
+
+(B1) PARSE FAILURE -- when repair_arguments still can't produce an object, the
+SDK would emit a bare -32602 "Invalid request parameters". Instead, answer the
+request yourself from the interposer with an actionable -32700:
+
+    from mcp.types import PARSE_ERROR, ErrorData, JSONRPCError, JSONRPCMessage
+
+    def parse_error_reply(request_id, tool_name):
+        msg = (f"The 'arguments' for tool {tool_name!r} were not valid JSON. "
+               'Send `arguments` as a JSON object -- e.g. {"a": 1} -- not a '
+               "quoted string; check for unbalanced braces, single quotes, or "
+               "missing quotes around keys/values.")
+        err = JSONRPCError(jsonrpc="2.0", id=request_id,
+                           error=ErrorData(code=PARSE_ERROR, message=msg))
+        return SessionMessage(message=JSONRPCMessage(err))
+
+  In the pump: if repair fails, `await write_stream.send(parse_error_reply(...))`
+  and DON'T forward the request (so the session never double-answers that id).
+  Concurrent sends on the anyio memory stream are item-atomic -> safe.
+
+(B2) WRONG SHAPE -- reshape FastMCP's pydantic ValidationError. FastMCP wraps it
+as ToolError with `__cause__` = the ValidationError; subclass and rewrite ONLY
+that case (tool-body errors have a different cause -> leave them):
+
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
+    from pydantic import ValidationError
+
+    class MyFastMCP(FastMCP):
+        async def call_tool(self, name, arguments):
+            try:
+                return await super().call_tool(name, arguments)
+            except ToolError as exc:
+                if isinstance(exc.__cause__, ValidationError):
+                    raise ToolError(format_validation_error(name, exc.__cause__)) \
+                        from exc.__cause__
+                raise
+
+    mcp = MyFastMCP("my-server", instructions=...)   # subclass IS the app
+
+Build the message from exc.errors() (structured; the URL only appears in str(exc),
+so .errors() is already URL-free):
+
+    _EXPECTED = {"string_type": "a string", "int_type": "an integer",
+                 "int_parsing": "an integer", "float_type": "a number",
+                 "bool_type": "a boolean", "list_type": "an array",
+                 "dict_type": "an object"}
+
+    def format_validation_error(tool_name, exc):
+        parts = []
+        for e in exc.errors():
+            field = ".".join(map(str, e.get("loc", ()))) or "arguments"
+            if e["type"] == "missing":
+                parts.append(f"argument {field!r} is required but was not provided")
+                continue
+            got = e.get("input")
+            want = _EXPECTED.get(e["type"])
+            if want:
+                parts.append(f"argument {field!r} expected {want}, but received "
+                             f"{got!r} ({type(got).__name__})")
+            else:
+                parts.append(f"argument {field!r}: {e.get('msg','invalid value')} "
+                             f"(received {got!r})")
+        return f"Invalid arguments for tool {tool_name!r}: {'; '.join(parts)}."
+
+Result the model sees: "Invalid arguments for tool 'calculate': argument
+'expression' expected a string, but received 123 (int)." -- it fixes it next turn.
+
+--------------------------------------------------------------------------------
+GOTCHAS (each cost us time)
+--------------------------------------------------------------------------------
+- json-repair never raises; coerces junk to ""/{}. Guard isinstance(..., dict).
+- The server RECEIVES ClientRequest (not ServerRequest). Validate against the
+  right union when experimenting, or every variant "fails" confusingly.
+- anyio memory streams: use the subscripted form
+  `create_memory_object_stream[SessionMessage | Exception](0)`; forward the
+  Exception items the read stream also carries, untouched.
+- Name collisions: `from collections.abc import Sequence` clashed with our AST
+  `Sequence` node -> import it `as AbcSequence` for the override return type.
+- The FastMCP subclass must BE the app object (mcp = MyFastMCP(...)). Handlers
+  register `self.call_tool` in __init__, so the instance's override is what runs.
+- Subclassing FastMCP.call_tool is correct for fix B but USELESS for fix A --
+  offender 1 dies earlier, at the session. Different layers, different hooks.
+
+--------------------------------------------------------------------------------
+TESTING (what convinced us)
+--------------------------------------------------------------------------------
+- Unit-test repair_arguments + format_validation_error as pure functions (each
+  offender; the garbage guard; expected-vs-received phrasing; no pydantic URL).
+- One honest END-TO-END: spawn the server as a subprocess, speak raw
+  newline-delimited JSON-RPC over stdio (initialize -> notifications/initialized
+  -> tools/call with a STRING arguments blob). The typed ClientSession can't send
+  malformed args -- it serializes a dict -- so go raw. Use select() with a
+  timeout on stdout so a regression fails fast instead of hanging.
+
+--------------------------------------------------------------------------------
+PORTING CHECKLIST
+--------------------------------------------------------------------------------
+[ ] add json-repair dep
+[ ] copy repair_arguments + the repair()/process_incoming message router
+[ ] replace mcp.run() with the stdio interposer runner (anyio)
+[ ] (optional) emit -32700 parse-error reply for unrepairable args
+[ ] subclass FastMCP.call_tool -> format_validation_error for ValidationError
+[ ] make the subclass instance your app (mcp = MyFastMCP(...))
+[ ] unit tests for the pure fns + one raw-stdio e2e
+[ ] non-stdio transports (SSE/HTTP) need the interposer applied there too
+================================================================================
