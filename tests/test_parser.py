@@ -243,19 +243,19 @@ def test_wrong_arity_message():
 
 
 def test_variadic_call_accepts_any_count():
-    # sum is variadic (>= 1 arg), so the parser accepts one, two, or many args
+    # max is variadic (>= 1 arg), so the parser accepts one, two, or many args
     # where a fixed-arity func would reject all but its exact count.
     one = Number("1", line=1)
-    assert parse("sum(1)") == FuncCall("sum", (one,), line=1)
-    assert parse("sum(1, 1, 1)") == FuncCall("sum", (one, one, one), line=1)
+    assert parse("max(1)") == FuncCall("max", (one,), line=1)
+    assert parse("max(1, 1, 1)") == FuncCall("max", (one, one, one), line=1)
 
 
 def test_variadic_min_arity_message():
-    # A function with a minimum arity phrases the bound as "at least N". sum can
-    # only be under-supplied via direct construction — empty sum() hits the atom
+    # A function with a minimum arity phrases the bound as "at least N". max can
+    # only be under-supplied via direct construction — empty max() hits the atom
     # parser's "expected a number" first — so assert the phrasing through FuncCall.
-    with pytest.raises(ValueError, match=r"'sum' takes at least 1 argument\(s\), got 0"):
-        FuncCall("sum", (), line=1)
+    with pytest.raises(ValueError, match=r"'max' takes at least 1 argument\(s\), got 0"):
+        FuncCall("max", (), line=1)
 
 
 def test_nullary_call_parses_with_an_empty_arg_list():

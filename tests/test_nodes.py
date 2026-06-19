@@ -127,17 +127,17 @@ def test_funccall_wrong_arity_raises():
 
 def test_funccall_variadic_arity():
     one = Number("1", line=1)
-    # sum is variadic (>= 1 arg): zero is too few, one-or-more all construct.
+    # max is variadic (>= 1 arg): zero is too few, one-or-more all construct.
     with pytest.raises(ValueError):
-        FuncCall("sum", (), line=1)
-    assert FuncCall("sum", (one,), line=1).args == (one,)
-    assert FuncCall("sum", (one, one, one), line=1).args == (one, one, one)
+        FuncCall("max", (), line=1)
+    assert FuncCall("max", (one,), line=1).args == (one,)
+    assert FuncCall("max", (one, one, one), line=1).args == (one, one, one)
 
 
 def test_function_arities_match_the_registry():
     # FUNCTION_ARITIES is derived from _FUNCS plus the nullary registry — every
     # wired function carries an arity range (min, max|None): unary funcs are
-    # (1, 1), binary pow (2, 2), variadic sum (1, None), nullaries (0, 0) (29.2).
+    # (1, 1), binary pow (2, 2), variadic max (1, None), nullaries (0, 0) (29.2).
     assert FUNCTION_ARITIES == {
         "abs": (1, 1),
         "sign": (1, 1),  # 40.9 — UNARY signum
@@ -169,8 +169,6 @@ def test_function_arities_match_the_registry():
         "asinh": (1, 1),
         "acosh": (1, 1),
         "atanh": (1, 1),
-        "sum": (1, None),
-        "product": (1, None),
         "avg": (1, None),
         "max": (1, None),
         "min": (1, None),
@@ -192,6 +190,8 @@ def test_function_arities_match_the_registry():
         "time": (0, 0),  # nullary clock reading (28.1)
         "integral": (4, 4),  # special form (40.18) — fixed arity 4, not read off a signature
         "diff": (3, 3),  # special form (40.17) — fixed arity 3, not read off a signature
+        "sum": (4, 4),  # special form (40.19) — range Σ, sum(i, lo, hi, expr)
+        "product": (4, 4),  # special form (40.19) — range Π, product(i, lo, hi, expr)
     }
 
 

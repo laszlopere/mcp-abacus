@@ -1886,7 +1886,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (40.17): `expr`/`var` are an unevaluated program + a free variable
                NAME, not values. Inherently inexact in every mode (a numerical
                quadrature).
-    [ ] 40.19. sum(i, 1, n, expr) / product(i, 1, n, expr) — range summation (Σ) and
+    [x] 40.19. sum(i, 1, n, expr) / product(i, 1, n, expr) — range summation (Σ) and
                product (Π): fold `expr` over the index variable `i` from 1 to n.
                Solver-adjacent shape like diff/integral (40.17/40.18) — `expr`/`i`
                are an unevaluated program + a free variable NAME, not values — but a

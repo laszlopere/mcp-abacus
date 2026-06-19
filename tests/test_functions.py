@@ -70,28 +70,50 @@ def test_abs(expression, mode, value):
     assert _value(expression, mode) == value
 
 
+# --- sum(i, lo, hi, expr): the range-summation (Σ) special form (40.19) --------
+# A SOLVER-ADJACENT special form like integral/diff: `i` is a bare NAME (the index) and
+# `expr` the unevaluated body, NOT values. A FINITE EXACT fold over INTEGER steps from lo to
+# hi inclusive — repeated +, so (unlike integral/diff) it is EXACT in every mode and inherits
+# the body's own exactness, never stamping inexact itself.
 @pytest.mark.parametrize(
-    ("expression", "mode", "value"),
+    ("expression", "mode", "floor", "value"),
     [
-        # sum is variadic and behaves like repeated +: exact in every mode, with the
-        # fixed-point result at the covering (max) scale of its operands.
-        ("sum(1, 2, 3, 4)", None, "10 (exact)"),  # fixed-point default
-        ("sum(5)", None, "5 (exact)"),  # single arg -> identity (the empty fold)
-        ("sum(1.5, 2.25)", None, "3.75 (exact)"),  # covering scale 2, no rounding
-        ("sum(1/2, 1/3, 1/6)", "rational", "1 (exact)"),  # 3/6 + 2/6 + 1/6 = 1
-        ("sum(1/3)", "rational", "1/3 (exact)"),
-        # binary64 carries its operands' inexact flag through (like every float op).
-        ("sum(1, 2, 3)", "floating-point", "6.0 (inexact)"),
+        ("sum(i, 1, 4, i)", None, None, "10 (exact)"),  # 1+2+3+4, fixed-point default
+        ("sum(i, 1, 4, i**2)", None, None, "30 (exact)"),  # 1+4+9+16
+        ("sum(i, 1, 3, 2*i)", None, None, "12 (exact)"),  # the body is an expression in i
+        # The body reads the index at the precision FLOOR, so a raised floor carries through.
+        ("sum(i, 1, 3, i)", None, 4, "6.0000 (exact)"),
+        # An EMPTY range (lo > hi) is the additive identity 0, a whole number at scale 0.
+        ("sum(i, 3, 1, i)", None, None, "0 (exact)"),
+        ("sum(i, 5, 5, i**2)", None, None, "25 (exact)"),  # single-term range
+        # rational folds exactly — the harmonic partial sum 1 + 1/2 + 1/3 + 1/4.
+        ("sum(i, 1, 4, 1/i)", "rational", None, "25/12 (exact)"),
+        # binary64 carries the inexact flag through, like every float op.
+        ("sum(i, 1, 3, i)", "floating-point", None, "6.0 (inexact)"),
     ],
 )
-def test_sum(expression, mode, value):
-    assert _value(expression, mode) == value
+def test_sum(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
 
 
-def test_sum_inherits_operand_inexactness():
-    # An inexact operand (fixed-point sqrt rounds) makes the whole sum inexact,
-    # exactly as repeated + would — the fold propagates the flag.
-    assert _value("sum(1, sqrt(2))").startswith("2 (inexact")
+def test_sum_inherits_body_inexactness():
+    # An inexact term (fixed-point sqrt rounds) makes the whole sum inexact, exactly as
+    # repeated + would — the fold propagates the flag, it never stamps inexact itself.
+    assert _value("sum(i, 1, 2, sqrt(i))").startswith("2 (inexact")
+
+
+def test_sum_reads_outer_variables():
+    # The body re-evaluates in a child store seeded from the run's, so it can read an outer
+    # binding (k) while the index (i) shadows the per-term value. k*(1+2+3) = 3*6 = 18.
+    assert _value("k = 3\nsum(i, 1, 3, k*i)", "rational") == "18 (exact)"
+
+
+def test_sum_masks_its_index_in_referenced_names():
+    # The index is BOUND (a dummy the fold rebinds per term), so it is not a free reference —
+    # only genuinely free names (here `n` and `t`) leak out, keeping the index from being
+    # mistaken for a solver unknown when a sum is nested. (The index is the FIRST arg here,
+    # unlike integral/diff where it is the second — _SPECIAL_FORM_BOUND_VAR tracks which.)
+    assert parse("sum(i, 1, n, i*t)").referenced_names() == frozenset({"n", "t"})
 
 
 @pytest.mark.parametrize(
@@ -130,34 +152,74 @@ def test_max_min_carry_the_chosen_operands_exactness():
     assert _value("min(2, sqrt(2))").startswith("1 (inexact")
 
 
+# --- product(i, lo, hi, expr): the range-product (Π) special form (40.19) ------
+# sum's multiplicative twin (40.19): the SAME finite fold over INTEGER steps, but repeated *
+# instead of +, so unlike sum it COMPUTES — fixed-point may round to the covering scale,
+# rational stays exact, float rounds. Still EXACT-or-the-body's-inexactness; the fold never
+# stamps inexact itself, the rounding is the multiply's.
 @pytest.mark.parametrize(
-    ("expression", "mode", "value"),
+    ("expression", "mode", "floor", "value"),
     [
-        # product is variadic and behaves like repeated *: unlike sum it COMPUTES, so
-        # fixed-point may round to the covering scale, rational stays exact, float rounds.
-        ("product(2, 3, 4)", None, "24 (exact)"),  # fixed-point default
-        ("product(5)", None, "5 (exact)"),  # single arg -> identity (the empty fold)
-        ("product(1.5, 2.0)", None, "3.0 (exact)"),  # covering scale 1, fits exactly
-        # 1.5 * 1.5 = 2.25 but the covering scale is 1 -> rounds, flagged inexact.
+        ("product(i, 1, 4, i)", None, None, "24 (exact)"),  # 4! = 1*2*3*4
+        ("product(i, 2, 4, i)", None, None, "24 (exact)"),  # 2*3*4
+        # An EMPTY range (lo > hi) is the multiplicative identity 1, a whole number at scale 0.
+        ("product(i, 3, 1, i)", None, None, "1 (exact)"),
+        ("product(i, 5, 5, i)", None, None, "5 (exact)"),  # single-term range
+        # The covering scale rounds: 1.5 * 1.5 = 2.25 but scale 1 -> rounds, flagged inexact.
         (
-            "product(1.5, 1.5)",
+            "product(i, 1, 2, 1.5)",
+            None,
             None,
             "2.2 (inexact, rounded to 1 decimal — pass min_fixed_point_precision "
             "for more; e.g. =5 → 2.25000)",
         ),
-        ("product(1/2, 2/3, 3/4)", "rational", "1/4 (exact)"),  # exact fractions
-        # binary64 carries its operands' inexact flag through (like every float op).
-        ("product(2, 3)", "floating-point", "6.0 (inexact)"),
+        # rational multiplies exactly — 1/1 * 1/2 * 1/3 * 1/4 = 1/24.
+        ("product(i, 1, 4, 1/i)", "rational", None, "1/24 (exact)"),
+        # binary64 carries the inexact flag through (like every float op).
+        ("product(i, 1, 3, i)", "floating-point", None, "6.0 (inexact)"),
     ],
 )
-def test_product(expression, mode, value):
-    assert _value(expression, mode) == value
+def test_product(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
 
 
-def test_product_inherits_operand_inexactness():
-    # An inexact operand (fixed-point sqrt rounds) makes the whole product inexact,
-    # exactly as repeated * would — the fold propagates the flag.
-    assert _value("product(1, sqrt(2))").startswith("1 (inexact")
+def test_product_inherits_body_inexactness():
+    # An inexact term (fixed-point sqrt rounds) makes the whole product inexact, exactly as
+    # repeated * would — the fold propagates the flag.
+    assert _value("product(i, 1, 2, sqrt(i))").startswith("1 (inexact")
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # The index (1st arg) must be a bare name: a literal or a constant nullary (pi/e) is
+        # not — the same stance integral/diff take on their variable argument.
+        ("sum(5, 1, 3, 5)", None, "sum's index (1st argument) must be a name"),
+        ("product(pi, 1, 3, 2)", None, "product's index (1st argument) must be a name"),
+        # The bounds must be integers — the fold steps by one integer at a time, so a
+        # fractional bound REFUSES through the same _as_integer gate gcd/lcm/factorial use.
+        ("sum(i, 1.5, 3, i)", None, "sum bounds requires integer operands"),
+        ("product(i, 1, 3.5, i)", None, "product bounds requires integer operands"),
+        # A range wider than the term cap REFUSES rather than grinding the server — the
+        # DoS guard (factorial's cap sized far higher for series sums).
+        ("sum(i, 1, 200000, i)", None, "sum range exceeds 100000 terms (200000 requested)"),
+        # A transcendental body in rational mode refuses at the term, like sin everywhere —
+        # surfaced as the body's own line-tagged error (i=1 is a non-zero rational).
+        ("sum(i, 1, 3, sin(i))", "rational", "sine of a non-zero rational is irrational"),
+    ],
+)
+def test_range_fold_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_range_fold_arity_is_a_parse_error():
+    # Fixed arity 4, wired through FUNCTION_ARITIES like every call — wrong count is caught at
+    # parse, before evaluation, the same as a misused ordinary function.
+    payload = _calc("sum(i, 1, 3)")
+    assert payload["value"] is None
+    assert "takes 4 argument(s)" in payload["error"]
 
 
 @pytest.mark.parametrize(

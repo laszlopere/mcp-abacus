@@ -102,8 +102,6 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "asinh": Value.asinh,  # 40.3 — ln(x+sqrt(x^2+1)) via ln, all reals, except asinh(0)=0
     "acosh": Value.acosh,  # 40.3 — ln(x+sqrt(x^2-1)) via ln, domain x>=1, except acosh(1)=0
     "atanh": Value.atanh,  # 40.3 — ln((1+x)/(1-x))/2 via ln, domain |x|<1, except atanh(0)=0
-    "sum": Value.sum_,  # 28.5 — variadic; repeated + via reduce, exact in every mode
-    "product": Value.product,  # 28.6 — variadic; repeated * via reduce, may round (covering scale)
     "avg": Value.avg,  # 28.4 — variadic; sum / count, follows the mode's / rule
     "max": Value.max_,  # 28.2 — variadic; selection (largest), exact, carries the operand verbatim
     "min": Value.min_,  # 28.3 — variadic; mirror of max (smallest)
@@ -151,8 +149,22 @@ _NULLARY_FUNCS: dict[str, Callable[[EvalContext], Value]] = {
 _SPECIAL_FORM_ARITIES: dict[str, tuple[int, int | None]] = {
     "integral": (4, 4),  # 40.18 — integral(expr, var, a, b); definite integral, always inexact
     "diff": (3, 3),  # 40.17 — diff(expr, var, at); numerical derivative, always inexact
+    "sum": (4, 4),  # 40.19 — sum(i, lo, hi, expr); range summation Σ, EXACT finite fold
+    "product": (4, 4),  # 40.19 — product(i, lo, hi, expr); range product Π, EXACT finite fold
 }
 _SPECIAL_FORM_NAMES: frozenset[str] = frozenset(_SPECIAL_FORM_ARITIES)
+
+# Which ARGUMENT of each special form is the bound variable NAME (the dummy the form
+# rebinds per sample/term), so it is masked from referenced_names rather than leaking as a
+# free solver unknown. ``integral``/``diff`` put the integrand FIRST (var at index 1);
+# ``sum``/``product`` (40.19) follow the Σ/Π reading order ``sum(i, lo, hi, expr)`` — the
+# index NAME comes first (index 0), the body last.
+_SPECIAL_FORM_BOUND_VAR: dict[str, int] = {
+    "integral": 1,
+    "diff": 1,
+    "sum": 0,
+    "product": 0,
+}
 
 
 # The nullaries that double as bare constants (29.6): pi and e may be written WITHOUT
@@ -209,8 +221,12 @@ FUNCTION_HELP: dict[str, str] = {
     "asinh": "inverse hyperbolic sine, ln(x+sqrt(x^2+1)); all reals, inexact except asinh(0)=0",
     "acosh": "inverse hyperbolic cosine, ln(x+sqrt(x^2-1)); domain x>=1, inexact except acosh(1)=0",
     "atanh": "inverse hyperbolic tangent, ln((1+x)/(1-x))/2; |x|<1, inexact except atanh(0)=0",
-    "sum": "total of the operands; exact in every type",
-    "product": "product of the operands; may round in fixed-point/float",
+    "sum": "range summation Σ: fold the body over the index NAMED by the 1st arg from the "
+    "2nd arg to the 3rd INCLUSIVE (integer steps; 1st arg a bare name, 4th the unevaluated "
+    "body — NOT values); repeated +, EXACT in every type, capped at 100000 terms",
+    "product": "range product Π: fold the body over the index NAMED by the 1st arg from the "
+    "2nd arg to the 3rd INCLUSIVE (integer steps; 1st arg a bare name, 4th the unevaluated "
+    "body — NOT values); repeated *, may round in fixed-point/float, capped at 100000 terms",
     "avg": "arithmetic mean, sum/count; follows the type's / rule",
     "max": "largest operand, returned verbatim; exact",
     "min": "smallest operand, returned verbatim; exact",
@@ -696,13 +712,16 @@ class FuncCall(Node):
         return self.args
 
     def referenced_names(self) -> frozenset[str]:
-        # A special form's named variable (40.18) is BOUND inside the call (a dummy the
-        # form rebinds per sample), not a free reference — so drop it from the names this
-        # subtree reads, keeping it from surfacing as a free unknown when an integral is
-        # nested in a solver expression. Every other function reads the base union.
+        # A special form's named variable (40.18/40.19) is BOUND inside the call (a dummy
+        # the form rebinds per sample/term), not a free reference — so drop it from the
+        # names this subtree reads, keeping it from surfacing as a free unknown when the
+        # form is nested in a solver expression. Which ARGUMENT holds the name differs per
+        # form (_SPECIAL_FORM_BOUND_VAR). Every other function reads the base union.
         names = Node.referenced_names(self)
-        if self.name in _SPECIAL_FORM_NAMES and isinstance(self.args[1], Var):
-            return names - {self.args[1].name}
+        if self.name in _SPECIAL_FORM_NAMES:
+            var_node = self.args[_SPECIAL_FORM_BOUND_VAR[self.name]]
+            if isinstance(var_node, Var):
+                return names - {var_node.name}
         return names
 
     def _evaluate(self, ctx: EvalContext) -> Value:

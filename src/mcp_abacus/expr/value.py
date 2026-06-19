@@ -1853,32 +1853,21 @@ class Value:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
     def sum_(self, *others: "Value") -> "Value":
-        """Total of one-or-more operands (28.5) — VARIADIC; repeated ``+``.
+        """Total of one-or-more operands — VARIADIC; repeated ``+``.
 
-        ``self`` is the first operand, so ``sum(a)`` is just ``a`` (the empty fold)
-        and ``sum(a, b, c)`` is ``((a + b) + c)``. Folding over ``add`` (19.3.1)
+        ``self`` is the first operand, so ``sum_(a)`` is just ``a`` (the empty fold)
+        and ``sum_(a, b, c)`` is ``((a + b) + c)``. Folding over ``add`` (19.3.1)
         rather than re-deriving per-mode math means every binary-op contract comes
         for free: same-mode enforcement (no mixing), the covering fixed-point scale,
         and exactness propagation. So like repeated ``+`` it is EXACT in every mode
         — addition never leaves the grid — except where an operand was already
-        inexact, which the fold carries through. The trailing underscore keeps the
-        name off the ``sum`` builtin, as ``abs_`` does for ``abs``.
+        inexact, which the fold carries through. Internal now: ``avg`` (28.4) builds
+        its total here. The ``sum`` BUILTIN is no longer this variadic operand-method
+        — it became the range-fold special form ``sum(i, lo, hi, expr)`` (40.19,
+        expr.forms) — but the helper stays (avg needs it); the trailing underscore
+        keeps the name off Python's ``sum``, as ``abs_`` does for ``abs``.
         """
         return functools.reduce(Value.add, others, self)
-
-    def product(self, *others: "Value") -> "Value":
-        """Product of one-or-more operands (28.6) — VARIADIC; repeated ``*``.
-
-        The multiplicative mirror of ``sum_``: ``self`` is the first operand, so
-        ``product(a)`` is ``a`` (the empty fold over ``mul``) and
-        ``product(a, b, c)`` is ``((a * b) * c)``. Folding over ``mul`` (19.3.3)
-        inherits every binary-op contract — same-mode enforcement, the covering
-        fixed-point scale, exactness propagation — so unlike ``sum_`` it can ROUND:
-        in fixed-point each ``*`` may overflow the covering scale and flag inexact,
-        rational stays exact, float rounds. The trailing-underscore convention is
-        unneeded here (no ``product`` builtin) but kept for parity with ``sum_``.
-        """
-        return functools.reduce(Value.mul, others, self)
 
     def avg(self, *others: "Value") -> "Value":
         """Arithmetic mean (28.4) — VARIADIC; ``sum / count``.

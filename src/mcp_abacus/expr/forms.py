@@ -11,6 +11,9 @@ expression language. ``integral(expr, var, a, b)`` (40.18) is the first: it re-e
 ``expr`` at many sample points with ``var`` rebound to each, the way solver.py drives an
 expression while searching. ``diff(expr, var, at)`` (40.17) is its sibling — a numerical
 derivative, the same rebind-and-sample shape over a tight finite-difference stencil.
+``sum(i, lo, hi, expr)`` / ``product(i, lo, hi, expr)`` (40.19) are the Σ/Π folds — the same
+rebind-the-body shape, but over INTEGER steps from ``lo`` to ``hi`` inclusive rather than a
+continuous interval.
 
 This is a SIBLING engine to solver.py: it imports expr.nodes (Node.evaluate, the AST) to
 re-run the integrand, an edge value.py cannot carry — which is why these live here and not
@@ -20,12 +23,21 @@ so the back-edge never exists at module load.
 Everything stays in the ACTIVE mode: a definite integral is just +, *, /, and one
 comparison, all of which Value already does mode-faithfully, so the quadrature accumulates
 with Value arithmetic — no float shadow (unlike the solver, whose golden-section / parabola
-math is intrinsically floating-point). The result is flagged inexact in EVERY mode (40.18),
-because Simpson's rule only APPROXIMATES the true integral — not because of any conversion.
-The same holds for ``diff`` (40.17): a finite-difference quotient only APPROXIMATES the true
-derivative, so it too is inexact in every mode.
+math is intrinsically floating-point). The integral result is flagged inexact in EVERY mode
+(40.18), because Simpson's rule only APPROXIMATES the true integral — not because of any
+conversion. The same holds for ``diff`` (40.17): a finite-difference quotient only
+APPROXIMATES the true derivative, so it too is inexact in every mode.
+
+``sum``/``product`` (40.19) are the EXCEPTION: a finite fold over integer steps is EXACT —
+it adds and multiplies the body's own Values with no truncation of its own — so it keeps the
+per-mode exactness of the body. ``sum`` is repeated ``+`` (exact in every mode, like
+``sum_``); ``product`` is repeated ``*`` (may round to the covering fixed-point scale, exact
+in rational, rounds in float); either way the inexactness is the body's or the multiply's,
+never the form's. A finite range can still be huge, so the term count is capped (a DoS guard,
+mirroring factorial's cap).
 """
 
+from collections.abc import Callable
 from fractions import Fraction
 
 from mcp_abacus.expr.nodes import EvalError, Node, Var
@@ -37,17 +49,28 @@ from mcp_abacus.expr.value import EvalContext, InexactHandling, Mode, Value
 # pathological integrand from unbounded subdivision (it bounds any one branch's depth).
 _MAX_DEPTH = 20
 
+# Term-count ceiling for the sum/product folds (40.19). A finite range is finite by
+# construction, but ``sum(i, 1, 1000000000, i)`` would still grind the server to a halt, so
+# a range wider than this REFUSES rather than loops — the same DoS guard factorial's 1000
+# cap is, sized far higher because a series legitimately wants many terms.
+_MAX_RANGE = 100000
+
 
 def dispatch_special_form(name: str, ctx: EvalContext, args: tuple[Node, ...]) -> Value:
-    """Evaluate the special form ``name`` against the unevaluated ``args`` (40.18).
+    """Evaluate the special form ``name`` against the unevaluated ``args`` (40.18/40.19).
 
-    The entry FuncCall._evaluate defers to. Two forms today (``integral``/40.18 and
-    ``diff``/40.17); the table grows as the solver-adjacent family lands (sum-product/40.19).
+    The entry FuncCall._evaluate defers to. The solver-adjacent family: ``integral`` (40.18)
+    and ``diff`` (40.17) sample over a continuous interval; ``sum``/``product`` (40.19) fold
+    over integer steps.
     """
     if name == "integral":
         return _integral(ctx, args)
     if name == "diff":
         return _diff(ctx, args)
+    if name == "sum":
+        return _range_fold(ctx, args, "sum", Value.add, 0)
+    if name == "product":
+        return _range_fold(ctx, args, "product", Value.mul, 1)
     raise EvalError(f"unknown special form: {name!r}", line=0)
 
 
@@ -190,6 +213,76 @@ def _diff(ctx: EvalContext, args: tuple[Node, ...]) -> Value:
     inner = eight.mul(sample(at.add(h)).sub(sample(at.sub(h))))
     numerator = sample(at.sub(two_h)).sub(sample(at.add(two_h))).add(inner)
     return _as_inexact(numerator.div(twelve.mul(h)))
+
+
+def _range_fold(
+    ctx: EvalContext,
+    args: tuple[Node, ...],
+    what: str,
+    op: Callable[[Value, Value], Value],
+    identity: int,
+) -> Value:
+    """The shared Σ/Π range fold behind ``sum``/``product`` (40.19).
+
+    ``sum(i, lo, hi, expr)`` / ``product(i, lo, hi, expr)``: ``i`` is a bare NAME (the index),
+    ``lo``/``hi`` the inclusive integer bounds (ordinary expressions, evaluated and read as
+    integers up front), ``expr`` the unevaluated body re-evaluated once per integer ``i`` in
+    ``[lo, hi]``. The body's term Values are combined with ``op`` (``Value.add`` for Σ,
+    ``Value.mul`` for Π) starting from the first term — so unlike integral/diff the fold is
+    EXACT (no truncation of its own) and inherits the body's per-mode story: Σ stays exact
+    like repeated ``+``, Π may round to the covering fixed-point scale like repeated ``*``.
+    An EMPTY range (``lo > hi``) yields the fold's ``identity`` (0 for Σ, 1 for Π) at scale 0.
+    A transcendental body in rational mode refuses at the term, the same stance integral takes.
+    """
+    index_node, lo_node, hi_node, body = args
+
+    # The index must be a bare NAME — same stance as integral/diff's variable (a constant
+    # like pi/e parses to a nullary FuncCall, a literal to a Number; neither names a term).
+    if not isinstance(index_node, Var):
+        raise EvalError(f"{what}'s index (1st argument) must be a name", line=index_node.line)
+    name = index_node.name
+    # A dummy the fold rebinds cannot also be a name the body assigns (mirrors integral/diff).
+    # Unreachable through the parser today — an argument is an expression, never an assignment.
+    if name in body.assigned_names():
+        raise EvalError(f"{what} index {name!r} is assigned by the body", line=index_node.line)
+
+    # The bounds are integers — the fold steps by one integer at a time (``_as_integer``
+    # REFUSES a fractional fixed-point value, a rational with denominator != 1, or a non-whole
+    # float, the same exact-or-refuse gate gcd/lcm/factorial use; its ArithmeticError surfaces
+    # line-tagged at the call node).
+    lo = lo_node._walk(ctx)._as_integer(f"{what} bounds")
+    hi = hi_node._walk(ctx)._as_integer(f"{what} bounds")
+
+    terms = hi - lo + 1
+    if terms <= 0:
+        # Empty range: the additive/multiplicative identity, a whole number at scale 0.
+        return Value.from_real(identity, ctx.mode, 0)
+    if terms > _MAX_RANGE:
+        raise EvalError(
+            f"{what} range exceeds {_MAX_RANGE} terms ({terms} requested)", line=index_node.line
+        )
+
+    def term(k: int) -> Value:
+        # Re-evaluate the body with ``name`` bound to the integer ``k`` (40.19) — same
+        # child-store / CONTINUE_AND_REPORT handling as integral/diff: the body still reads
+        # outer bindings, ``name`` shadows any outer binding of the same name, and a term's
+        # inexactness never aborts mid-fold (the abort, if requested, fires once on the fold's
+        # own result at the outer FuncCall node). The index is materialised at the precision
+        # FLOOR so a raised floor carries through, exactly as integral's bounds do.
+        store = ctx.variables.copy()
+        store.set(name, Value.from_real(k, ctx.mode, ctx.min_fixed_point_precision))
+        return body.evaluate(
+            ctx.mode,
+            ctx.min_fixed_point_precision,
+            now_ns=ctx.now_ns,
+            variables=store,
+            inexact_handling=InexactHandling.CONTINUE_AND_REPORT,
+        )
+
+    acc = term(lo)
+    for k in range(lo + 1, hi + 1):
+        acc = op(acc, term(k))
+    return acc
 
 
 def _step(ctx: EvalContext, x: Value) -> Value:

@@ -106,20 +106,35 @@ def test_roots_land_on_the_grid():
 
 
 def test_aggregates_over_one_dataset():
-    # The variadic statistics over a single dataset 2,4,6: sum totals, avg divides
-    # evenly, max/min/median SELECT an operand verbatim, product multiplies. All exact
-    # because the set divides cleanly at scale 0.
+    # The variadic statistics over a single dataset 2,4,6: avg divides evenly,
+    # max/min/median SELECT an operand verbatim. All exact because the set divides
+    # cleanly at scale 0. (sum/product are no longer in this family — they became the
+    # range-fold special forms, exercised in test_range_sum_and_product.)
     program = _annotated(
         "the aggregate family over the dataset 2, 4, 6",
-        "sum(2, 4, 6)\navg(2, 4, 6)\nmax(2, 4, 6)\nmin(2, 4, 6)\nmedian(2, 4, 6)\nproduct(2, 4, 6)",
+        "avg(2, 4, 6)\nmax(2, 4, 6)\nmin(2, 4, 6)\nmedian(2, 4, 6)",
     )
     assert _values(_calc(program)) == [
-        "12 (exact)",
         "4 (exact)",  # (2+4+6)/3 divides evenly
         "6 (exact)",
         "2 (exact)",
         "4 (exact)",  # the middle of the sorted set
-        "48 (exact)",
+    ]
+
+
+def test_range_sum_and_product():
+    # The Σ/Π range folds (40.19): sum and product re-evaluate the body once per integer
+    # index from lo to hi inclusive. sum is repeated + (exact like the integers it folds);
+    # product over 1..n is the factorial. Both exact here — pure integer arithmetic.
+    program = _annotated(
+        "range summation Σ and product Π over an integer index",
+        "sum(i, 1, 10, i)\nsum(i, 1, 5, i**2)\nproduct(i, 1, 5, i)\nsum(i, 1, 3, 2*i + 1)",
+    )
+    assert _values(_calc(program)) == [
+        "55 (exact)",  # 1+2+...+10 = n(n+1)/2
+        "55 (exact)",  # 1+4+9+16+25, sum of squares
+        "120 (exact)",  # 5! = 1*2*3*4*5
+        "15 (exact)",  # 3+5+7, the body is an expression in i
     ]
 
 
@@ -334,15 +349,15 @@ def test_general_logarithm_refuses_a_bad_base_or_argument():
 
 def test_variables_feed_a_group_of_functions():
     # A shared scope is the reason to group: a and b are assigned once and read by every
-    # following line — the Pythagorean hypotenuse of (3,4), the larger leg, and the sum.
+    # following line — the Pythagorean hypotenuse of (3,4), the larger leg, the smaller leg.
     program = _annotated(
         "two legs feed three functions through one shared scope",
-        "a = 3\nb = 4\nsqrt(a*a + b*b)\nmax(a, b)\nsum(a, b)",
+        "a = 3\nb = 4\nsqrt(a*a + b*b)\nmax(a, b)\nmin(a, b)",
     )
     assert _values(_calc(program)) == [
         "5 (exact)",  # sqrt(9 + 16) = 5
         "4 (exact)",
-        "7 (exact)",
+        "3 (exact)",
     ]
 
 
