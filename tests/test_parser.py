@@ -237,6 +237,23 @@ def test_unknown_function_message():
         parse("foo(1)")
 
 
+def test_unknown_function_suggests_the_nearest_name():
+    # 43.5: a typo'd function name gets a "did you mean" pointing at the closest valid
+    # name, the expression-layer analog of the actionable JSON errors (43.2).
+    with pytest.raises(ParseError, match="unknown function 'sqr'. Did you mean 'sqrt'"):
+        parse("sqr(9)")
+    with pytest.raises(ParseError, match="Did you mean 'asin'"):
+        parse("arcsin(1)")
+
+
+def test_unknown_function_far_miss_gets_no_suggestion():
+    # An unrelated token clears no candidate above the cutoff: no suggestion is offered,
+    # so a wrong "did you mean" never points the caller astray.
+    with pytest.raises(ParseError) as excinfo:
+        parse("xyzzy(1)")
+    assert "Did you mean" not in excinfo.value.message
+
+
 def test_wrong_arity_message():
     with pytest.raises(ParseError, match=r"'sqrt' takes 1 argument\(s\), but 2 given"):
         parse("sqrt(1, 2)")

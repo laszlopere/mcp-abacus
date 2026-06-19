@@ -22,6 +22,7 @@ from enum import Enum
 
 from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.value import Mode, UndefinedVariableError, Value, VariableStore
+from mcp_abacus.suggest import did_you_mean
 
 
 class SolverError(Exception):
@@ -143,7 +144,11 @@ def resolve_algorithm(algorithm: str | None) -> Algorithm:
         if algorithm in _ALGORITHM_ALIASES:
             return _ALGORITHM_ALIASES[algorithm]
         valid = ", ".join(a.value for a in Algorithm)
-        raise SolverError(f"Unknown algorithm: {algorithm!r}. Valid algorithms: {valid}.") from None
+        # 43.5: offer the nearest valid engine (over canonical names + aliases).
+        hint = did_you_mean(algorithm, [a.value for a in Algorithm] + list(_ALGORITHM_ALIASES))
+        raise SolverError(
+            f"Unknown algorithm: {algorithm!r}.{hint} Valid algorithms: {valid}."
+        ) from None
 
 
 def fold_objective(value: Value, objective: Objective) -> Value:

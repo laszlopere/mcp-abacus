@@ -56,6 +56,7 @@ from mcp_abacus.expr.nodes import (
     _arity_ok,
     _describe_arity,
 )
+from mcp_abacus.suggest import did_you_mean
 
 # Loose -> tight; the bitwise rungs sit below additive, ordered | < ^ < & (24.3.2).
 _BINDING_POWER: dict[str, int] = {
@@ -267,7 +268,9 @@ class _Parser:
         if closing.kind != RPAREN:
             raise ParseError(f"expected ',' or ')', got {_describe(closing)}", closing.line)
         if name.lexeme not in FUNCTION_ARITIES:
-            raise ParseError(f"unknown function {name.lexeme!r}", name.line)
+            # 43.5: offer the nearest valid name (sqr -> sqrt) so a typo self-corrects.
+            hint = did_you_mean(name.lexeme, FUNCTION_ARITIES)
+            raise ParseError(f"unknown function {name.lexeme!r}.{hint}", name.line)
         if not _arity_ok(name.lexeme, len(args)):
             lo, hi = FUNCTION_ARITIES[name.lexeme]
             raise ParseError(

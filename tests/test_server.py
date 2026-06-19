@@ -134,6 +134,23 @@ def test_shared_front_end_reports_unknown_mode_and_bad_precision():
     assert mode is None and "non-negative integer" in error
 
 
+def test_unknown_mode_suggests_the_nearest_spelling():
+    # 43.5: a near-miss mode gets a "did you mean" pointing at the closest valid spelling
+    # (canonical name or alias), alongside the full valid list.
+    _, error = _resolve_mode_and_precision("fixedpoint", None)
+    assert "Did you mean 'fixed-point'?" in error
+    _, error = _resolve_mode_and_precision("doubl", None)  # alias near-miss ("double")
+    assert "Did you mean 'double'?" in error
+
+
+def test_unknown_mode_far_miss_gets_no_suggestion():
+    # An unrelated word clears no candidate above the cutoff, so only the valid list is
+    # offered — never a misleading suggestion.
+    _, error = _resolve_mode_and_precision("zzz", None)
+    assert "Did you mean" not in error
+    assert "Valid modes" in error
+
+
 def test_calculate_inexact_handling_is_optional_defaulting_to_continue():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
     schema = tools["calculate"].inputSchema

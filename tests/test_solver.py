@@ -134,3 +134,21 @@ def test_unknown_algorithm_lists_the_valid_algorithms():
     message = excinfo.value.message
     assert "Unknown algorithm" in message
     assert "golden-section-search" in message and "nelder-mead" in message
+
+
+def test_unknown_algorithm_suggests_the_nearest_spelling():
+    # 43.5: a near-miss spelling gets a "did you mean" pointing at the closest engine
+    # (canonical names or aliases), so a typo self-corrects in one turn.
+    with pytest.raises(SolverError) as excinfo:
+        resolve_algorithm("bisecton")  # one letter off "bisection"
+    assert "Did you mean 'bisection'?" in excinfo.value.message
+
+
+def test_unknown_algorithm_far_miss_gets_no_suggestion():
+    # An unrelated word clears no candidate above the cutoff, so NO suggestion is made —
+    # a wrong "did you mean" would be worse than none. Only the valid list is offered.
+    with pytest.raises(SolverError) as excinfo:
+        resolve_algorithm("zzz")
+    message = excinfo.value.message
+    assert "Did you mean" not in message
+    assert "Valid algorithms" in message

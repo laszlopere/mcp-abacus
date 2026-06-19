@@ -20,6 +20,7 @@ from mcp_abacus.expr.lexer import LexError
 from mcp_abacus.expr.nodes import Assign, EvalError, Node, Sequence
 from mcp_abacus.expr.parser import ParseError
 from mcp_abacus.expr.value import (
+    MODE_ALIASES,
     FixedPoint,
     InexactHandling,
     Mode,
@@ -42,6 +43,7 @@ from mcp_abacus.solver import (
     validate_bracket,
     validate_unknown,
 )
+from mcp_abacus.suggest import did_you_mean
 
 
 class _AbacusFastMCP(FastMCP):
@@ -340,7 +342,9 @@ def _resolve_mode_and_precision(
         selected = resolve_mode(mode)
     except ValueError:
         valid = ", ".join(m.value for m in Mode)
-        return None, f"Unknown mode: {mode!r}. Valid modes: {valid}."
+        # 43.5: a typo'd mode gets the nearest valid spelling (over names + aliases).
+        hint = did_you_mean(mode, [m.value for m in Mode] + list(MODE_ALIASES))
+        return None, f"Unknown mode: {mode!r}.{hint} Valid modes: {valid}."
     if min_fixed_point_precision is not None:
         if selected is not Mode.FIXED_POINT:
             return None, (

@@ -2026,7 +2026,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                operators, `**` for power and `xor` for bitwise XOR. Requires
                providing `xor` (word operator or xor(a, b) function) to keep XOR
                reachable once the symbol is gone. No computing-then-explaining.
-    [ ] 43.5.  "Did you mean" on unknown names. Add nearest-match suggestions to
+    [x] 43.5.  "Did you mean" on unknown names. Add nearest-match suggestions to
                the unknown-function / unknown-mode / unknown-algorithm errors
                (sqr->sqrt, arcsin->asin) -- the expression-layer analog of 43.2.
                Use stdlib difflib.get_close_matches over canonical names +
