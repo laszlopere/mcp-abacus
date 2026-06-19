@@ -195,6 +195,9 @@
     population-only, so for the 4·8·15·16·23·42 set I had to multiply by
     sqrt(n/(n−1)) by hand to get the n−1 version. Both conventions are needed
     often enough to be first-class.
+  - hypot(x, …) (Euclidean norm) — the ladder, rafter, and café-distance
+    problems all reduce to √(Σ squares). A hypot avoids spelling out sqrt(a**2 +
+    b**2) and is numerically safer.
 
   Tier 3 — solver / analysis upgrades (bigger lifts, high leverage)
 
