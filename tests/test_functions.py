@@ -539,6 +539,56 @@ def test_comb_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # perm (40.6): falling factorial P(n, k) = n!/(n-k)!, ordered k-permutations
+        # of n, EXACT in every mode — a product of k consecutive integers.
+        ("perm(5, 2)", None, "20 (exact)"),  # fixed-point default
+        ("perm(5, 0)", None, "1 (exact)"),  # P(n, 0) = 1, the empty arrangement
+        ("perm(5, 5)", None, "120 (exact)"),  # P(n, n) = n!
+        ("perm(10, 3)", None, "720 (exact)"),
+        ("perm(52, 5)", None, "311875200 (exact)"),  # ordered five-card deals
+        ("perm(5.00, 2.00)", None, "20 (exact)"),  # whole-valued fixed-point literals are in domain
+        # out-of-range k arranges an impossible selection and is 0...
+        ("perm(5, -1)", None, "0 (exact)"),  # k < 0
+        ("perm(3, 5)", None, "0 (exact)"),  # k > n
+        ("perm(-1, 0)", None, "0 (exact)"),  # negative n: every k >= 0 exceeds n
+        # rational: the exact integer at scale 0, like comb.
+        ("perm(6, 2)", "rational", "30 (exact)"),
+        ("perm(20, 10)", "rational", "670442572800 (exact)"),
+        # binary64: P(n, n) = n! so it tracks factorial — exact while the double
+        # represents the integer precisely, inexact once it cannot.
+        ("perm(5, 2)", "floating-point", "20.0 (exact)"),
+        ("perm(18, 18)", "floating-point", "6402373705728000.0 (exact)"),
+        ("perm(25, 25)", "floating-point", "1.5511210043330986e+25 (inexact)"),
+    ],
+)
+def test_perm(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # A non-integer operand is the gamma-generalized permutation (40.6.1), refused
+        # here in every mode by the integer-domain gate shared with comb/factorial.
+        ("perm(2.5, 2)", None, "perm requires integer operands"),
+        ("perm(5, 2.5)", "floating-point", "perm requires integer operands"),
+        ("perm(5, 1/2)", "rational", "perm requires integer operands"),
+        # The term count k is capped so a huge operand cannot blow up...
+        ("perm(2000, 1001)", None, "perm argument too large (limit 1000)"),
+        ("perm(2000, 1001)", "rational", "perm argument too large (limit 1000)"),
+        # ...and float refuses where P(n, n) = n! overflows a double (~n>170).
+        ("perm(171, 171)", "floating-point", "perm overflows floating-point"),
+    ],
+)
+def test_perm_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # floor (28.23): round toward -inf with an optional ndigits count (default 0).
         # Fixed-point snaps to the grid, always exact.
         ("floor(2.7)", None, "2 (exact)"),

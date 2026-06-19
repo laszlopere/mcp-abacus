@@ -2268,6 +2268,47 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def perm(self, other: "Value") -> "Value":
+        """Falling factorial P(n, k) = n!/(n-k)! (40.6) — the count of ordered
+        k-permutations of an n-set, comb's order-aware twin. BINARY fixed-arity-2
+        (the pow/atan2 shape, 28.20/40.1); ``self`` is n, ``other`` is k.
+
+        DOMAIN integer operands only: both go through ``_as_integer`` (so a
+        fractional fixed-point value, a rational with denominator != 1, or a
+        non-whole float REFUSES — a non-integer argument is the gamma-generalized
+        permutation, deferred to 40.6.1), with same-mode enforced like every binary
+        op. An out-of-range integer k arranges an impossible selection and is 0:
+        ``k < 0`` or ``k > n`` (so a negative n, where every k >= 0 already exceeds
+        n, also folds to 0). Otherwise EXACT in EVERY mode — ``math.perm`` is the
+        product of k consecutive integers, so no rounding. The number of
+        multiplicative terms ``k`` is capped at ``_MAX_FACTORIAL`` so a huge operand
+        cannot lock the process up.
+
+        fixed-point / rational: the exact integer at scale 0, like comb/factorial.
+        floating-point: ``float(P(n, k))``, refusing when that overflows a double
+            and marked exact only when the double represents the integer precisely.
+        """
+        self._same_mode(other, "perm")  # reject mode mixing; exactness is per-mode below
+        n = self._as_integer("perm")
+        k = other._as_integer("perm")
+        if k < 0 or k > n:
+            p = 0
+        else:
+            if k > _MAX_FACTORIAL:
+                raise NotRepresentableError(f"perm argument too large (limit {_MAX_FACTORIAL})")
+            p = math.perm(n, k)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                try:
+                    fl = float(p)
+                except OverflowError:
+                    raise NotRepresentableError("perm overflows floating-point") from None
+                return Value(Mode.FLOATING_POINT, fl, exact=(int(fl) == p))
+            case Mode.FIXED_POINT | Mode.RATIONAL:
+                return Value._from_scaled_int(p, 0, self.mode)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root
         lands exactly on the mode's own grid. A negative operand has no real

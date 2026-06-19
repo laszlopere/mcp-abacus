@@ -1803,10 +1803,15 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      binomial coefficient gamma(n+1)/(gamma(k+1)*gamma(n-k+1)):
                      transcendental (float/fixed-point inexact, rational refuses),
                      built on gamma (40.4.1) and refused where its poles bite.
-    [ ] 40.6.  perm(n, k) — falling factorial n!/(n-k)! (k-permutations of n),
+    [x] 40.6.  perm(n, k) — falling factorial n!/(n-k)! (k-permutations of n),
                BINARY fixed-arity 2 like comb. EXACT for integer n >= k >= 0
                (a product of k consecutive integers); k < 0 or k > n is 0.
-               Non-integer arguments go through gamma (inexact/refuse, per 40.4).
+               A non-integer argument is the gamma-generalized permutation,
+               deferred to 40.6.1.
+        [ ] 40.6.1.  perm(n, k) for NON-INTEGER arguments — the gamma-generalized
+                     permutation gamma(n+1)/gamma(n-k+1): transcendental
+                     (float/fixed-point inexact, rational refuses), built on gamma
+                     (40.4.1) and refused where its poles bite.
     [x] 40.7.  gcd(...) — greatest common divisor, VARIADIC (the sum/max shape,
                math.gcd), EXACT in every mode (pure integer math, no rounding).
                DOMAIN integer-valued operands only — a non-integer (fixed-point

@@ -179,6 +179,7 @@ def test_function_arities_match_the_registry():
         "lcm": (1, None),  # 40.8 — variadic, minimum one operand
         "factorial": (1, 1),  # 40.4 — UNARY, n! for a non-negative integer
         "comb": (2, 2),  # 40.5 — BINARY, binomial coefficient C(n, k)
+        "perm": (2, 2),  # 40.6 — BINARY, k-permutations P(n, k)
         "pct": (2, 2),  # 36.1 — BINARY, p percent of x
         "pct_change": (2, 2),  # 36.1 — BINARY, (new-old)/old
         "bps": (2, 2),  # 36.2 — BINARY, b basis points of x
