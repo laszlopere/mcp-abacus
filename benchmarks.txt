@@ -1,3 +1,7 @@
+2  Mathematical problems.
+   In this session the mcp-abacus should be used to do all the calculations.
+   Show me what calls you made to answer this question.
+
   I'm boxing up 230 home-made cookies into bags of 7 to sell at the fair. How
   many full bags can I make, and how many cookies will be left over for me to
   nibble? 
@@ -83,110 +87,112 @@
   I'm borrowing 15,000 for a car at 6% a year, paying it off in equal monthly
   instalments over four years. How much is each monthly payment? 
 
+  I put €1,000 in a savings account earning 5% a year, compounded annually.
+  How many years until it doubles to €2,000?
 
+  My candle business has €450 of fixed monthly costs and each candle costs €3
+  to make but sells for €12. How many candles must I sell each month to break
+  even?
 
+  I have 40 metres of fencing to make a rectangular vegetable patch against my
+  house wall (only three sides need fencing). What width gives me the biggest
+  area?
 
-1 AI Abacus usage issues.
-  1. First attempt (failed — pi isn't a built-in constant):
-  mode: floating-point
-  expression:
-    r = (500/(2*pi))**(1/3)
-    h = 500/(pi*r**2)
-    area = 2*pi*r**2 + 2*pi*r*h
-    r
-    h
-    area
-  → error: undefined variable: pi
+  I want a cylindrical tin can to hold exactly 500 ml. What radius uses the
+  least metal?
 
-  2. Retry with pi as a literal — gave the surface area:
-  mode: floating-point
-  expression:
-    p = 3.141592653589793
-    r = (500/(2*p))**(1/3)
-    h = 500/(p*r**2)
-    area = 2*p*r**2 + 2*p*r*h
-    r
-    h
-    area
+  A closed cylindrical drum must hold 100 litres. What radius and height
+  minimize the metal used?
 
+  I walk east at 5 km/h from a point; my friend walks north at 4 km/h from 10
+  km east of me. When are we closest, and how close?
 
-2  Mathematical problems.
-   In this session the mcp-abacus should be used to do all the calculations.
-   Show me what calls you made to answer this question.
+  My orchard yields about 50*t - 5*t**2 crates if I wait t weeks (fruit grows
+  then rots). When is the yield highest?
 
-   I put €1,000 in a savings account earning 5% a year, compounded annually.
-   How many years until it doubles to €2,000?
+  I have €1,000 for social and search ads. Reach is roughly 80*sqrt(s) +
+  60*sqrt(g), but I want to penalize blowing the budget. How should I split the
+  spend?
 
-   My candle business has €450 of fixed monthly costs and each candle costs €3
-   to make but sells for €12. How many candles must I sell each month to break
-   even?
+  One friend is at (2, 9) and another at (10, 1) on the map. We want a café
+  that minimizes the longer of our two travel distances squared, roughly the
+  sum of squared distances. Where?
 
-   I have 40 metres of fencing to make a rectangular vegetable patch against my
-   house wall (only three sides need fencing). What width gives me the biggest
-   area?
+  A Uniswap V2 pool holds 1,500.000000000000000000 ETH and
+  4,200,000.000000000000000000 USDC. With the 0.3% swap fee, exactly how much
+  ETH must I sell to receive 100,000.000000000000000000 USDC out — to the full
+  18 decimals?
 
-   I want a cylindrical tin can to hold exactly 500 ml. What radius uses the
-   least metal?
+  What's 0.1 + 0.2 in IEEE-754 double — show me the rounding error.
 
-   A closed cylindrical drum must hold 100 litres. What radius and height
-   minimize the metal used?
+  What's sqrt(2) * sqrt(2) in floating-point vs rational?
 
-   I walk east at 5 km/h from a point; my friend walks north at 4 km/h from 10
-   km east of me. When are we closest, and how close?
+  Solve x**2 - 2 = 0 for x between 1 and 2.
 
-   My orchard yields about 50*t - 5*t**2 crates if I wait t weeks (fruit grows
-   then rots). When is the yield highest?
+  Find x and y that minimize (x-1)**2 + (y+2)**2, x in [0,5], y in [-4,2].
 
-   I have €1,000 for social and search ads. Reach is roughly 80*sqrt(s) +
-   60*sqrt(g), but I want to penalize blowing the budget. How should I split the
-   spend?
+  At what price does demand 100 - 2*p equal supply 20 + 3*p?
 
-   One friend is at (2, 9) and another at (10, 1) on the map. We want a café
-   that minimizes the longer of our two travel distances squared, roughly the
-   sum of squared distances. Where?
+  What interest rate makes a €1,000 loan repaid as €1,200 after 4 years?
 
-   A Uniswap V2 pool holds 1,500.000000000000000000 ETH and
-   4,200,000.000000000000000000 USDC. With the 0.3% swap fee, exactly how much
-   ETH must I sell to receive 100,000.000000000000000000 USDC out — to the full
-   18 decimals?
+  What production level q minimizes my average cost q**2 - 10*q + 40?
 
-   What's 0.1 + 0.2 in IEEE-754 double — show me the rounding error.
+  A 2 m pole casts a shadow. At what sun elevation angle is the shadow exactly
+  3 m long?
 
-   What's sqrt(2) * sqrt(2) in floating-point vs rational?
+  My 8 m rafter needs the roof peak to be 2.5 m above the wall plate. What
+  pitch angle does that require?
 
-   Solve x**2 - 2 = 0 for x between 1 and 2.
+  My coffee comes out at about ninety degrees and the kitchen sits at twenty.
+  It cools fast at first and then slows down, the usual way hot drinks do.
+  After 5 minutes it is 82.1 degrees.  Roughly how many minutes before it's
+  down to a drinkable sixty degrees?
 
-   Find x and y that minimize (x-1)**2 + (y+2)**2, x in [0,5], y in [-4,2].
+  What's the average and standard deviation of 4, 8, 15, 16, 23, 42?
 
-   At what price does demand 100 - 2*p equal supply 20 + 3*p?
+  I've leaned my six-metre ladder against the wall and the feet are about a
+  metre and a half out from the bottom. Roughly what angle is it making with
+  the ground? People say steeper than seventy-five degrees is dodgy.
 
-   What interest rate makes a €1,000 loan repaid as €1,200 after 4 years?
+  What's π to 100 decimal places?
 
-   What production level q minimizes my average cost q**2 - 10*q + 40?
+  Give me the value of ln(10) out to 85 digits.
 
-   A 2 m pole casts a shadow. At what sun elevation angle is the shadow exactly
-   3 m long?
+  You borrow 10,000 dollars and pay it back in 24 equal monthly installments of
+  470 dollars each. What constant monthly interest rate makes the loan balance
+  reach exactly zero on the last payment?  
+    
+  A comet travels an elliptical orbit with eccentricity 0.7. Exactly one quarter
+  of the way through its orbital period after passing closest to the sun, what
+  is its eccentric anomaly in radians?
 
-   My 8 m rafter needs the roof peak to be 2.5 m above the wall plate. What
-   pitch angle does that require?
+  Find the positive number that, when raised to the fifth power, equals seven
+  times the number plus three.
 
-   My coffee comes out at about ninety degrees and the kitchen sits at twenty.
-   It cools fast at first and then slows down, the usual way hot drinks do.
-   After 5 minutes it is 82.1 degrees.  Roughly how many minutes before it's
-   down to a drinkable sixty degrees?
+  You cut four equal squares out of the corners of a 20 by 30 centimeter sheet
+  of cardboard and fold the flaps up into an open box. What side length for the
+  cut-out squares gives the box a volume of exactly 1000 cubic centimeters? Give
+  the smallest such length.
+ 
+  A lifeguard is standing on a straight beach. A swimmer is 40 meters straight
+  out from a point that lies 50 meters down the beach from the lifeguard. The
+  lifeguard runs along the sand at 6 meters per second and swims at 1.5 meters
+  per second. How far down the beach should the lifeguard run before entering
+  the water to reach the swimmer in the least time?
 
-   What's the average and standard deviation of 4, 8, 15, 16, 23, 42?
+  A power cable 25 meters long hangs freely between two towers that are 20
+  meters apart and at the same height. How far below the attachment points does
+  the lowest point of the cable hang?
 
-   I've leaned my six-metre ladder against the wall and the feet are about a
-   metre and a half out from the bottom. Roughly what angle is it making with
-   the ground? People say steeper than seventy-five degrees is dodgy.
+  A hallway 2 meters wide meets another hallway 1.5 meters wide at a right
+  angle. What is the length of the longest thin pole that can be carried flat
+  around the corner?
 
-   What's π to 100 decimal places?
-
-   Give me the value of ln(10) out to 85 digits.
-
-
-
+  A drilling platform sits 6 kilometers off a straight coastline.  The receiving
+  station is onshore, 12 kilometers along the coast from the nearest point on
+  land.  Underwater pipe costs 5 million dollars per kilometer and land pipe
+  costs 3 million. At what point on the shore should the pipe land to make the
+  project cheapest?
 
 
   Tier 1 — things I had to work around this session
