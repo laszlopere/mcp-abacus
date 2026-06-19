@@ -31,6 +31,7 @@ from mcp_abacus.solver import (
     Algorithm,
     SolverError,
     SolverResult,
+    autodetect_variable,
     brent_parabolic,
     nelder_mead,
     resolve_algorithm,
@@ -697,8 +698,10 @@ def solver(
         Field(
             description=(
                 "SINGLE-unknown form: name of the one variable to search for, used "
-                "together with `lower`+`upper`. Give EXACTLY ONE input form: this "
-                "trio, OR `variables` (never both, never neither)."
+                "together with `lower`+`upper`. OPTIONAL: omit it and the solver "
+                "auto-detects the sole free name in the expression (it errors only "
+                "if there is zero or more than one). Give EXACTLY ONE input form: "
+                "this trio, OR `variables` (never both, never neither)."
             )
         ),
     ] = None,
@@ -785,7 +788,9 @@ def solver(
     There are two input forms for the unknowns:
       - SINGLE: `variable` + `lower` + `upper` — one unknown searched over the bracket
         `[lower, upper]` (`lower` must be below `upper`). This is the default
-        golden-section engine.
+        golden-section engine. `variable` may be OMITTED when the expression has
+        exactly one free name; the solver then auto-detects it (e.g. `n` in
+        `12*n - (450 + 3*n)`), needing only `lower` + `upper`.
       - MULTIPLE: `variables` — a dict mapping each unknown name to its `[lower, upper]`
         bracket, e.g. `{"x": [0, 5], "y": [-4, 2]}`. This needs the Nelder-Mead engine
         (`algorithm="nelder-mead"`), which searches all the unknowns jointly.
@@ -844,12 +849,18 @@ def solver(
     try:
         resolved_objective = resolve_objective(objective)
         resolved_algorithm = resolve_algorithm(algorithm)
-        unknowns = _resolve_unknowns(variable, lower, upper, variables, resolved_algorithm)
     except SolverError as exc:
         return _solver_error(exc.message)
     try:
         node = parser.parse(expression)
     except (LexError, ParseError) as exc:
+        return _solver_error(exc.message)
+    try:
+        # Parse first: auto-detecting an omitted `variable` (43.3) needs the AST.
+        unknowns = _resolve_unknowns(
+            variable, lower, upper, variables, resolved_algorithm, node
+        )
+    except SolverError as exc:
         return _solver_error(exc.message)
     floor = min_fixed_point_precision or 0
     try:
@@ -890,16 +901,19 @@ def _resolve_unknowns(
     upper: float | None,
     variables: dict[str, list[float]] | None,
     algorithm: Algorithm,
+    node: Node,
 ) -> list[tuple[str, float, float]]:
     """Normalise the two input forms into the ordered `(name, lower, upper)` list (33.14).
 
     Exactly one form must be given: the scalar `variable` + `lower` + `upper` trio, or
     the `variables` dict of `name -> [lower, upper]`. The `variables` form is
     multivariate and so requires the Nelder-Mead engine — golden-section drives a
-    single unknown only. Raises SolverError on a missing/double form, a malformed
-    `variables` entry, or golden-section asked for multiple unknowns. (Whether each
-    bracket has width, and whether each name occurs in the program, is checked later
-    by validate_bracket / validate_unknown.)
+    single unknown only. In the single form `variable` may be OMITTED, in which case
+    the unknown is auto-detected from `node` as the expression's sole free name (43.3);
+    `lower` + `upper` are still required. Raises SolverError on a missing/double form,
+    a malformed `variables` entry, golden-section asked for multiple unknowns, or an
+    ambiguous/empty auto-detect. (Whether each bracket has width, and whether each name
+    occurs in the program, is checked later by validate_bracket / validate_unknown.)
     """
     has_single = variable is not None or lower is not None or upper is not None
     has_multi = variables is not None
@@ -924,9 +938,11 @@ def _resolve_unknowns(
                 )
             unknowns.append((name, float(bracket[0]), float(bracket[1])))
         return unknowns
-    if variable is None or lower is None or upper is None:
+    if variable is None:
+        variable = autodetect_variable(node)  # 43.3: infer the sole free name
+    if lower is None or upper is None:
         raise SolverError(
-            "No unknown given: pass variable + lower + upper (single), or variables (multiple)."
+            f"No search bracket given: pass lower and upper bounds for {variable!r}."
         )
     return [(variable, float(lower), float(upper))]
 

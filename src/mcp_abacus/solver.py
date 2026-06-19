@@ -186,6 +186,33 @@ def validate_unknown(node: Node, variable: str) -> None:
         )
 
 
+def autodetect_variable(node: Node) -> str:
+    """Infer the sole free variable to solve for, or raise SolverError (43.3).
+
+    When the single-unknown form omits `variable`, the unknown is the one name the
+    program REFERENCES but does not ASSIGN — a program like `12*n - (450 + 3*n)`
+    has exactly one such name (`n`); an assigned name (`r = 0.05`) is a computed
+    constant, not free. Detection is refused unless that free name is unique: zero
+    free names (nothing to solve for) or more than one (the solver cannot guess
+    which is the unknown) raise SolverError telling the caller to name `variable`.
+    This is the same free = referenced - assigned notion `validate_unknown` checks.
+    """
+    free = sorted(node.referenced_names() - node.assigned_names())
+    if len(free) == 1:
+        return free[0]
+    if not free:
+        raise SolverError(
+            "Cannot auto-detect the variable to solve for: the expression has no "
+            "free variable. Name the unknown explicitly via 'variable'."
+        )
+    names = ", ".join(repr(n) for n in free)
+    raise SolverError(
+        f"Cannot auto-detect the variable to solve for: the expression has "
+        f"{len(free)} free variables ({names}). Name the intended unknown "
+        f"explicitly via 'variable'."
+    )
+
+
 # --- the search engines (31.7 golden-section, 33.14 Nelder-Mead) --------------
 # Each engine MINIMISES: the objective folds find-root/find-maximum into a quantity
 # whose LEAST is the answer (fold_objective(), 32.1), so neither engine needs to know

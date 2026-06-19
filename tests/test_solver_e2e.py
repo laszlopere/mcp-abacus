@@ -58,7 +58,9 @@ def _solve(
     arguments = {"expression": expression}
     if variable is not None:
         arguments["variable"] = variable
+    if lower is not None:
         arguments["lower"] = lower
+    if upper is not None:
         arguments["upper"] = upper
     if variables is not None:
         arguments["variables"] = variables
@@ -657,3 +659,99 @@ def test_beale_minimum():
     assert found["x"] == pytest.approx(3.0, abs=1e-3)
     assert found["y"] == pytest.approx(0.5, abs=1e-3)
     assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+# --- 43.3: auto-detecting an omitted `variable` -------------------------------
+# The single-unknown form may omit `variable`; the solver infers it as the
+# expression's sole free name (referenced but not assigned), needing only the
+# lower+upper bracket. Detection is refused when it is not unique (zero or >1).
+
+
+def test_autodetect_single_variable():
+    program = _annotated(
+        "find-root of 12*n - (450 + 3*n) with `variable` OMITTED; the sole free\n"
+        "name n is auto-detected. 9n = 450 -> n = 50",
+        "12*n - (450 + 3*n)",
+    )
+    payload = _solve(program, lower=0, upper=1000)
+    assert payload["error"] is None
+    assert payload["variable"] == "n"
+    assert _num(payload["solution"]) == pytest.approx(50.0, abs=1e-6)
+
+
+def test_autodetect_excludes_assigned_constants():
+    # A program whose assignment lines set r and p leaves n as the only free name,
+    # so auto-detect picks n even though three names appear: p*(1+r)**n = 2000.
+    program = _annotated(
+        "find-root of p*(1+r)**n - 2000 with r, p set by assignment lines and\n"
+        "`variable` omitted; only the unassigned n is free. 1000*1.05**n = 2000",
+        "r = 0.05\np = 1000\np * (1 + r)**n - 2000",
+    )
+    payload = _solve(program, lower=0, upper=100)
+    assert payload["error"] is None
+    assert payload["variable"] == "n"
+    # log(2)/log(1.05) = 14.2067...
+    assert _num(payload["solution"]) == pytest.approx(14.2067, abs=1e-3)
+
+
+def test_autodetect_with_brent_and_minimum():
+    # Detection is independent of engine and objective: a parabola with its sole
+    # free name x, minimised via brent-parabolic, `variable` omitted. min at x = 2.
+    program = _annotated(
+        "find-minimum of (x - 2)**2 + 1 with `variable` omitted; x auto-detected,\n"
+        "brent-parabolic engine. minimum at x = 2",
+        "(x - 2)**2 + 1",
+    )
+    payload = _solve(
+        program, lower=-5, upper=5, objective="find-minimum", algorithm="brent-parabolic"
+    )
+    assert payload["error"] is None
+    assert payload["variable"] == "x"
+    assert _num(payload["solution"]) == pytest.approx(2.0, abs=1e-3)
+
+
+def test_autodetect_ambiguous_multiple_free_names():
+    program = _annotated(
+        "two free names a and b: auto-detect is ambiguous and must be refused,\n"
+        "telling the caller to name `variable`",
+        "a + b",
+    )
+    payload = _solve(program, lower=0, upper=1)
+    assert payload["error"] is not None
+    assert "auto-detect" in payload["error"]
+    assert "'a'" in payload["error"] and "'b'" in payload["error"]
+
+
+def test_autodetect_no_free_name():
+    program = _annotated(
+        "a constant expression has no free name; auto-detect must be refused",
+        "2 + 2",
+    )
+    payload = _solve(program, lower=0, upper=1)
+    assert payload["error"] is not None
+    assert "no free variable" in payload["error"]
+
+
+def test_autodetect_detected_but_no_bracket():
+    # The unknown is inferred but the single form still needs a bracket; the error
+    # names the detected variable so the caller knows what to bound.
+    program = _annotated(
+        "n is auto-detected but lower+upper are missing; the error names n",
+        "12*n - 450",
+    )
+    payload = _solve(program)
+    assert payload["error"] is not None
+    assert "No search bracket" in payload["error"]
+    assert "'n'" in payload["error"]
+
+
+def test_explicit_variable_still_works():
+    # Regression: passing `variable` explicitly is unchanged by auto-detect.
+    program = _annotated(
+        "explicit variable n is honoured as before. 9n = 450 -> n = 50",
+        "12*n - (450 + 3*n)",
+    )
+    payload = _solve(program, variable="n", lower=0, upper=1000)
+    assert payload["error"] is None
+    assert payload["variable"] == "n"
+    assert _num(payload["solution"]) == pytest.approx(50.0, abs=1e-6)

@@ -2009,7 +2009,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                    raw stack trace.
                  - return isError=True with descriptive TextContent so the model
                    gets the message instead of the loop crashing; validate early.
-    [ ] 43.3.  Simplify the solver calls. For single-variable solves, if
+    [x] 43.3.  Simplify the solver calls. For single-variable solves, if
                `variable` is omitted, auto-detect the sole free name in the
                expression (12*n - (450 + 3*n) has exactly one). This won't fix
                malformed JSON on its own, but it removes the most error-prone
