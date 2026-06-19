@@ -173,6 +173,7 @@ def test_function_arities_match_the_registry():
         "max": (1, None),
         "min": (1, None),
         "median": (1, None),
+        "clamp": (3, 3),  # 40.21 — TERNARY, constrain x to [lo, hi]
         "variance": (1, None),
         "stddev": (1, None),
         "gcd": (1, None),  # 40.7 — variadic, minimum one operand

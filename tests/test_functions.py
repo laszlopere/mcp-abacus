@@ -589,6 +589,46 @@ def test_perm_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # clamp (40.21): constrain x to [lo, hi] = min(hi, max(lo, x)). SELECTION not
+        # math — returns one of the three operands verbatim, so EXACT in every mode and
+        # carrying the chosen operand's own scale.
+        ("clamp(5, 0, 10)", None, "5 (exact)"),  # within range -> x
+        ("clamp(-3, 0, 10)", None, "0 (exact)"),  # below -> lo
+        ("clamp(15, 0, 10)", None, "10 (exact)"),  # above -> hi
+        ("clamp(0, 0, 10)", None, "0 (exact)"),  # at lo boundary
+        ("clamp(10, 0, 10)", None, "10 (exact)"),  # at hi boundary
+        ("clamp(2.50, 0, 10)", None, "2.50 (exact)"),  # within -> x kept at its own scale
+        ("clamp(15, 0, 2.5)", None, "2.5 (exact)"),  # above -> hi kept at its own scale
+        ("clamp(1.5, 1.50, 3)", None, "1.5 (exact)"),  # bounds compare across scales (1.5 == 1.50)
+        # rational: exact selection, no arithmetic.
+        ("clamp(5, 0, 10)", "rational", "5 (exact)"),
+        ("clamp(7/2, 1, 3)", "rational", "3 (exact)"),  # 3.5 clamped down to hi
+        # floating-point: still pure selection; the chosen operand carries binary64's flag.
+        ("clamp(0.1 + 0.2, 0, 1)", "floating-point", "0.30000000000000004 (inexact)"),
+    ],
+)
+def test_clamp(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # DOMAIN lo <= hi: an inverted range is meaningless and refuses in every mode.
+        ("clamp(5, 10, 0)", None, "clamp requires lo <= hi"),
+        ("clamp(5, 10, 0)", "rational", "clamp requires lo <= hi"),
+        ("clamp(5, 10, 0)", "floating-point", "clamp requires lo <= hi"),
+    ],
+)
+def test_clamp_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # floor (28.23): round toward -inf with an optional ndigits count (default 0).
         # Fixed-point snaps to the grid, always exact.
         ("floor(2.7)", None, "2 (exact)"),

@@ -1956,6 +1956,27 @@ class Value:
         two = Value._from_scaled_int(2, 0, self.mode)
         return ordered[mid - 1].add(ordered[mid]).div(two)
 
+    def clamp(self, lo: "Value", hi: "Value") -> "Value":
+        """Constrain x to the range [lo, hi] = min(hi, max(lo, x)) (40.21) — TERNARY
+        fixed-arity-3; ``self`` is x, ``lo``/``hi`` the bounds.
+
+        SELECTION, not math, like max/min (28.2/28.3): it never computes, returning
+        whichever of the three operands applies VERBATIM — so the result carries that
+        operand's own scale and exactness, never rounds, and is EXACT in EVERY mode
+        (the sign stance, 40.9). Comparison is value-only (``_compare``,
+        same-mode-enforced across all three), so a fixed-point bound compares across
+        scales. DOMAIN ``lo <= hi``: an inverted range is meaningless and REFUSES. x
+        below lo gives lo, above hi gives hi, otherwise x is returned untouched (a
+        boundary tie returns the bound's value via x, x being within range).
+        """
+        if lo._compare(hi, "clamp") > 0:
+            raise NotRepresentableError("clamp requires lo <= hi")
+        if self._compare(lo, "clamp") < 0:  # x < lo
+            return lo
+        if self._compare(hi, "clamp") > 0:  # x > hi
+            return hi
+        return self
+
     def variance(self, *others: "Value") -> "Value":
         """POPULATION variance (28.8) — VARIADIC; sum of squared deviations / n.
 

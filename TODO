@@ -1903,7 +1903,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (the sum shape), an ordinary value-taking operand-method (not
                solver-adjacent). Every real allowed. Inherits sqrt's stance (19.5.2):
                inexact in float/fixed-point, rational exact only for a perfect square.
-    [ ] 40.21. clamp(x, lo, hi) — constrain x to [lo, hi] = min(hi, max(lo, x)),
+    [x] 40.21. clamp(x, lo, hi) — constrain x to [lo, hi] = min(hi, max(lo, x)),
                TERNARY fixed-arity 3. EXACT in every mode (comparison + selection, no
                arithmetic — the sign(x) stance, 40.9), works on any value. DOMAIN
                lo <= hi (else refuse).
