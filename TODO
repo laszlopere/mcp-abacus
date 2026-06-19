@@ -1742,27 +1742,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                grammar stays the default so existing callers are unaffected.
 
 
-[x] 39.  SOLVER REQUIRES min_fixed_point_precision IN FIXED-POINT MODE  (decided
-         2026-06-16. Root cause of a real failure: a caller invokes `solver` with the
-         default fixed-point mode and no precision, so the search variable is floored
-         to scale 0 — integer-only. The bracket cannot resolve a non-integer root, so
-         golden-section does 0 useful iterations and returns a silently WRONG integer
-         guess, e.g. x**2 - 2 over [1,2] -> "x = 1", value "-1 (exact)", error null —
-         no failure surfaced. The fix is to make the precision mandatory exactly where
-         it is needed.)
-    [x] 39.1.  Keep fixed-point as the solver's default mode, but REQUIRE
-               min_fixed_point_precision when the mode is fixed-point: error if it is
-               missing, rather than silently searching at scale 0. The error names the
-               argument (and can point at floating-point as the alternative).
-    [x] 39.2.  Other modes are unaffected: floating-point and rational have sub-unit
-               resolution natively and need no precision, so the argument stays
-               OPTIONAL (and, as today, invalid) outside fixed-point mode. `calculate`
-               and `analyze` are unchanged — this requirement is solver-only.
-    [x] 39.3.  STILL TO PLAN: exact error wording; whether to suggest a concrete
-               precision or steer to floating-point; tests for the fixed-point-without-
-               precision refusal and that float/rational still solve precision-free.
-
-
 [ ] 40.  TIER 2 FUNCTIONS
     [x] 40.1.  atan2(y, x) — correct-quadrant angle; atan alone can't
                disambiguate.
