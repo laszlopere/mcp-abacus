@@ -629,6 +629,48 @@ def test_clamp_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # lerp (40.22): linear interpolation a + (b - a)*t. Plain ARITHMETIC, so it
+        # follows the avg/division stance — endpoints land exactly, the interior may
+        # round in fixed-point/float.
+        ("lerp(0, 10, 0.5)", None, "5.0 (exact)"),  # midpoint
+        ("lerp(0, 10, 0)", None, "0 (exact)"),  # t=0 returns a
+        ("lerp(0, 10, 1)", None, "10 (exact)"),  # t=1 returns b
+        ("lerp(2, 8, 0.25)", None, "3.50 (exact)"),
+        ("lerp(10, 0, 0.5)", None, "5.0 (exact)"),  # b below a interpolates down
+        ("lerp(0, 10, 2)", None, "20 (exact)"),  # t outside [0, 1] extrapolates
+        # fixed-point MAY round where the *t multiply leaves the grid (1/3 at scale 0).
+        (
+            "lerp(0, 1, 1/3)",
+            None,
+            "0 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 0.3333)",
+        ),
+        # rational is EXACT — the same interior point keeps its fraction.
+        ("lerp(0, 1, 1/3)", "rational", "1/3 (exact)"),
+        ("lerp(0, 10, 7/3)", "rational", "70/3 (exact)"),  # exact extrapolation
+        # floating-point always carries binary64's inexact flag.
+        ("lerp(0, 10, 0.5)", "floating-point", "5.0 (inexact)"),
+    ],
+)
+def test_lerp(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "floor", "value"),
+    [
+        # With a precision floor the fixed-point interior shows its rounding: the true
+        # midpoint-third is 4, but 1/3 rounds, so 2 + 6*0.3333 lands at 3.9998 (40.22).
+        ("lerp(2, 8, 1/3)", 4, "3.9998 (inexact, rounded to 4 decimals)"),
+    ],
+)
+def test_lerp_fixed_point_rounds_with_a_precision_floor(expression, floor, value):
+    assert _value(expression, None, floor) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # floor (28.23): round toward -inf with an optional ndigits count (default 0).
         # Fixed-point snaps to the grid, always exact.
         ("floor(2.7)", None, "2 (exact)"),

@@ -107,6 +107,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "min": Value.min_,  # 28.3 — variadic; mirror of max (smallest)
     "median": Value.median,  # 28.7 — variadic; order-only, odd selects (exact), even averages
     "clamp": Value.clamp,  # 40.21 — ternary; min(hi, max(lo, x)) selection, exact, refuses lo>hi
+    "lerp": Value.lerp,  # 40.22 — ternary; linear interpolation a+(b-a)*t, arithmetic stance
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
@@ -236,6 +237,8 @@ FUNCTION_HELP: dict[str, str] = {
     "median": "middle operand by value; odd count exact, even averages the two middles",
     "clamp": "constrain x to [lo, hi] = min(hi, max(lo, x)); selection not math, exact in every "
     "type, carries the chosen operand verbatim, refuses lo>hi",
+    "lerp": "linear interpolation a+(b-a)*t; exact in rational, may round in fixed-point/float, "
+    "t unrestricted (outside [0,1] extrapolates)",
     "variance": "population variance, sum of squared deviations / n",
     "stddev": "population standard deviation, sqrt of variance",
     "gcd": "greatest common divisor of the operands; integer-only, sign-dropped, exact everywhere",

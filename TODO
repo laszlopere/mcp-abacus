@@ -1907,7 +1907,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                TERNARY fixed-arity 3. EXACT in every mode (comparison + selection, no
                arithmetic — the sign(x) stance, 40.9), works on any value. DOMAIN
                lo <= hi (else refuse).
-    [ ] 40.22. lerp(a, b, t) — linear interpolation a + (b - a)*t, TERNARY fixed-arity
+    [x] 40.22. lerp(a, b, t) — linear interpolation a + (b - a)*t, TERNARY fixed-arity
                3. Plain arithmetic (no sqrt), so the avg/division stance: EXACT in
                rational, may round in fixed-point/float. t unrestricted (t outside
                [0, 1] extrapolates).

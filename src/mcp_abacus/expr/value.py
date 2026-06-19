@@ -1977,6 +1977,19 @@ class Value:
             return hi
         return self
 
+    def lerp(self, b: "Value", t: "Value") -> "Value":
+        """Linear interpolation a + (b - a)*t (40.22) — TERNARY fixed-arity-3;
+        ``self`` is a (the t=0 endpoint), ``b`` the t=1 endpoint, ``t`` the fraction.
+
+        Plain ARITHMETIC, not selection: composed straight from sub/mul/add, so it
+        inherits their per-mode stance exactly (the avg/division family, 28.4) —
+        EXACT in rational, and MAY ROUND in fixed-point/float where the ``*t``
+        multiply leaves the grid; same-mode is enforced by the underlying ops. ``t``
+        is unrestricted: t in [0, 1] interpolates between the endpoints, t outside
+        extrapolates past them (t=0 gives a, t=1 gives b).
+        """
+        return self.add(b.sub(self).mul(t))
+
     def variance(self, *others: "Value") -> "Value":
         """POPULATION variance (28.8) — VARIADIC; sum of squared deviations / n.
 
