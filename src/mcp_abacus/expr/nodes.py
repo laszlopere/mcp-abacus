@@ -73,6 +73,7 @@ _BINARY_FUNCS: dict[str, Callable[[Value, Value], Value]] = {
 # parser's concern; both consult this table (the parser via FUNCTION_ARITIES).
 _FUNCS: dict[str, Callable[..., Value]] = {
     "abs": Value.abs_,  # 22.4.1 — exact magnitude in every mode (shape of neg())
+    "sign": Value.sign,  # 40.9 — signum -1/0/+1; exact classification (float keeps binary64 flag)
     "sqrt": Value.sqrt,  # 22.4.2 — irrational, inexact except on the mode's grid
     "cbrt": Value.cbrt,  # 28.21 — cube root; odd root so negatives OK, inexact except perfect cubes
     "pow": Value.pow,  # 28.20 — binary; the call form of **, reuses Value.pow (fixed-arity 2)
@@ -173,6 +174,8 @@ CONSTANT_NAMES: frozenset[str] = frozenset({"pi", "e"})
 # (the section prepends it); the model fills in the prose.
 FUNCTION_HELP: dict[str, str] = {
     "abs": "absolute value; exact in every type",
+    "sign": "signum -1/0/+1 by the operand's sign; an exact classification (works on any value), "
+    "float keeps the binary64 inexact flag",
     "sqrt": "square root; refuses negatives, inexact except on the type's grid "
     "(rational needs a perfect square)",
     "cbrt": "cube root; negatives OK (odd root), inexact except on the type's grid "

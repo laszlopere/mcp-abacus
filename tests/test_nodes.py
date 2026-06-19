@@ -140,6 +140,7 @@ def test_function_arities_match_the_registry():
     # (1, 1), binary pow (2, 2), variadic sum (1, None), nullaries (0, 0) (29.2).
     assert FUNCTION_ARITIES == {
         "abs": (1, 1),
+        "sign": (1, 1),  # 40.9 — UNARY signum
         "sqrt": (1, 1),
         "cbrt": (1, 1),
         "pow": (2, 2),  # BINARY — fixed arity 2 (28.20); atan2 is the other (40.1)

@@ -1816,7 +1816,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                every mode via lcm(a, b) = |a*b| / gcd(a, b) folded across the
                operands. Same integer-only DOMAIN and refusal as gcd; any zero
                operand makes lcm 0.
-    [ ] 40.9.  sign(x) — signum, UNARY: -1, 0, or +1 by the operand's sign.
+    [x] 40.9.  sign(x) — signum, UNARY: -1, 0, or +1 by the operand's sign.
                EXACT in every mode (a comparison to zero, not arithmetic, so it
                works on ANY value, integer or not — unlike gcd/lcm). Result type
                follows the mode (the fixed-point/rational/float spelling of the

@@ -1581,6 +1581,36 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def sign(self) -> "Value":
+        """Signum (40.9) — UNARY classification: -1, 0, or +1 by the operand's sign,
+        in the mode's own spelling of those three integers.
+
+        A COMPARISON to zero, not arithmetic, so unlike gcd/lcm it works on ANY value
+        — integer or not — and never leaves the grid. The DECISION (40.9) is that the
+        result is EXACT regardless of the operand's flag: it does NOT carry the
+        inexact flag the way ``abs`` does, because ``abs`` transforms the value (so an
+        inexact input stays inexact) whereas ``sign`` reports the sign of the STORED
+        value, which is certain — one of three exactly-representable integers. So an
+        inexact operand still yields an exact sign in fixed-point and rational.
+        Floating-point is the lone exception: like every binary64 result here (cf.
+        ``gcd``) it carries the unconditional inexact flag, even though -1.0/0.0/+1.0
+        are representable. ``sign(0)`` is 0 (and float ``-0.0`` classifies as 0).
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                s = (self.payload > 0.0) - (self.payload < 0.0)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                m = self.payload.mantissa
+                s = (m > 0) - (m < 0)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                s = (self.payload > 0) - (self.payload < 0)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+        return Value._from_scaled_int(s, 0, self.mode)
+
     @staticmethod
     def _as_ndigits(value: "Value") -> int:
         """Read the optional ``ndigits`` argument of the rounding family as a Python int.

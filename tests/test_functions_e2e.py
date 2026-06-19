@@ -1122,3 +1122,65 @@ def test_payment_over_zero_periods_divides_by_zero():
     payload = _calc(program, floor=2)
     assert payload["values"] is None
     assert payload["error"] == "fixed-point division by zero"
+
+
+def test_sign_classifies_by_the_operands_sign():
+    # sign (40.9) is a classification, not arithmetic: it maps any operand to -1, 0 or
+    # +1 by its sign, so it works on a fraction as readily as a whole number. Exact in
+    # fixed-point because the three results are whole numbers on the grid.
+    program = _annotated(
+        "sign maps positive/negative/zero (and a fraction) to +1/-1/0",
+        "sign(5)\nsign(-3)\nsign(0)\nsign(2.50)\nsign(-0.01)",
+    )
+    assert _values(_calc(program)) == [
+        "1 (exact)",
+        "-1 (exact)",
+        "0 (exact)",
+        "1 (exact)",  # a fractional value classifies fine — not integer-only like gcd
+        "-1 (exact)",
+    ]
+
+
+def test_sign_of_an_inexact_operand_is_still_exact():
+    # The 40.9 DECISION: sign does NOT carry the operand's inexact flag the way abs
+    # does. 1/3 rounds to an inexact 0.33, but its sign is certainly +1 — a comparison
+    # to zero, not a transform of the value — so sign reads exact even though the
+    # operand it classified is inexact.
+    program = _annotated(
+        "an inexact 1/3 still has an exact sign (+1)",
+        "x = 1 / 3\nx\nsign(x)",
+    )
+    assert _values(_calc(program, floor=2)) == [
+        "0.33 (inexact, rounded to 2 decimals)",  # the operand is inexact
+        "1 (exact)",  # but its sign is certain
+    ]
+
+
+def test_sign_in_rational_is_exact():
+    # In rational mode sign classifies a true fraction with no rounding, returning the
+    # exact whole numbers -1/0/+1.
+    program = _annotated(
+        "rational sign of a fraction is an exact whole number",
+        "sign(7/2)\nsign(-7/2)\nsign(0)",
+    )
+    assert _values(_calc(program, mode="rational")) == [
+        "1 (exact)",
+        "-1 (exact)",
+        "0 (exact)",
+    ]
+
+
+def test_sign_in_floating_point_carries_the_inexact_flag():
+    # Floating-point is the lone exception to sign's exactness: like every binary64
+    # result here (cf. gcd) it carries the unconditional inexact flag, even though
+    # -1.0/0.0/+1.0 are exactly representable. A negative zero classifies as 0.
+    program = _annotated(
+        "floating-point sign is -1.0/0.0/+1.0, flagged inexact; -0.0 is 0",
+        "sign(5)\nsign(-3)\nsign(0)\nsign(-0.0)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "1.0 (inexact)",
+        "-1.0 (inexact)",
+        "0.0 (inexact)",
+        "0.0 (inexact)",  # -0.0 classifies as 0
+    ]
