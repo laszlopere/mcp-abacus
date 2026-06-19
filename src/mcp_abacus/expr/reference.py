@@ -177,6 +177,8 @@ def _solver_section() -> str:
             "  bisection              single unknown, find-root ONLY: scans the bracket for a",
             "                         sign change and halves it. Robust; the endpoints need",
             "                         not already straddle zero.",
+            "  ridders                single unknown, find-root ONLY: same sign-change bracket",
+            "                         as bisection but an exponential-fit step; converges faster.",
             "  nelder-mead            n unknowns, walks a downhill simplex; bounds-clamped to",
             "                         each bracket. The only engine for the variables form.",
             "",

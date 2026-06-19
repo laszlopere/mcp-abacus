@@ -37,6 +37,7 @@ from mcp_abacus.solver import (
     nelder_mead,
     resolve_algorithm,
     resolve_objective,
+    ridders,
     search,
     validate_bracket,
     validate_unknown,
@@ -750,9 +751,9 @@ def solver(
         Field(
             description=(
                 "Search engine: 'golden-section-search' (default, single-variable), "
-                "'brent-parabolic' (single-variable), 'bisection' (single-variable, "
-                "find-root only — brackets a sign change), or 'nelder-mead' (required "
-                "for the `variables` form)."
+                "'brent-parabolic' (single-variable), 'bisection' or 'ridders' "
+                "(single-variable, find-root only — bracket a sign change; ridders "
+                "converges faster), or 'nelder-mead' (required for the `variables` form)."
             )
         ),
     ] = None,
@@ -808,12 +809,13 @@ def solver(
     `algorithm` (optional) names the search engine — "golden-section-search" (the
     default, single-variable), "brent-parabolic" (single-variable too, parabolic
     interpolation with a golden-section fallback — usually faster on smooth extrema),
-    "bisection" (single-variable, find-root ONLY — brackets a sign change and halves
-    it; robust, and it scans the bracket for a sign change so the endpoints need not
-    already straddle zero), or "nelder-mead" (multivariate, a bounds-clamped downhill
-    simplex). The three single-variable engines solve only the SINGLE form; the
-    `variables` form requires "nelder-mead". (`golden`, `brent`, `bisect`, `simplex`
-    and a few other spellings are accepted too.)
+    "bisection" or "ridders" (single-variable, find-root ONLY — both bracket a sign
+    change and need not have straddling endpoints, since they scan the bracket for one;
+    bisection halves the bracket, ridders takes a faster exponential-fit step), or
+    "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The four
+    single-variable engines solve only the SINGLE form; the `variables` form requires
+    "nelder-mead". (`golden`, `brent`, `bisect`, `ridder`, `simplex` and a few other
+    spellings are accepted too.)
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
     in that numeric type and the found value is reported in it — with ONE solver-only
@@ -893,6 +895,10 @@ def solver(
             # single-variable root finder — _resolve_unknowns guaranteed one unknown
             name, lo, hi = unknowns[0]
             result = bisection(node, name, lo, hi, selected, floor, resolved_objective)
+        elif resolved_algorithm is Algorithm.RIDDERS:
+            # single-variable root finder — _resolve_unknowns guaranteed one unknown
+            name, lo, hi = unknowns[0]
+            result = ridders(node, name, lo, hi, selected, floor, resolved_objective)
         else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
             name, lo, hi = unknowns[0]
             result = search(node, name, lo, hi, selected, floor, resolved_objective)

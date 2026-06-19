@@ -9,8 +9,9 @@ looks for; the `algorithm` argument names HOW it searches. The engines (TODO 33)
 golden-section search and Brent's parabolic minimiser drive ONE unknown over a bracket;
 Nelder-Mead (33.14) walks a simplex over n unknowns — multivariate, bounds-clamped to
 each bracket; all three minimise the same folded objective, so every objective works on
-any of them. Bisection (33.1) is the odd one out — a find-root-only engine that brackets
-a sign change of the raw signed expression rather than minimising |expr|.
+any of them. Bisection (33.1) and Ridders (33.5) are the odd ones out — find-root-only
+engines that bracket a sign change of the raw signed expression rather than minimising
+|expr| (bisection halves the bracket, Ridders takes an exponential-fit step).
 """
 
 import math
@@ -59,14 +60,16 @@ class Algorithm(Enum):
     (33.12), a faster sibling that fits a parabola through the best three points and
     falls back to a golden-section step; ``BISECTION`` is the single-variable root
     finder (33.1) that brackets a sign change and halves it — robust, but find-root
-    only (an extremum has no sign change to straddle); ``NELDER_MEAD`` is the
-    multivariate downhill simplex (33.14). The enum value is the string reported in
-    the reply's ``algorithm`` field (32.3).
+    only (an extremum has no sign change to straddle); ``RIDDERS`` is its superlinear
+    sibling (33.5), the same bracket but an exponential-fit step instead of the
+    midpoint; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The enum
+    value is the string reported in the reply's ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
     BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
     BISECTION = "bisection"  # one unknown, halve a sign-changing bracket (root only)
+    RIDDERS = "ridders"  # one unknown, exponential-fit on a sign-changing bracket (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -116,6 +119,8 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "parabolic": Algorithm.BRENT_PARABOLIC,
     "bisect": Algorithm.BISECTION,
     "binary-search": Algorithm.BISECTION,
+    "ridder": Algorithm.RIDDERS,
+    "ridders-method": Algorithm.RIDDERS,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -227,9 +232,10 @@ def autodetect_variable(node: Node) -> str:
 # the active mode — each candidate is materialised as a mode-faithful Value, the
 # program evaluated, and its Value reduced back to a float to compare. Golden-section
 # and Brent shrink a 1-D bracket; Nelder-Mead walks an n-vertex simplex over n unknowns.
-# Bisection (33.1) is the exception: it does NOT minimise but brackets a SIGN CHANGE of
-# the raw signed expression and halves it, so it is find-root only. The reply names
-# which ran (Algorithm, 32.3) so the engines are distinguishable.
+# Bisection (33.1) and Ridders (33.5) are the exceptions: they do NOT minimise but
+# bracket a SIGN CHANGE of the raw signed expression — bisection halves it, Ridders takes
+# an exponential-fit step — so both are find-root only. The reply names which ran
+# (Algorithm, 32.3) so the engines are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _GOLDEN = (3 - 5**0.5) / 2  # 0.382..., the complementary golden fraction — Brent's
@@ -841,6 +847,197 @@ def bisection(
         variable,
         objective,
         Algorithm.BISECTION.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Ridders' method (33.5) ---------------------------------------------------
+# The superlinear sibling of bisection: same SIGN-CHANGE bracket, but instead of
+# halving it, each step fits an EXPONENTIAL through the two ends and the midpoint and
+# solves that fit for its root in closed form — a point guaranteed to stay inside the
+# bracket, so it keeps bisection's robustness while converging at order ~1.84 (roughly
+# √2 per evaluation, vs bisection's one bit per step). Find-root only, like bisection,
+# and it reuses bisection's machinery exactly: the coarse sign-change scan (so the
+# endpoints need not already straddle), the candidate eval / best-tracking, the
+# grid / float-snap polish, the 2-second wall-clock and iteration caps, and the same
+# no-evaluation / no-sign-change / off-grid error paths. The two differ ONLY in the
+# inner refinement: bisection takes the midpoint, Ridders takes the exponential-fit root.
+
+_RIDDERS_SCAN_CELLS = 64  # coarse grid the initial sign-change hunt samples across
+
+
+def ridders(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Ridders' method root finder for the unknown over ``[lower, upper]`` (33.5).
+
+    A faster-converging peer of :func:`bisection`: it brackets the SAME sign change but
+    refines it with Ridders' exponential fit rather than halving. Given a straddling
+    ``[xl, xh]`` it evaluates the midpoint ``xm`` and forms the next estimate
+    ``xnew = xm + (xm - xl)·sign(fl - fh)·fm / sqrt(fm² - fl·fh)`` — the exact root of an
+    exponential through the three points, and provably inside ``[xl, xh]`` (``|fm/s| ≤ 1``
+    since ``fl·fh < 0``). The bracket is then re-formed around ``xnew`` from whichever pair
+    still straddles, so the root stays bracketed throughout and convergence is superlinear
+    (order ~1.84).
+
+    Find-root ONLY (an extremum has no sign change to bracket) — any other objective is a
+    SolverError. Everything else is shared with :func:`bisection` exactly: the caller's
+    endpoints need NOT straddle zero (a coarse ``_RIDDERS_SCAN_CELLS`` scan finds the first
+    sign-changing cell), a DOMAIN error yields no signed value and stops the refinement
+    while a STRUCTURAL failure propagates as an EvalError, the 2-second wall-clock and
+    iteration caps bound the search, and the grid / float-snap polish lands a
+    grid-representable root exactly.
+
+    Returns the best candidate as a SolverResult. Raises SolverError on the same
+    conditions as :func:`bisection`: the program evaluates nowhere in the bracket, NO sign
+    change exists anywhere in it (the distinct message), or the straddled root is not
+    representable on the mode's grid.
+    """
+    if objective is not Objective.FIND_ROOT:
+        raise SolverError(
+            f"The ridders algorithm only finds roots (it brackets a sign change), so "
+            f"objective {objective.value!r} is not supported. Use golden-section or "
+            f"brent-parabolic with that objective for an extremum."
+        )
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float | None:
+        # The SIGNED expression value at x (for the sign-change tests), or None on a
+        # DOMAIN error; tracks the best |expr| seen as a side effect. Identical to
+        # bisection's, so the polish and final result reuse its bookkeeping.
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return None  # a domain error at THIS candidate — no signed value here
+        signed = raw.to_float()
+        obj = abs(signed)  # = fold_objective(raw, FIND_ROOT).to_float(), the |expr| fold
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return signed
+
+    # Coarse scan for the first sign-changing cell, exactly as in bisection — but keep
+    # BOTH endpoint values (fl, fh), since Ridders' fit needs them, not just the lower.
+    timed_out = False
+    width = upper - lower
+    xs = [lower + width * k / _RIDDERS_SCAN_CELLS for k in range(_RIDDERS_SCAN_CELLS + 1)]
+    fxs: list[float | None] = []
+    for x in xs:
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        fxs.append(evaluate_objective(x))
+    a: float | None = None
+    b: float | None = None
+    fa = fb = 0.0
+    for i in range(len(fxs) - 1):
+        left, right = fxs[i], fxs[i + 1]
+        if left is None or right is None:
+            continue
+        if left == 0.0:  # an exact root sitting on a scan node — no bracket to refine
+            a = b = xs[i]
+            fa = fb = left
+            break
+        if (left < 0) != (right < 0):  # opposite signs straddle a root
+            a, b, fa, fb = xs[i], xs[i + 1], left, right
+            break
+
+    iterations = 0
+    if a is not None and b is not None and not timed_out:
+        xl, xh, fl, fh = a, b, fa, fb
+        # Refine with Ridders' exponential fit, keeping the root bracketed throughout.
+        # The bracket can become unordered (xl > xh) after a re-form, so the width test
+        # and midpoint use abs / the mean, both order-independent (the step magnitude is
+        # bounded by |xm - xl|, so xnew always lands back inside the interval).
+        while abs(xh - xl) > x_tol and iterations < _MAX_ITERATIONS:
+            if time.monotonic() >= deadline:
+                timed_out = True  # hard 2s cap reached — stop with the best seen so far
+                break
+            xm = 0.5 * (xl + xh)
+            fm = evaluate_objective(xm)
+            if fm is None or fm == 0.0:  # domain error inside, or the midpoint is the root
+                break
+            s = math.sqrt(fm * fm - fl * fh)
+            if s == 0.0:  # degenerate fit — no Ridders step to take
+                break
+            xnew = xm + (xm - xl) * ((1.0 if fl >= fh else -1.0) * fm / s)
+            fnew = evaluate_objective(xnew)
+            if fnew is None or fnew == 0.0:  # domain error, or landed exactly on the root
+                break
+            iterations += 1
+            # Re-form the bracket around xnew from whichever pair still straddles zero.
+            if (fm < 0) != (fnew < 0):  # midpoint and new estimate straddle
+                xl, fl, xh, fh = xm, fm, xnew, fnew
+            elif (fl < 0) != (fnew < 0):  # lower end and new estimate straddle
+                xh, fh = xnew, fnew
+            else:  # upper end and new estimate straddle
+                xl, fl = xnew, fnew
+
+    # Grid polish (fixed-point / rational), identical to bisection's: re-test the grid
+    # neighbours of the best point so a root sitting exactly on the grid is found
+    # (residual 0). Skipped on float and timeout.
+    if best_solution is not None and mode is not Mode.FLOATING_POINT and not timed_out:
+        step = 10.0**-scale
+        centre = best_solution.to_float()
+        for k in (-2, -1, 1, 2):
+            evaluate_objective(centre + k * step)
+
+    # Float snap polish, identical to bisection's: snap a drifted crossing onto its clean
+    # rounding when no worse, so a root found at 1.999…97 lands on 2.
+    if best_solution is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            [best_solution.to_float()],
+            lambda point: evaluate_objective(point[0], accept_ties=True),
+            [(lower, upper)],
+        )
+
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
+        )
+    if best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
+        )
+        if a is None:  # the scan found no sign change anywhere in the bracket
+            raise SolverError(
+                f"No sign change for {variable!r} in [{lower}, {upper}], so ridders "
+                f"has no root to bracket. Widen or move the bracket — or, for a root "
+                f"that only touches zero without crossing (even multiplicity), use "
+                f"golden-section / brent-parabolic with objective='find-minimum' (or "
+                f"'find-maximum'). The closest is |expr| = {best_obj:.6g} at "
+                f"{variable} = {best_solution.to_string()}.{limit}"
+            )
+        raise SolverError(  # a straddle was found but the root is off the mode's grid
+            f"No solution: the expression does not reach zero for {variable!r} in "
+            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
+            f"at {variable} = {best_solution.to_string()}.{limit}"
+        )
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.RIDDERS.value,
         best_solution,
         best_value,
         iterations,

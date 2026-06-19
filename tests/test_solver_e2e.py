@@ -571,6 +571,190 @@ def test_bisection_solves_keplers_equation():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+# --- Ridders' method: superlinear bracketed roots (33.5) ----------------------
+# The faster sibling of bisection: same sign-change bracket (so the same scan, find-root
+# only, and distinct "no sign change" error), but each step takes Ridders' exponential-
+# fit root instead of the midpoint, converging at order ~1.84 rather than linearly.
+
+
+def test_ridders_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Ridders (endpoints straddle zero:\n"
+        "f(0) = -2, f(2) = 2); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="ridders")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "ridders"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    assert payload["iterations"] > 0
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_ridders_converges_in_few_iterations():
+    # The point of Ridders over bisection: superlinear convergence. On a smooth root the
+    # exponential fit reaches full double precision in a handful of steps, where bisection
+    # would need ~50 — so the reported iteration count stays small.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Ridders; converges in a few steps\n"
+        "(superlinear), not the ~50 bisection's linear halving would take",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="ridders")
+    assert payload["error"] is None
+    assert payload["iterations"] <= 10
+
+
+def test_ridders_scans_when_endpoints_share_a_sign():
+    # Like bisection, Ridders scans for the sign change, so same-sign endpoints (here
+    # f(-2) = f(2) = 2) are no obstacle: it brackets and returns the leftmost root.
+    program = _annotated(
+        "find-root of x**2 - 2 over [-2, 2] via Ridders; both endpoints are +2,\n"
+        "so the scan hunts the sign change. Leftmost root is x = -sqrt(2) ~ -1.41421",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="ridders")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(-(2**0.5), abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_ridders_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies to Ridders exactly as to bisection: the refined
+    # bracket lands within one grid step of x = 1.5, and the neighbour probes pin it to
+    # an EXACT zero on the grid.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via Ridders in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program, variable="x", lower=0, upper=3, mode="fixed-point", floor=1, algorithm="ridders"
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_ridders_reports_no_sign_change():
+    # x**2 + 1 never crosses zero, so the scan finds no sign-changing cell: the distinct
+    # "no sign change" error, naming the engine and pointing at the alternatives.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via Ridders\n"
+        "never crosses zero, so there is no sign change to bracket",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="ridders")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No sign change" in payload["error"]
+    assert "find-minimum" in payload["error"]
+
+
+def test_ridders_rejects_a_non_root_objective():
+    # Ridders brackets a sign change, which only locates a ROOT; find-minimum is refused
+    # with a pointer to the engines that do minimise.
+    program = _annotated(
+        "Ridders asked to find-minimum — refused, it only finds roots\n"
+        "(an extremum has no sign change to bracket)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="ridders",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "golden-section" in payload["error"] or "brent" in payload["error"]
+
+
+def test_ridders_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "Ridders asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="ridders")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_ridders_skips_domain_failures_in_the_scan():
+    # The left half raises a domain error (sqrt of a negative); those cells carry no
+    # signed value and are skipped, yet the crossing at x = 1 is still bracketed.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via Ridders (the bracket dips below 0)\n"
+        "the negative side has no real value and is skipped; expect x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="ridders")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_ridders_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails everywhere and must
+    # surface as a line-tagged eval error, not be mistaken for a domain gap to skip.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via Ridders; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="ridders")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_ridders_root_snaps_to_an_integer():
+    # The float snap polish applies to Ridders too: a crossing a few ULPs off a clean
+    # integer is re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via Ridders in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="ridders")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "ridders"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_ridders_alias_resolves_to_canonical():
+    # The `ridder` spelling resolves to the canonical engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `ridder` alias\n"
+        "the reply reports the canonical 'ridders'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="ridder")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "ridders"
+
+
+def test_ridders_solves_keplers_equation():
+    # The transcendental-root benchmark via Ridders: Kepler's equation is smooth and
+    # monotone in [0, pi], so the exponential fit pins the eccentric anomaly fast.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via Ridders\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="ridders")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "ridders"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for
