@@ -751,8 +751,8 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                errors for unknown name and wrong arity.
     STILL TO PLAN:
       - [DONE] n-ary (variadic) call support is built: FUNCTION_ARITIES is now a
-        (min, max|None) range, so a *args method declares a minimum. sum (28.5)
-        was the plumbing check. COMMA was reserved in 22.1.
+        (min, max|None) range, so a *args method declares a minimum. The variadic
+        aggregates (28.x) were the plumbing check. COMMA was reserved in 22.1.
       - fixed-point sqrt target-scale argument (default = operand scale).
       - constants pi/e as zero-arg names (out of scope for now).
       - nullary-call support — a zero-argument call shape (grammar atom
@@ -999,13 +999,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                same-mode. Unlike max/min it COMPUTES: the division can round, so
                it follows the mode's own `/` rule — fixed-point quantizes to the
                covering scale and may be inexact, rational is exact, float rounds.
-    [x] 28.5.  sum(...) — the total of its operands. VARIADIC (>= 1 arg),
-               same-mode. No division, so EXACT in every mode (like repeated `+`);
-               the building block avg (28.4) divides. Fixed-point result scale is
-               the covering max() of the operands', as every fixed-point op.
-    [x] 28.6.  product(...) — the product of its operands. VARIADIC (>= 1 arg),
-               same-mode. Like repeated `*`: fixed-point may round to the covering
-               scale (and flag inexact), rational is exact, float rounds.
     [x] 28.7.  median(...) — the middle operand by value. VARIADIC (>= 1 arg),
                same-mode. Sorting is order-only (no arithmetic). ODD count is pure
                selection -> EXACT, carrying the chosen operand's exactness (like
@@ -1327,12 +1320,11 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     ever wanted.
     VARIADIC call support is BUILT (see 22's STILL TO PLAN): FUNCTION_ARITIES is a
     (min, max|None) range read off the signature, so a variadic func is the usual
-    two-step add with a ``*others`` method. sum (28.5) landed as the plumbing
-    check; max/min (28.2/28.3) followed, adding the value-only Value._compare
-    ordering primitive (selection-only, so they return the chosen operand verbatim
-    — its own scale and exactness). The rest (28.4 avg, 28.6 product, 28.7 median,
-    28.8-28.9 variance/stddev) are ordinary adds — median reuses _compare, the
-    others just compute.
+    two-step add with a ``*others`` method. max/min (28.2/28.3) landed as the
+    plumbing check, adding the value-only Value._compare ordering primitive
+    (selection-only, so they return the chosen operand verbatim — its own scale and
+    exactness). The rest (28.4 avg, 28.7 median, 28.8-28.9 variance/stddev) are
+    ordinary adds — median reuses _compare, the others just compute.
 
 
 [ ] 29.  NULLARY FUNCTIONS  (zero-arg calls — pi(), e(), time(); 22's STILL
