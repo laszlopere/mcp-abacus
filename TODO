@@ -1793,12 +1793,16 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      like exp), with POLES at zero and the negative integers
                      (refuse there in every mode). Also extends factorial() to
                      negative / non-integer operands via gamma(n+1).
-    [ ] 40.5.  comb(n, k) — binomial coefficient n!/(k!(n-k)!), the BINARY
+    [x] 40.5.  comb(n, k) — binomial coefficient n!/(k!(n-k)!), the BINARY
                fixed-arity-2 shape (pow/atan2, 28.20/40.1). EXACT for integer
                n >= k >= 0 in every mode (cancel to an integer; compute the
                product form, not three factorials); k < 0 or k > n is 0. A
-               non-integer argument is the gamma-generalized coefficient
-               (inexact/refuse, per 40.4).
+               non-integer argument is the gamma-generalized coefficient,
+               deferred to 40.5.1.
+        [ ] 40.5.1.  comb(n, k) for NON-INTEGER arguments — the gamma-generalized
+                     binomial coefficient gamma(n+1)/(gamma(k+1)*gamma(n-k+1)):
+                     transcendental (float/fixed-point inexact, rational refuses),
+                     built on gamma (40.4.1) and refused where its poles bite.
     [ ] 40.6.  perm(n, k) — falling factorial n!/(n-k)! (k-permutations of n),
                BINARY fixed-arity 2 like comb. EXACT for integer n >= k >= 0
                (a product of k consecutive integers); k < 0 or k > n is 0.

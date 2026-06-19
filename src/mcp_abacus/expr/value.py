@@ -2227,6 +2227,47 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def comb(self, other: "Value") -> "Value":
+        """Binomial coefficient C(n, k) = n!/(k!(n-k)!) (40.5) — the count of
+        k-element subsets of an n-set. BINARY fixed-arity-2 (the pow/atan2 shape,
+        28.20/40.1); ``self`` is n, ``other`` is k.
+
+        DOMAIN integer operands only: both go through ``_as_integer`` (so a
+        fractional fixed-point value, a rational with denominator != 1, or a
+        non-whole float REFUSES — a non-integer argument is the gamma-generalized
+        coefficient, deferred to 40.5.1), with same-mode enforced like every binary
+        op. An out-of-range integer k chooses an impossible subset and is 0:
+        ``k < 0`` or ``k > n`` (so a negative n, where every k >= 0 already exceeds
+        n, also folds to 0). Otherwise EXACT in EVERY mode — ``math.comb`` cancels
+        to an integer via the multiplicative form, never three factorials, so no
+        rounding. The number of multiplicative terms ``min(k, n-k)`` is capped at
+        ``_MAX_FACTORIAL`` so a huge operand cannot lock the process up.
+
+        fixed-point / rational: the exact integer at scale 0, like factorial/gcd.
+        floating-point: ``float(C(n, k))``, refusing when that overflows a double
+            and marked exact only when the double represents the integer precisely.
+        """
+        self._same_mode(other, "comb")  # reject mode mixing; exactness is per-mode below
+        n = self._as_integer("comb")
+        k = other._as_integer("comb")
+        if k < 0 or k > n:
+            c = 0
+        else:
+            if min(k, n - k) > _MAX_FACTORIAL:
+                raise NotRepresentableError(f"comb argument too large (limit {_MAX_FACTORIAL})")
+            c = math.comb(n, k)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                try:
+                    fl = float(c)
+                except OverflowError:
+                    raise NotRepresentableError("comb overflows floating-point") from None
+                return Value(Mode.FLOATING_POINT, fl, exact=(int(fl) == c))
+            case Mode.FIXED_POINT | Mode.RATIONAL:
+                return Value._from_scaled_int(c, 0, self.mode)
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root
         lands exactly on the mode's own grid. A negative operand has no real

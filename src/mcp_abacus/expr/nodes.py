@@ -111,6 +111,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
     "lcm": Value.lcm,  # 40.8 — variadic; math.lcm of magnitudes, integer-only, zero absorbs to 0
     "factorial": Value.factorial,  # 40.4 — n! for a non-negative integer, exact every mode, capped
+    "comb": Value.comb,  # 40.5 — binary; binomial coefficient C(n, k), exact integer every mode
     "pct": Value.pct,  # 36.1 — p percent of x (x*p/100), follows the mode's / rule
     "pct_change": Value.pct_change,  # 36.1 — signed relative change (new-old)/old, mode's / rule
     "bps": Value.bps,  # 36.2 — b basis points of x (x*b/10000), follows the mode's / rule
@@ -237,6 +238,8 @@ FUNCTION_HELP: dict[str, str] = {
     "lcm": "least common multiple of the operands; integer-only, any zero gives 0, exact always",
     "factorial": "n! for a non-negative integer; exact in every type, refuses negative/non-integer "
     "operands, capped at 1000 (float refuses past the double range, ~n>170)",
+    "comb": "binomial coefficient n!/(k!(n-k)!) — count of k-subsets of n; integer-only, exact in "
+    "every type, k<0 or k>n is 0, non-integer args refuse (the gamma extension)",
     "pct": "p percent of x (x*p/100); explicit so the caller never hand-rolls /100, follows the "
     "type's / rule",
     "pct_change": "signed relative change (new-old)/old as a fraction; follows the type's / rule, "

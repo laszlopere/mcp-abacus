@@ -492,6 +492,53 @@ def test_factorial_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # comb (40.5): binomial coefficient C(n, k), the count of k-subsets of n,
+        # EXACT in every mode — the multiplicative form cancels to an integer.
+        ("comb(5, 2)", None, "10 (exact)"),  # fixed-point default
+        ("comb(0, 0)", None, "1 (exact)"),  # empty set, the one subset
+        ("comb(10, 0)", None, "1 (exact)"),  # C(n, 0) = 1
+        ("comb(10, 10)", None, "1 (exact)"),  # C(n, n) = 1
+        ("comb(52, 5)", None, "2598960 (exact)"),  # five-card poker hands
+        ("comb(5.00, 2.00)", None, "10 (exact)"),  # whole-valued fixed-point literals are in domain
+        # out-of-range k chooses an impossible subset and is 0...
+        ("comb(5, -1)", None, "0 (exact)"),  # k < 0
+        ("comb(3, 5)", None, "0 (exact)"),  # k > n
+        ("comb(-1, 0)", None, "0 (exact)"),  # negative n: every k >= 0 exceeds n
+        # rational: the exact integer at scale 0, like factorial.
+        ("comb(6, 2)", "rational", "15 (exact)"),
+        ("comb(40, 20)", "rational", "137846528820 (exact)"),
+        # binary64: exact while the double represents C(n, k) precisely, inexact once it cannot.
+        ("comb(5, 2)", "floating-point", "10.0 (exact)"),
+        ("comb(52, 5)", "floating-point", "2598960.0 (exact)"),
+        ("comb(100, 50)", "floating-point", "1.008913445455642e+29 (inexact)"),
+    ],
+)
+def test_comb(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # A non-integer operand is the gamma-generalized coefficient (40.5.1), refused
+        # here in every mode by the integer-domain gate shared with factorial/gcd.
+        ("comb(2.5, 2)", None, "comb requires integer operands"),
+        ("comb(5, 2.5)", "floating-point", "comb requires integer operands"),
+        ("comb(5, 1/2)", "rational", "comb requires integer operands"),
+        # The term count min(k, n-k) is capped so a huge operand cannot blow up.
+        ("comb(5000, 2500)", None, "comb argument too large (limit 1000)"),
+        ("comb(5000, 2500)", "rational", "comb argument too large (limit 1000)"),
+    ],
+)
+def test_comb_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # floor (28.23): round toward -inf with an optional ndigits count (default 0).
         # Fixed-point snaps to the grid, always exact.
         ("floor(2.7)", None, "2 (exact)"),
