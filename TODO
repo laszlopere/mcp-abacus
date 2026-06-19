@@ -2036,7 +2036,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 43.6.  Accept the equation form in solver. Let `solver` take `f = g` (or
                `f == g`) and rewrite to `f - g` for find-root, so the caller need
                not rearrange the equation themselves.
-    [ ] 43.7.  Zero-config solver default. The simplest fixed-point solve errors
+    [x] 43.7.  Zero-config solver default. The simplest fixed-point solve errors
                demanding min_fixed_point_precision (39). Rather than switch the
                default mode, give solver's min_fixed_point_precision a non-None
                default (e.g. 9, matching the hint) so the bare call just works

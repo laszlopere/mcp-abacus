@@ -115,20 +115,54 @@ def test_find_root_finds_an_exact_root_on_the_fixed_point_grid():
     assert payload["exact"] is True
 
 
-def test_fixed_point_solver_requires_min_fixed_point_precision():
-    # 39: fixed-point is the default mode, but a search at scale 0 floors the variable
-    # to whole numbers and would miss a non-integer root, so the bare fixed-point call
-    # is refused — naming the argument and a concrete value to pass. The request is
-    # otherwise well-formed (x occurs, bracket non-empty), so it reaches this check.
+def test_fixed_point_solver_defaults_the_floor_when_omitted():
+    # 43.7: a fixed-point search at scale 0 would floor the variable to whole numbers and
+    # miss a non-integer root (39). Rather than refuse the bare call, an omitted
+    # min_fixed_point_precision DEFAULTS to 9, so the search resolves sub-unit values out
+    # of the box: the same x**2 - 2 that once needed an explicit floor now finds sqrt(2).
     program = _annotated(
-        "find-root of x**2 - 2 over [0, 2] in fixed-point with NO precision\n"
-        "refused: the search would floor x to integers and miss sqrt(2)",
+        "find-root of x**2 - 2 over [0, 2] in fixed-point with NO precision given\n"
+        "the floor defaults to 9, so x ~ 1.414213562 is found (not refused, not floored)",
         "x**2 - 2",
     )
     payload = _solve(program, variable="x", lower=0, upper=2, mode="fixed-point")
-    assert payload["solution"] is None and payload["value"] is None
-    assert "min_fixed_point_precision is required in fixed-point mode" in payload["error"]
-    assert "e.g. 9" in payload["error"]
+    assert payload["error"] is None
+    assert payload["mode"] == "fixed-point"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    # The found value is reported at the defaulted scale 9, so its verdict shows the
+    # engaged floor (no "pass min_fixed_point_precision for more" steer).
+    assert "pass min_fixed_point_precision" not in payload["value"]
+
+
+def test_zero_config_solve_defaults_to_fixed_point_and_a_usable_floor():
+    # The fully bare call — neither mode nor min_fixed_point_precision given — keeps the
+    # default mode fixed-point (consistent with calculate) AND defaults the floor to 9,
+    # so the simplest possible request resolves a non-integer root with no extra args.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] with NOTHING but the bracket\n"
+        "default mode fixed-point + default floor 9 -> x ~ 1.414213562",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, mode=None)
+    assert payload["error"] is None
+    assert payload["mode"] == "fixed-point"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+
+
+def test_explicit_floor_overrides_the_default():
+    # The default only fills an OMITTED floor; an explicit value takes precedence. Solving
+    # the same x**2 - 2 at an explicit floor of 2 reports the solution and value at scale 2
+    # (1.41), not the default scale 9 (1.414213562) — proving the explicit floor is honoured
+    # rather than being replaced by the default.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] in fixed-point at an EXPLICIT floor of 2\n"
+        "the result is reported at scale 2 (x ~ 1.41), not the default scale 9",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, mode="fixed-point", floor=2)
+    assert payload["error"] is None
+    assert payload["precision"] == 2
+    assert payload["solution"].split(" (")[0] == "1.41"
 
 
 def test_fixed_point_solver_with_precision_converges_on_a_non_integer_root():

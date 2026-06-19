@@ -683,6 +683,13 @@ def analyze(
     return {"tree": node.pretty(), "error": None}
 
 
+# 43.7: the floor a fixed-point search falls back to when the caller omits
+# min_fixed_point_precision. A search at scale 0 would floor the variable to whole
+# numbers and miss every non-integer solution (39); defaulting to sub-unit resolution
+# lets the bare fixed-point call just work. 9 matches the value the old refusal hinted.
+_DEFAULT_SOLVER_FLOOR = 9
+
+
 @mcp.tool()
 def solver(
     expression: Annotated[
@@ -770,9 +777,12 @@ def solver(
         int | None,
         Field(
             description=(
-                "Floor on fixed-point fractional digits (non-negative integer). "
-                "REQUIRED in fixed-point mode (else the search floors to integers); "
-                "null/omit in the other modes."
+                "Floor on fixed-point fractional digits (non-negative integer). In "
+                "fixed-point mode, omit it for a default floor of 9 so the search "
+                "resolves non-integer solutions instead of flooring the variable to "
+                "whole numbers; pass an explicit value for more/fewer decimals, or 0 to "
+                "search integers only. Leave null/omit in the other modes, which resolve "
+                "sub-unit values natively."
             )
         ),
     ] = None,
@@ -819,11 +829,12 @@ def solver(
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
     in that numeric type and the found value is reported in it — with ONE solver-only
-    rule: in fixed-point mode (the default) min_fixed_point_precision is REQUIRED.
-    Without it the search would run at scale 0, flooring the variable to whole numbers
-    and missing any non-integer solution, so the call is refused; pass it (e.g. 9), or
-    switch to floating-point / rational, which resolve sub-unit values natively and
-    need no floor. See `calculate` and `help` for the shared grammar and modes; if a
+    rule: in fixed-point mode (the default) a search at scale 0 would floor the variable
+    to whole numbers and miss any non-integer solution, so when min_fixed_point_precision
+    is omitted it DEFAULTS to 9 (sub-unit resolution) rather than 0. Pass an explicit
+    value for more/fewer decimals, or 0 to search integers only; the other modes
+    (floating-point / rational) resolve sub-unit values natively and take no floor. See
+    `calculate` and `help` for the shared grammar and modes; if a
     found value or objective looks off, `analyze` shows the per-node parse tree of the
     expression (with the unknowns substituted) to reveal where it rounded or overflowed.
 
@@ -868,23 +879,20 @@ def solver(
         )
     except SolverError as exc:
         return _solver_error(exc.message)
-    floor = min_fixed_point_precision or 0
+    # 43.7: a fixed-point search at scale 0 floors the variable to whole numbers and
+    # misses every non-integer solution (39). Rather than refuse the bare call, default
+    # an omitted floor to _DEFAULT_SOLVER_FLOOR so it resolves sub-unit values out of the
+    # box; an explicit value (including 0 for integer-only) overrides it. None reaches
+    # here only in fixed-point mode — _resolve_mode_and_precision already rejected a
+    # non-fixed-point mode that passed a floor — so the other modes take floor 0 unused.
+    if selected is Mode.FIXED_POINT and min_fixed_point_precision is None:
+        floor = _DEFAULT_SOLVER_FLOOR
+    else:
+        floor = min_fixed_point_precision or 0
     try:
         for name, lo, hi in unknowns:
             validate_bracket(lo, hi)
             validate_unknown(node, name)
-        if selected is Mode.FIXED_POINT and min_fixed_point_precision is None:
-            # 39: an otherwise well-formed fixed-point search at scale 0 floors the
-            # variable to whole numbers and misses every non-integer solution, then
-            # reports a silently-wrong integer guess. Require the floor instead, only
-            # where it bites — checked AFTER the structural validations above so a
-            # malformed request still surfaces its own error first.
-            raise SolverError(
-                "min_fixed_point_precision is required in fixed-point mode: without "
-                "it the search runs at scale 0, flooring the variable to whole numbers "
-                "and missing any non-integer solution. Pass min_fixed_point_precision "
-                "(e.g. 9), or use mode='floating-point'."
-            )
         if resolved_algorithm is Algorithm.NELDER_MEAD:
             result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
         elif resolved_algorithm is Algorithm.BRENT_PARABOLIC:
@@ -906,7 +914,10 @@ def solver(
         return _solver_error(exc.message)
     except EvalError as exc:  # a constant the program never set (structural, 31.7)
         return _solver_error(exc.message)
-    return _solver_reply(result, selected, min_fixed_point_precision)
+    # Report the floor actually in effect (43.7's default included), so a fixed-point
+    # result's precision verdict reflects the engaged floor rather than the raw argument.
+    reported_floor = floor if selected is Mode.FIXED_POINT else min_fixed_point_precision
+    return _solver_reply(result, selected, reported_floor)
 
 
 def _resolve_unknowns(
