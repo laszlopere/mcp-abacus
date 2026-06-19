@@ -2020,4 +2020,26 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                expression (12*n - (450 + 3*n) has exactly one). This won't fix
                malformed JSON on its own, but it removes the most error-prone
                field from the common case so there's less to get wrong.
+    [ ] 43.4.  Remove `^` entirely. It is ambiguous -- programmers read XOR,
+               math/LLMs read power -- so `2^3` silently returns 1, not 8. Stop
+               accepting `^` at all: reject it with an error naming the two real
+               operators, `**` for power and `xor` for bitwise XOR. Requires
+               providing `xor` (word operator or xor(a, b) function) to keep XOR
+               reachable once the symbol is gone. No computing-then-explaining.
+    [ ] 43.5.  "Did you mean" on unknown names. Add nearest-match suggestions to
+               the unknown-function / unknown-mode / unknown-algorithm errors
+               (sqr->sqrt, arcsin->asin) -- the expression-layer analog of 43.2.
+               Use stdlib difflib.get_close_matches over canonical names +
+               aliases (cutoff ~0.6 so a true typo suggests, an unrelated word
+               suggests nothing). Runs after alias resolution fails; catches
+               typos only, not semantic misses (ln->log belongs in aliases).
+    [ ] 43.6.  Accept the equation form in solver. Let `solver` take `f = g` (or
+               `f == g`) and rewrite to `f - g` for find-root, so the caller need
+               not rearrange the equation themselves.
+    [ ] 43.7.  Zero-config solver default. The simplest fixed-point solve errors
+               demanding min_fixed_point_precision (39). Rather than switch the
+               default mode, give solver's min_fixed_point_precision a non-None
+               default (e.g. 9, matching the hint) so the bare call just works
+               while the default mode stays fixed-point, consistent with
+               calculate. An explicit null still hits the 39 refusal.
 
