@@ -2031,6 +2031,74 @@ class Value:
         factor = one.add(rate).pow(periods)
         return self.mul(factor)
 
+    def _is_zero(self) -> bool:
+        """True when this Value equals zero (value-only, scale-blind), the rate==0
+        guard for the time-value-of-money trio (36.4) whose closed forms otherwise
+        divide by the rate. Compares with ``_compare`` so ``0.00`` and ``0`` agree.
+        """
+        zero = Value._from_scaled_int(0, 0, self.mode)
+        return self._compare(zero, "tvm") == 0
+
+    def pmt(self, nper: "Value", pv: "Value") -> "Value":
+        """Level PAYMENT amortising a present value ``pv`` to zero over ``nper``
+        periods at the PER-PERIOD rate ``self`` (36.4) — the loan/amortisation case.
+
+        The time-value-of-money trio (``pmt``/``fv``/``pv``) is the ordinary-annuity
+        convention: a payment at each period END, a residual value of 0, and NO sign
+        flip — a positive loan gives a positive payment (unlike a spreadsheet). The
+        rate is PER PERIOD and ``nper`` counts the SAME unit, the rate-period story
+        ``compound`` (36.3) tells. Closed form
+        ``pmt = pv * r / (1 - (1 + r)**-nper)``; with a ZERO rate there is no
+        interest, so it is the principal split evenly, ``pv / nper``. It COMPUTES,
+        composing the engine's own +, **, -, * and / so it inherits each mode's rule:
+        the negative-integer power inverts exactly (fixed-point/rational), the
+        divides follow the mode's ``/`` (fixed-point quantizes and may be inexact,
+        rational is exact, float rounds). ``nper`` of 0 has no periods to pay over and
+        divides by zero like any other (the amortisation is undefined).
+        """
+        if self._is_zero():
+            return pv.div(nper)
+        one = Value._from_scaled_int(1, 0, self.mode)
+        denom = one.sub(one.add(self).pow(nper.neg()))
+        return pv.mul(self).div(denom)
+
+    def fv(self, nper: "Value", pmt: "Value") -> "Value":
+        """FUTURE value of an ``nper``-period stream of level payments ``pmt`` at the
+        PER-PERIOD rate ``self`` (36.4) — the ordinary-annuity accumulation.
+
+        Same trio convention as ``pmt``: ordinary annuity (payment at period end), no
+        sign flip, ``self`` the per-period rate over ``nper`` like-unit periods. The
+        annuity FORM (a payment stream) is the non-redundant complement to
+        ``compound`` (36.3), which already grows a lump sum. Closed form
+        ``fv = pmt * ((1 + r)**nper - 1) / r``; with a ZERO rate the payments just
+        add up, ``pmt * nper``. It COMPUTES by composing +, **, -, * and /, so it
+        follows each mode's rule exactly as ``pmt`` does (a whole ``nper`` keeps the
+        power exact; the final ``/ r`` may quantize in fixed-point, is exact in
+        rational, rounds in float).
+        """
+        if self._is_zero():
+            return pmt.mul(nper)
+        one = Value._from_scaled_int(1, 0, self.mode)
+        return pmt.mul(one.add(self).pow(nper).sub(one)).div(self)
+
+    def pv(self, nper: "Value", pmt: "Value") -> "Value":
+        """PRESENT value of an ``nper``-period stream of level payments ``pmt`` at the
+        PER-PERIOD rate ``self`` (36.4) — the ordinary-annuity discount, the inverse
+        of ``pmt``.
+
+        Same trio convention (ordinary annuity, no sign flip, per-period rate over
+        like-unit ``nper`` periods), the annuity complement to ``compound`` (36.3).
+        Closed form ``pv = pmt * (1 - (1 + r)**-nper) / r``; with a ZERO rate the
+        undiscounted payments just add up, ``pmt * nper``. It COMPUTES by composing
+        +, **, -, * and /, inheriting each mode's rule like the rest of the trio (the
+        negative-integer power inverts exactly; the ``/ r`` quantizes in fixed-point,
+        is exact in rational, rounds in float).
+        """
+        if self._is_zero():
+            return pmt.mul(nper)
+        one = Value._from_scaled_int(1, 0, self.mode)
+        return pmt.mul(one.sub(one.add(self).pow(nper.neg()))).div(self)
+
     def _as_integer(self, what: str) -> int:
         """This Value as a signed Python int, REFUSING any fractional part (40.7).
 

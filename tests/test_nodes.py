@@ -183,6 +183,9 @@ def test_function_arities_match_the_registry():
         "pct_change": (2, 2),  # 36.1 — BINARY, (new-old)/old
         "bps": (2, 2),  # 36.2 — BINARY, b basis points of x
         "compound": (3, 3),  # 36.3 — TERNARY, principal*(1+rate)**periods
+        "pmt": (3, 3),  # 36.4 — TERNARY, annuity payment (rate, nper, pv)
+        "fv": (3, 3),  # 36.4 — TERNARY, future value (rate, nper, pmt)
+        "pv": (3, 3),  # 36.4 — TERNARY, present value (rate, nper, pmt)
         "pi": (0, 0),  # nullary constant (29.2)
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)

@@ -1626,7 +1626,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      (the exact value)."
 
 
-[ ] 36.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
+[x] 36.  FINANCIAL HELPERS  (web research 2026-06-14: money is high-demand and
          partially served by fixed-point already, but the NAMED error classes are
          basis-point confusion (25 bps read as 25%) and rate-period confusion (an
          annual rate applied monthly). A handful of named functions kill those
@@ -1642,7 +1642,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                make the period explicit so an annual rate can't silently act
                monthly; document that `rate` is per-period and `periods` counts the
                same unit.
-    [ ] 36.4.  pmt / fv / pv (amortisation: payment, future value, present value)
+    [x] 36.4.  pmt / fv / pv (amortisation: payment, future value, present value)
                — the standard time-value-of-money trio, each a closed-form formula
                over the operand evaluator; the amortisation case named in the
                research. May need an internal pow over the active type (have it).

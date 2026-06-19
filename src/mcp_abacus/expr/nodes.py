@@ -116,6 +116,9 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "pct_change": Value.pct_change,  # 36.1 — signed relative change (new-old)/old, mode's / rule
     "bps": Value.bps,  # 36.2 — b basis points of x (x*b/10000), follows the mode's / rule
     "compound": Value.compound,  # 36.3 — principal*(1+rate)**periods, per-period rate, mode's rule
+    "pmt": Value.pmt,  # 36.4 — annuity payment amortising pv over nper at per-period rate
+    "fv": Value.fv,  # 36.4 — future value of an nper-period payment stream at per-period rate
+    "pv": Value.pv,  # 36.4 — present value of an nper-period payment stream at per-period rate
 }
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
@@ -223,6 +226,12 @@ FUNCTION_HELP: dict[str, str] = {
     "type's / rule",
     "compound": "compound growth principal*(1+rate)**periods; rate is PER PERIOD and periods "
     "counts the same unit, follows the type's power/multiply rules",
+    "pmt": "ordinary-annuity payment pv*r/(1-(1+r)**-nper) amortising pv to zero (pv/nper when "
+    "r=0); rate per period, no sign flip, follows the type's / rule",
+    "fv": "ordinary-annuity future value pmt*((1+r)**nper-1)/r of a payment stream (pmt*nper when "
+    "r=0); rate per period, follows the type's / rule",
+    "pv": "ordinary-annuity present value pmt*(1-(1+r)**-nper)/r of a payment stream (pmt*nper "
+    "when r=0); rate per period, follows the type's / rule",
     "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
     "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",

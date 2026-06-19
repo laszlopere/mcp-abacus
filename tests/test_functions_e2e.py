@@ -1014,3 +1014,111 @@ def test_compound_in_floating_point_is_inexact():
         "compound(1000, 0.05, 3)",
     )
     assert _values(_calc(program, mode="floating-point")) == ["1157.6250000000002 (inexact)"]
+
+
+def test_amortising_payment_on_a_loan():
+    # pmt (36.4) is the loan/amortisation case: the level payment that pays a 1000 loan
+    # to zero over 12 periods at 5% per period, pv*r/(1-(1+r)**-nper) ~= 112.83. The
+    # negative-integer power is quantized at the active scale, so at money scale (floor
+    # 2) the rounded factor skews the payment and reads inexact; a wider scale (floor
+    # 10) keeps the discounting accurate. There is no sign flip — a positive loan gives
+    # a positive payment.
+    money = _annotated(
+        "amortising payment at money scale rounds the discount factor",
+        "pmt(0.05, 12, 1000.00)",
+    )
+    assert _values(_calc(money, floor=2)) == ["113.64 (inexact, rounded to 2 decimals)"]
+    wide = _annotated(
+        "a wider scale discounts accurately, converging on the true payment",
+        "pmt(0.05, 12, 1000.00)",
+    )
+    assert _values(_calc(wide, floor=10)) == ["112.8254100265 (inexact, rounded to 10 decimals)"]
+
+
+def test_time_value_trio_with_a_zero_rate_just_moves_the_cash_flows():
+    # With a zero per-period rate there is no interest, so each of the trio degenerates
+    # to plain arithmetic: the payment is the principal split evenly (pv/nper), and both
+    # future and present value are the payments simply added up (pmt*nper). All exact —
+    # no discounting to round.
+    program = _annotated(
+        "a zero rate collapses pmt to pv/nper and fv/pv to pmt*nper",
+        "pmt(0, 4, 1000.00)\nfv(0, 4, 100.00)\npv(0, 4, 100.00)",
+    )
+    assert _values(_calc(program, floor=2)) == [
+        "250.00 (exact)",  # 1000 / 4
+        "400.00 (exact)",  # 100 * 4
+        "400.00 (exact)",  # 100 * 4
+    ]
+
+
+def test_annuity_future_and_present_value():
+    # fv accumulates a stream of 100 payments forward, pv discounts it back, both at 5%
+    # per period over 10 periods (the payment-stream complement to compound's lump sum).
+    # At money scale the / r and the power round, so both read inexact.
+    program = _annotated(
+        "fv accumulates and pv discounts a 10-period stream of 100 at 5%",
+        "fv(0.05, 10, 100.00)\npv(0.05, 10, 100.00)",
+    )
+    assert _values(_calc(program, floor=2)) == [
+        "1260.00 (inexact, rounded to 2 decimals)",  # 100 * ((1.05**10 - 1) / 0.05)
+        "780.00 (inexact, rounded to 2 decimals)",  # 100 * ((1 - 1.05**-10) / 0.05)
+    ]
+
+
+def test_time_value_trio_in_rational_is_exact_and_pv_inverts_pmt():
+    # In rational mode the trio never rounds, so each carries the exact fraction; with a
+    # whole nper the powers are exact integer Fraction powers. pv is the inverse of pmt:
+    # discounting the payment that amortises 100 recovers exactly 100 (a clean
+    # round-trip the rounding modes only approximate).
+    program = _annotated(
+        "rational keeps the trio exact; pv(pmt(pv)) round-trips to the principal",
+        "pmt(1/10, 2, 100)\n"
+        "fv(1/10, 2, 100)\n"
+        "p = pmt(1/10, 2, 100)\n"
+        "pv(1/10, 2, p)",  # discount the amortising payment back to the principal
+    )
+    assert _values(_calc(program, mode="rational")) == [
+        "1210/21 (exact)",  # 100 * (1/10) / (1 - (11/10)**-2)
+        "210 (exact)",  # 100 * ((11/10)**2 - 1) / (1/10)
+        "100 (exact)",  # pv inverts pmt exactly
+    ]
+
+
+def test_time_value_trio_in_rational_refuses_a_fractional_period():
+    # A fractional nper makes (1 + r)**nper an irrational power, which rational refuses
+    # rather than fabricate — the same exact-or-refuse stance ** takes (28.20), inherited
+    # by the whole trio.
+    program = _annotated(
+        "a fractional period needs an irrational power, which rational refuses",
+        "fv(1/10, 1/2, 100)",
+    )
+    payload = _calc(program, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "rational power requires an integer exponent"
+
+
+def test_time_value_trio_in_floating_point_is_inexact():
+    # In floating-point the trio inherits binary64's unconditional inexact flag and its
+    # rounding — each is the nearest double, flagged inexact.
+    program = _annotated(
+        "floating-point flags every time-value result inexact",
+        "pmt(0.05, 12, 1000)\nfv(0.05, 10, 100)\npv(0.05, 10, 100)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "112.82541002081534 (inexact)",
+        "1257.789253554884 (inexact)",
+        "772.1734929184818 (inexact)",
+    ]
+
+
+def test_payment_over_zero_periods_divides_by_zero():
+    # pmt over zero periods has nothing to amortise over — the discount factor
+    # 1 - (1+r)**-0 is 1 - 1 = 0, so the payment divides by zero and aborts the program,
+    # the same / stance as any divide by zero (19.3.4).
+    program = _annotated(
+        "amortising over zero periods divides by zero and aborts the group",
+        "pmt(0.05, 12, 1000.00)\npmt(0.05, 0, 1000.00)",
+    )
+    payload = _calc(program, floor=2)
+    assert payload["values"] is None
+    assert payload["error"] == "fixed-point division by zero"
