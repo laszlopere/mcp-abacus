@@ -32,6 +32,7 @@ from mcp_abacus.solver import (
     SolverError,
     SolverResult,
     autodetect_variable,
+    bisection,
     brent_parabolic,
     nelder_mead,
     resolve_algorithm,
@@ -749,7 +750,8 @@ def solver(
         Field(
             description=(
                 "Search engine: 'golden-section-search' (default, single-variable), "
-                "'brent-parabolic' (single-variable), or 'nelder-mead' (required "
+                "'brent-parabolic' (single-variable), 'bisection' (single-variable, "
+                "find-root only — brackets a sign change), or 'nelder-mead' (required "
                 "for the `variables` form)."
             )
         ),
@@ -806,10 +808,12 @@ def solver(
     `algorithm` (optional) names the search engine — "golden-section-search" (the
     default, single-variable), "brent-parabolic" (single-variable too, parabolic
     interpolation with a golden-section fallback — usually faster on smooth extrema),
-    or "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The two
-    single-variable engines solve only the SINGLE form; the `variables` form requires
-    "nelder-mead". (`golden`, `brent`, `simplex` and a few other spellings are accepted
-    too.)
+    "bisection" (single-variable, find-root ONLY — brackets a sign change and halves
+    it; robust, and it scans the bracket for a sign change so the endpoints need not
+    already straddle zero), or "nelder-mead" (multivariate, a bounds-clamped downhill
+    simplex). The three single-variable engines solve only the SINGLE form; the
+    `variables` form requires "nelder-mead". (`golden`, `brent`, `bisect`, `simplex`
+    and a few other spellings are accepted too.)
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
     in that numeric type and the found value is reported in it — with ONE solver-only
@@ -885,6 +889,10 @@ def solver(
             # single-variable, like golden-section — _resolve_unknowns guaranteed one
             name, lo, hi = unknowns[0]
             result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
+        elif resolved_algorithm is Algorithm.BISECTION:
+            # single-variable root finder — _resolve_unknowns guaranteed one unknown
+            name, lo, hi = unknowns[0]
+            result = bisection(node, name, lo, hi, selected, floor, resolved_objective)
         else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
             name, lo, hi = unknowns[0]
             result = search(node, name, lo, hi, selected, floor, resolved_objective)

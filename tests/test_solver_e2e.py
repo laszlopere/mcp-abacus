@@ -390,6 +390,187 @@ def test_brent_parabolic_rejects_the_multiple_form():
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
 
 
+# --- bisection: bracketed roots via a sign change (33.1) -----------------------
+# The robust single-variable ROOT finder, and the only engine that works on the raw
+# SIGNED expression rather than minimising |expr|: it scans the bracket for a cell
+# whose endpoints straddle zero and halves it. Find-root only (an extremum has no sign
+# change to bracket), and the endpoints need NOT already straddle — the scan finds the
+# first sign change inside the bracket. A function that never reaches zero gets a
+# DISTINCT "no sign change" error, separate from the minimisers' "No solution".
+
+
+def test_bisection_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via bisection (endpoints straddle zero:\n"
+        "f(0) = -2, f(2) = 2); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="bisection")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "bisection"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    assert payload["iterations"] > 0
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_bisection_scans_when_endpoints_share_a_sign():
+    # The endpoints do NOT straddle — f(-2) = 2 and f(2) = 2 are both positive — yet a
+    # root lies inside. The coarse scan finds the first sign-changing cell (scanning from
+    # the lower end, that is the crossing at -sqrt(2)), so bisection still solves it and
+    # returns the LEFTMOST root, where a straddle-only method would have refused outright.
+    program = _annotated(
+        "find-root of x**2 - 2 over [-2, 2] via bisection; both endpoints are +2,\n"
+        "so the scan hunts the sign change. Leftmost root is x = -sqrt(2) ~ -1.41421",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="bisection")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(-(2**0.5), abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_bisection_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies to bisection exactly as to golden-section: the
+    # halving stops within one grid step of x = 1.5, and re-testing the grid neighbours
+    # lands it exactly, so the expression is an EXACT zero there.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via bisection in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program, variable="x", lower=0, upper=3, mode="fixed-point", floor=1, algorithm="bisection"
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_bisection_reports_no_sign_change():
+    # x**2 + 1 is strictly positive, so it never crosses zero and the scan finds no
+    # sign-changing cell anywhere. The error is DISTINCT from the minimisers' "No
+    # solution": it names the missing sign change and points at the alternatives.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via bisection\n"
+        "never crosses zero, so there is no sign change to bracket",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="bisection")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No sign change" in payload["error"]
+    assert "find-minimum" in payload["error"]  # the pointer to a minimiser for a touch-root
+
+
+def test_bisection_rejects_a_non_root_objective():
+    # Bisection brackets a sign change of the expression itself, which only locates a
+    # ROOT; an extremum has no sign change to straddle, so find-minimum is refused with
+    # a pointer to the engines that do minimise.
+    program = _annotated(
+        "bisection asked to find-minimum — refused, it only finds roots\n"
+        "(an extremum has no sign change to bracket)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="bisection",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "golden-section" in payload["error"] or "brent" in payload["error"]
+
+
+def test_bisection_rejects_the_multiple_form():
+    # Like the other 1-D engines, bisection is single-variable: the `variables` form
+    # needs Nelder-Mead, so the request is refused with a pointer to the right algorithm.
+    program = _annotated(
+        "bisection asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="bisection")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_bisection_skips_domain_failures_in_the_scan():
+    # The scan's left half raises a domain error (sqrt of a negative); those cells carry
+    # no signed value and are skipped, yet the crossing at x = 1 on the valid side is
+    # still bracketed and found — the same robustness the minimisers show for +inf.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via bisection (the bracket dips below 0)\n"
+        "the negative side has no real value and is skipped; expect x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="bisection")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_bisection_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails at EVERY candidate
+    # and must surface as a line-tagged eval error, not be mistaken for a domain gap the
+    # scan steers around — the same contract the other engines honour.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via bisection; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="bisection")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_bisection_root_snaps_to_an_integer():
+    # The float snap polish applies to bisection too: a crossing that converges a few
+    # ULPs off a clean integer is re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via bisection in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="bisection")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "bisection"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_bisection_alias_resolves_to_canonical():
+    # The `bisect` spelling resolves to the canonical engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `bisect` alias\n"
+        "the reply reports the canonical 'bisection'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="bisect")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "bisection"
+
+
+def test_bisection_solves_keplers_equation():
+    # The transcendental-root benchmark for the 1-D bracketers, now via bisection:
+    # Kepler's equation E - e*sin(E) = M is smooth and monotone in [0, pi], so a single
+    # sign change brackets the eccentric anomaly cleanly.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via bisection\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="bisection")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "bisection"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for

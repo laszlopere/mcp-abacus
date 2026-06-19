@@ -5,10 +5,12 @@
 
 Built up item by item (TODO 31); the strategy vocabulary reworked in TODO 32. The
 `objective` argument (find-root / find-minimum / find-maximum) names WHAT the search
-looks for; the `algorithm` argument names HOW it searches. Two engines today (TODO
-33): golden-section search drives ONE unknown over a bracket, and Nelder-Mead
-(33.14) walks a simplex over n unknowns — multivariate, bounds-clamped to each
-bracket. Both minimise the same folded objective, so every objective works on either.
+looks for; the `algorithm` argument names HOW it searches. The engines (TODO 33):
+golden-section search and Brent's parabolic minimiser drive ONE unknown over a bracket;
+Nelder-Mead (33.14) walks a simplex over n unknowns — multivariate, bounds-clamped to
+each bracket; all three minimise the same folded objective, so every objective works on
+any of them. Bisection (33.1) is the odd one out — a find-root-only engine that brackets
+a sign change of the raw signed expression rather than minimising |expr|.
 """
 
 import math
@@ -55,13 +57,16 @@ class Algorithm(Enum):
     reached by different methods. ``GOLDEN_SECTION`` is the single-variable bracket
     shrinker (31.7); ``BRENT_PARABOLIC`` is the single-variable parabolic minimiser
     (33.12), a faster sibling that fits a parabola through the best three points and
-    falls back to a golden-section step; ``NELDER_MEAD`` is the multivariate downhill
-    simplex (33.14). The enum value is the string reported in the reply's
-    ``algorithm`` field (32.3).
+    falls back to a golden-section step; ``BISECTION`` is the single-variable root
+    finder (33.1) that brackets a sign change and halves it — robust, but find-root
+    only (an extremum has no sign change to straddle); ``NELDER_MEAD`` is the
+    multivariate downhill simplex (33.14). The enum value is the string reported in
+    the reply's ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
     BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
+    BISECTION = "bisection"  # one unknown, halve a sign-changing bracket (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -109,6 +114,8 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "golden": Algorithm.GOLDEN_SECTION,
     "brent": Algorithm.BRENT_PARABOLIC,
     "parabolic": Algorithm.BRENT_PARABOLIC,
+    "bisect": Algorithm.BISECTION,
+    "binary-search": Algorithm.BISECTION,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -213,14 +220,16 @@ def autodetect_variable(node: Node) -> str:
     )
 
 
-# --- the search engines (31.7 golden-section, 33.14 Nelder-Mead) --------------
-# Each engine MINIMISES: the objective folds find-root/find-maximum into a quantity
-# whose LEAST is the answer (fold_objective(), 32.1), so neither engine needs to know
-# the objective beyond that fold. Both are derivative-free and drive the abacus engine
-# in the active mode — each candidate is materialised as a mode-faithful Value, the
+# --- the search engines (31.7 golden-section, 33.12 Brent, 33.1 bisection, 33.14 NM) -
+# Most engines MINIMISE: the objective folds find-root/find-maximum into a quantity
+# whose LEAST is the answer (fold_objective(), 32.1), so they need not know the
+# objective beyond that fold. They are derivative-free and drive the abacus engine in
+# the active mode — each candidate is materialised as a mode-faithful Value, the
 # program evaluated, and its Value reduced back to a float to compare. Golden-section
-# shrinks a 1-D bracket; Nelder-Mead walks an n-vertex simplex over n unknowns. The
-# reply names which ran (Algorithm, 32.3/33.14) so the two are distinguishable.
+# and Brent shrink a 1-D bracket; Nelder-Mead walks an n-vertex simplex over n unknowns.
+# Bisection (33.1) is the exception: it does NOT minimise but brackets a SIGN CHANGE of
+# the raw signed expression and halves it, so it is find-root only. The reply names
+# which ran (Algorithm, 32.3) so the engines are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _GOLDEN = (3 - 5**0.5) / 2  # 0.382..., the complementary golden fraction — Brent's
@@ -318,7 +327,7 @@ def _round_decimals(x: float, ndigits: int) -> float:
 
 def _float_snap_polish(
     centre: list[float],
-    probe: Callable[[list[float]], float],
+    probe: Callable[[list[float]], float | None],
     bounds: list[tuple[float, float]],
     cap: int = _FLOAT_SNAP_DECIMALS,
 ) -> None:
@@ -651,6 +660,187 @@ def brent_parabolic(
         variable,
         objective,
         Algorithm.BRENT_PARABOLIC.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Bisection (33.1) ---------------------------------------------------------
+# The robust single-variable ROOT finder, and the only engine that works on the RAW
+# signed expression rather than the folded |expr| the minimisers drive: it hunts a
+# SIGN CHANGE (f changes sign across an interval => a root lies between, by the
+# intermediate value theorem) and halves that interval. Because it needs a straddle it
+# is find-root ONLY — an extremum has no sign change to bracket. It does NOT require
+# the caller's endpoints to already straddle zero: it first SCANS the bracket on a
+# coarse grid for the first sign-changing cell and bisects THAT, so a root sitting
+# inside a same-sign bracket is still found. If no sign change exists anywhere (e.g. an
+# even-multiplicity root that only touches zero), it says so distinctly — that case is
+# the |expr|-minimisers' (golden / brent) to cover, so the engines stay complementary.
+
+_BISECTION_SCAN_CELLS = 64  # coarse grid the initial sign-change hunt samples across
+
+
+def bisection(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Bisection root finder for the unknown over ``[lower, upper]`` (33.1).
+
+    The robust counterpart to :func:`search` / :func:`brent_parabolic`: instead of
+    minimising the folded ``|expr|`` it works on the RAW signed expression, hunting an
+    interval whose endpoints straddle zero (opposite signs => a root between them, by
+    the intermediate value theorem) and halving it until it is narrower than the mode
+    resolves. It is therefore find-root ONLY — an extremum has no sign change to bracket
+    — and raises SolverError for any other objective.
+
+    The caller's endpoints need NOT already straddle zero: a coarse scan across
+    ``[lower, upper]`` (``_BISECTION_SCAN_CELLS`` cells) locates the FIRST sign-changing
+    cell and bisection runs on that, so a root inside a same-sign bracket is still
+    found. A scan / midpoint that raises a DOMAIN error yields no signed value there and
+    is skipped (a structural failure — a constant the program never set — still
+    propagates as an EvalError); the 2-second wall-clock and iteration caps bound the
+    search exactly as in :func:`search`, and the same grid / float-snap polish lands a
+    grid-representable root exactly.
+
+    Returns the best candidate as a SolverResult. Raises SolverError when the program
+    evaluates nowhere in the bracket, when NO sign change exists anywhere in it (a
+    distinct message: widen / move the bracket, or use a minimiser for a touch-root),
+    or when the straddled root is not representable on the mode's grid (the same
+    no-solution message :func:`search` reports).
+    """
+    if objective is not Objective.FIND_ROOT:
+        raise SolverError(
+            f"The bisection algorithm only finds roots (it brackets a sign change), so "
+            f"objective {objective.value!r} is not supported. Use golden-section or "
+            f"brent-parabolic with that objective for an extremum."
+        )
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float | None:
+        # Returns the SIGNED expression value at x (so the caller can compare signs), or
+        # None when x raises a DOMAIN error (no real value to take a sign of). Tracks the
+        # best |expr| seen as a side effect — same best-across-all bookkeeping as the
+        # minimising engines, so the grid / snap polish and final result reuse it.
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return None  # a domain error at THIS candidate — no signed value here
+        signed = raw.to_float()
+        obj = abs(signed)  # = fold_objective(raw, FIND_ROOT).to_float(), the |expr| fold
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return signed
+
+    # Coarse scan for the first sign-changing cell. A cell with a domain-error endpoint
+    # is skipped (no sign to compare); an exact zero sitting on a scan node is a root
+    # already, taken as a degenerate [node, node] bracket the loop then skips.
+    timed_out = False
+    width = upper - lower
+    xs = [lower + width * k / _BISECTION_SCAN_CELLS for k in range(_BISECTION_SCAN_CELLS + 1)]
+    fxs: list[float | None] = []
+    for x in xs:
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        fxs.append(evaluate_objective(x))
+    a: float | None = None
+    b: float | None = None
+    fa = 0.0
+    for i in range(len(fxs) - 1):
+        left, right = fxs[i], fxs[i + 1]
+        if left is None or right is None:
+            continue
+        if left == 0.0:  # an exact root sitting on a scan node — no bracket to halve
+            a = b = xs[i]
+            fa = left
+            break
+        if (left < 0) != (right < 0):  # opposite signs straddle a root
+            a, b, fa = xs[i], xs[i + 1], left
+            break
+
+    iterations = 0
+    if a is not None and b is not None and not timed_out:
+        # Halve the straddling cell until it is narrower than the mode resolves.
+        while (b - a) > x_tol and iterations < _MAX_ITERATIONS:
+            if time.monotonic() >= deadline:
+                timed_out = True  # hard 2s cap reached — stop with the best seen so far
+                break
+            m = (a + b) / 2
+            fm = evaluate_objective(m)
+            if fm is None:  # a domain error opened up inside the cell — stop here
+                break
+            if fm == 0.0:  # landed exactly on the root
+                break
+            if (fm < 0) == (fa < 0):  # m has a's sign — the root is in [m, b]
+                a, fa = m, fm
+            else:  # opposite sign — the root is in [a, m]
+                b = m
+            iterations += 1
+
+    # Grid polish (fixed-point / rational), identical to golden-section's: re-test the
+    # grid neighbours of the best point so a root sitting exactly on the grid is found
+    # (residual 0) rather than missed by a quantised hair. Skipped on float and timeout.
+    if best_solution is not None and mode is not Mode.FLOATING_POINT and not timed_out:
+        step = 10.0**-scale
+        centre = best_solution.to_float()
+        for k in (-2, -1, 1, 2):
+            evaluate_objective(centre + k * step)
+
+    # Float snap polish, identical to golden-section's: snap a drifted answer onto its
+    # clean rounding when no worse, so a crossing found at 1.999…97 lands on 2.
+    if best_solution is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            [best_solution.to_float()],
+            lambda point: evaluate_objective(point[0], accept_ties=True),
+            [(lower, upper)],
+        )
+
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
+        )
+    if best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
+        )
+        if a is None:  # the scan found no sign change anywhere in the bracket
+            raise SolverError(
+                f"No sign change for {variable!r} in [{lower}, {upper}], so bisection "
+                f"has no root to bracket. Widen or move the bracket — or, for a root "
+                f"that only touches zero without crossing (even multiplicity), use "
+                f"golden-section / brent-parabolic with objective='find-minimum' (or "
+                f"'find-maximum'). The closest is |expr| = {best_obj:.6g} at "
+                f"{variable} = {best_solution.to_string()}.{limit}"
+            )
+        raise SolverError(  # a straddle was found but the root is off the mode's grid
+            f"No solution: the expression does not reach zero for {variable!r} in "
+            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
+            f"at {variable} = {best_solution.to_string()}.{limit}"
+        )
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.BISECTION.value,
         best_solution,
         best_value,
         iterations,

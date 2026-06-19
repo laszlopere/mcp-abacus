@@ -1474,7 +1474,10 @@ so the user-scoped `abacus` MCP registration picks up the new build.
 
 [ ] 33.  MORE SOLVER ALGORITHMS — candidates beyond golden-section search,
          each reported via the `algorithm` field (32.3).
-    [ ] 33.1.  Bisection — bracketed root, sign change, robust.
+    [x] 33.1.  Bisection — bracketed root, sign change, robust. Scans the bracket
+               for the first sign-changing cell (endpoints need not straddle) and
+               halves it; find-root only; distinct "no sign change" error. See
+               solver.bisection.
     [ ] 33.2.  Brent's method — root, bisection + secant/inverse-quad.
     [ ] 33.3.  Secant — root, no derivative, superlinear.
     [ ] 33.4.  Newton-Raphson — root via symbolic derivative.
