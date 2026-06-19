@@ -112,6 +112,10 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
     "lcm": Value.lcm,  # 40.8 — variadic; math.lcm of magnitudes, integer-only, zero absorbs to 0
     "factorial": Value.factorial,  # 40.4 — n! for a non-negative integer, exact every mode, capped
+    "pct": Value.pct,  # 36.1 — p percent of x (x*p/100), follows the mode's / rule
+    "pct_change": Value.pct_change,  # 36.1 — signed relative change (new-old)/old, mode's / rule
+    "bps": Value.bps,  # 36.2 — b basis points of x (x*b/10000), follows the mode's / rule
+    "compound": Value.compound,  # 36.3 — principal*(1+rate)**periods, per-period rate, mode's rule
 }
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
@@ -211,6 +215,14 @@ FUNCTION_HELP: dict[str, str] = {
     "lcm": "least common multiple of the operands; integer-only, any zero gives 0, exact always",
     "factorial": "n! for a non-negative integer; exact in every type, refuses negative/non-integer "
     "operands, capped at 1000 (float refuses past the double range, ~n>170)",
+    "pct": "p percent of x (x*p/100); explicit so the caller never hand-rolls /100, follows the "
+    "type's / rule",
+    "pct_change": "signed relative change (new-old)/old as a fraction; follows the type's / rule, "
+    "divides by zero when old is 0",
+    "bps": "b basis points of x (x*b/10000); the bps-vs-percent-safe twin of pct, follows the "
+    "type's / rule",
+    "compound": "compound growth principal*(1+rate)**periods; rate is PER PERIOD and periods "
+    "counts the same unit, follows the type's power/multiply rules",
     "pi": "circle constant pi, usable bare as `pi`; inexact in fixed-point/float, rational refuses",
     "e": "Euler's number e, usable bare as `e`; inexact in fixed-point/float, rational refuses",
     "time": "current Unix epoch seconds; exact except in float",

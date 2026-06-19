@@ -830,3 +830,187 @@ def test_a_domain_error_aborts_the_group_with_a_clean_message():
     payload = _calc(program)
     assert payload["values"] is None
     assert payload["error"] == "square root of a negative value"
+
+
+def test_percentage_helpers_on_round_money():
+    # The financial pair (36.1) on a worked money example: a shared `price`, then pct
+    # takes a percent OF it (price * p / 100) and pct_change reads the signed relative
+    # move between two prices ((new - old) / old). At money scale (floor 2) these land
+    # cleanly, so each is exact — the everyday percentage ops that LLMs hand-roll wrong.
+    program = _annotated(
+        "pct takes a percent of a price; pct_change reads the move between two prices",
+        "price = 250.00\n"
+        "pct(price, 8)\n"  # 8% of 250.00
+        "pct(price, 8.5)\n"  # a fractional percent still lands on the grid
+        "pct_change(price, 300.00)\n"  # +20% move up
+        "pct_change(price, 200.00)\n"  # -20% move down
+        "pct_change(price, price)",  # no move
+    )
+    assert _values(_calc(program, floor=2)) == [
+        "20.00 (exact)",  # 250.00 * 8 / 100
+        "21.25 (exact)",  # 250.00 * 8.5 / 100
+        "0.20 (exact)",  # (300 - 250) / 250
+        "-0.20 (exact)",  # (200 - 250) / 250, signed
+        "0.00 (exact)",  # identical old/new
+    ]
+
+
+def test_percentage_helpers_follow_the_division_rounding_rule():
+    # Both helpers COMPUTE via the engine's own / (19.3.4), so at the default scale-0
+    # grid a sub-unit result is rounded away and flagged inexact — the same / rule
+    # every other dividing function obeys, with the actionable floor hint attached.
+    program = _annotated(
+        "at scale 0 a fractional percentage rounds to a whole and reads inexact",
+        "pct(10, 5)\npct_change(200, 250)",
+    )
+    hint = "inexact, rounded to 0 decimals — pass min_fixed_point_precision for more"
+    assert _values(_calc(program)) == [
+        f"0 ({hint}; e.g. =4 → 0.5000)",  # 10 * 5 / 100 = 0.5, rounded half-to-even to 0
+        f"0 ({hint}; e.g. =4 → 0.2500)",  # (250 - 200) / 200 = 0.25, rounded to 0
+    ]
+
+
+def test_percentage_helpers_in_rational_are_exact():
+    # In rational mode the / never rounds, so both helpers carry the exact fraction:
+    # 15% of 200 is the whole 30, and a relative change that is not a round percentage
+    # is kept as the exact ratio (1/4, 1/3) instead of a rounded decimal.
+    program = _annotated(
+        "rational keeps percentage results as exact fractions",
+        "pct(200, 15)\npct_change(200, 250)\npct_change(3, 4)",
+    )
+    assert _values(_calc(program, mode="rational")) == [
+        "30 (exact)",  # 200 * 15 / 100
+        "1/4 (exact)",  # (250 - 200) / 200
+        "1/3 (exact)",  # (4 - 3) / 3
+    ]
+
+
+def test_percentage_helpers_in_floating_point_are_inexact():
+    # In floating-point both helpers inherit binary64's unconditional inexact flag,
+    # even when the value is whole (30.0) — the same convention every float result here
+    # follows.
+    program = _annotated(
+        "floating-point flags every percentage result inexact",
+        "pct(200, 15)\npct_change(200, 250)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == [
+        "30.0 (inexact)",
+        "0.25 (inexact)",
+    ]
+
+
+def test_pct_change_from_zero_divides_by_zero():
+    # pct_change puts the OLD value in the denominator, so a zero baseline is a divide
+    # by zero — it aborts the whole program with the plain / error, the same stance as
+    # any other / by zero (19.3.4), discarding the earlier valid result.
+    program = _annotated(
+        "a zero baseline makes pct_change divide by zero and aborts the group",
+        "pct_change(200, 250)\npct_change(0, 5)",
+    )
+    payload = _calc(program)
+    assert payload["values"] is None
+    assert payload["error"] == "fixed-point division by zero"
+
+
+def test_basis_points_are_a_percent_safe_hundredth():
+    # bps (36.2) takes b basis points OF x (x * b / 10000) — the bps-vs-percent-safe
+    # twin of pct: 25 bps of a million is 2500 (0.25%), NOT 25%. By definition 100 bps
+    # equals 1%, so bps(x, 100) and pct(x, 1) agree, and bps(x, 10000) is the whole x.
+    program = _annotated(
+        "bps reads basis points; 100 bps == 1% and 10000 bps == the whole",
+        "bps(1000000.00, 25)\n"  # 25 bps = 0.25% of 1,000,000
+        "bps(1000000.00, 10000)\n"  # 10000 bps = 100% = the whole
+        "bps(200.0000, 100)\n"  # 100 bps...
+        "pct(200.0000, 1)",  # ...is the same as 1%
+    )
+    assert _values(_calc(program, floor=4)) == [
+        "2500.0000 (exact)",  # 1,000,000 * 25 / 10000
+        "1000000.0000 (exact)",  # the whole amount
+        "2.0000 (exact)",  # 100 bps of 200
+        "2.0000 (exact)",  # 1% of 200 — identical
+    ]
+
+
+def test_basis_points_in_rational_and_floating_point():
+    # bps follows the / rule like pct: rational keeps the exact fraction (3 bps of 3 is
+    # 3/10000, not a rounded decimal), while floating-point flags every result inexact
+    # even when the value is whole (2500.0).
+    rational = _annotated(
+        "rational bps stays an exact fraction",
+        "bps(1000000, 25)\nbps(3, 1)",
+    )
+    assert _values(_calc(rational, mode="rational")) == [
+        "2500 (exact)",
+        "3/10000 (exact)",
+    ]
+    floating = _annotated("floating-point bps is inexact", "bps(1000000, 25)")
+    assert _values(_calc(floating, mode="floating-point")) == ["2500.0 (inexact)"]
+
+
+def test_compound_growth_over_whole_periods():
+    # compound (36.3) grows a principal by a PER-PERIOD rate over a whole number of
+    # periods: 1000 at 5% for 3 periods is 1000 * 1.05**3 = 1157.625. The power is exact
+    # via mantissa arithmetic, but the per-period FACTOR is quantized at the active
+    # scale — at money scale (floor 2) 1.05**3 rounds to 1.16, so the result reads
+    # inexact (and compounds the loss to 1160.00); raising the floor to 6 keeps every
+    # digit and the result is exact. A zero period count is the principal untouched.
+    money = _annotated(
+        "compound at money scale rounds the growth factor and reads inexact",
+        "compound(1000.00, 0.05, 3)\ncompound(1000.00, 0.05, 0)",
+    )
+    assert _values(_calc(money, floor=2)) == [
+        "1160.00 (inexact, rounded to 2 decimals)",  # 1.05**3 quantized to 1.16 first
+        "1000.00 (exact)",  # any base to the 0th power: the principal
+    ]
+    wide = _annotated(
+        "a wider scale keeps 1.05**3 exact, so the growth is exact",
+        "compound(1000.00, 0.05, 3)",
+    )
+    assert _values(_calc(wide, floor=6)) == ["1157.625000 (exact)"]
+
+
+def test_compound_handles_a_negative_rate_and_a_fractional_period():
+    # A negative per-period rate is decay (the factor 1 + rate is below 1), and a
+    # fractional period rides the **'s fractional-exponent ladder (28.20.1): 0.21 growth
+    # for half a period is the square root of 1.21, which lands exactly on 1.1, so the
+    # half-period result is exact.
+    program = _annotated(
+        "compound decays on a negative rate and takes a perfect root on a half period",
+        "compound(1000.00, -0.10, 2)\ncompound(100.00, 0.21, 0.5)",
+    )
+    assert _values(_calc(program, floor=4)) == [
+        "810.0000 (exact)",  # 1000 * 0.9**2
+        "110.0000 (exact)",  # 100 * sqrt(1.21) = 100 * 1.1
+    ]
+
+
+def test_compound_in_rational_is_exact_over_integer_periods_and_refuses_a_fraction():
+    # In rational mode compound is exact over a whole period count (the power is an
+    # integer Fraction power, no rounding): 1000 at 1/10 for 2 periods is exactly 1210.
+    # A FRACTIONAL period makes (1 + rate)**periods an irrational power, which rational
+    # refuses rather than fabricate — the same exact-or-refuse stance ** takes (28.20).
+    exact = _annotated(
+        "rational compound is exact over whole periods",
+        "compound(1000, 1/10, 2)\ncompound(1000, 1/10, 0)",
+    )
+    assert _values(_calc(exact, mode="rational")) == [
+        "1210 (exact)",  # 1000 * (11/10)**2
+        "1000 (exact)",  # the 0th-power identity
+    ]
+    refuses = _annotated(
+        "a fractional period needs an irrational power, which rational refuses",
+        "compound(1000, 1/10, 1/2)",
+    )
+    payload = _calc(refuses, mode="rational")
+    assert payload["values"] is None
+    assert payload["error"] == "rational power requires an integer exponent"
+
+
+def test_compound_in_floating_point_is_inexact():
+    # In floating-point compound inherits binary64's unconditional inexact flag and its
+    # rounding — 1000 * 1.05**3 is the nearest double, flagged inexact.
+    program = _annotated(
+        "floating-point compound is the nearest double, inexact",
+        "compound(1000, 0.05, 3)",
+    )
+    assert _values(_calc(program, mode="floating-point")) == ["1157.6250000000002 (inexact)"]

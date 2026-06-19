@@ -1633,12 +1633,12 @@ so the user-scoped `abacus` MCP registration picks up the new build.
          classes directly and lean on the money-safe fixed-point story. Each is the
          two-step function add of 28 unless flagged; all COMPUTE, so they follow
          the active mode's `/` rule and rounding mode (34).)
-    [ ] 36.1.  pct(x, p) / pct_change(old, new) — p percent of x, and the signed
+    [x] 36.1.  pct(x, p) / pct_change(old, new) — p percent of x, and the signed
                relative change (new-old)/old. The everyday percentage op LLMs get
                wrong; explicit so the caller never hand-rolls /100.
-    [ ] 36.2.  bps(x, b) — b basis points of x (b/10000 * x). Exists SOLELY to make
+    [x] 36.2.  bps(x, b) — b basis points of x (b/10000 * x). Exists SOLELY to make
                the bps-vs-percent distinction un-confusable at the call site.
-    [ ] 36.3.  compound(principal, rate, periods) and the rate-period helpers —
+    [x] 36.3.  compound(principal, rate, periods) and the rate-period helpers —
                make the period explicit so an annual rate can't silently act
                monthly; document that `rate` is per-period and `periods` counts the
                same unit.

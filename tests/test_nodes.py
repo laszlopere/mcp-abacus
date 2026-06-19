@@ -179,6 +179,10 @@ def test_function_arities_match_the_registry():
         "gcd": (1, None),  # 40.7 — variadic, minimum one operand
         "lcm": (1, None),  # 40.8 — variadic, minimum one operand
         "factorial": (1, 1),  # 40.4 — UNARY, n! for a non-negative integer
+        "pct": (2, 2),  # 36.1 — BINARY, p percent of x
+        "pct_change": (2, 2),  # 36.1 — BINARY, (new-old)/old
+        "bps": (2, 2),  # 36.2 — BINARY, b basis points of x
+        "compound": (3, 3),  # 36.3 — TERNARY, principal*(1+rate)**periods
         "pi": (0, 0),  # nullary constant (29.2)
         "e": (0, 0),  # nullary constant (29.2)
         "time": (0, 0),  # nullary clock reading (28.1)

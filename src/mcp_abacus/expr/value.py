@@ -1967,6 +1967,70 @@ class Value:
         """
         return self.variance(*others).sqrt()
 
+    def pct(self, p: "Value") -> "Value":
+        """``p`` percent OF ``self`` (36.1) — ``self * p / 100``.
+
+        The everyday percentage op, named so the caller never hand-rolls the
+        ``/ 100`` (the off-by-100 / 25-bps-read-as-25% class). It COMPUTES, so it
+        composes the engine's own ``*`` and ``/`` (19.3.3/19.3.4): the multiply
+        stays on the grid, then the divide by a same-mode whole ``100`` follows the
+        active mode's ``/`` rule — fixed-point quantizes to the covering scale and
+        may be inexact, rational is exact, float rounds. Same-mode is enforced by
+        the composed ``*``. ``pct(x, 100)`` is ``x`` and ``pct(x, 0)`` is ``0``.
+        For basis points use ``bps`` (36.2).
+        """
+        hundred = Value._from_scaled_int(100, 0, self.mode)
+        return self.mul(p).div(hundred)
+
+    def pct_change(self, new: "Value") -> "Value":
+        """Signed relative change from ``self`` (old) to ``new`` (36.1) —
+        ``(new - old) / old``, a fraction (multiply by 100, or feed to ``pct``, for
+        a percentage).
+
+        It COMPUTES, composing ``-`` then ``/`` (19.3.2/19.3.4), so it follows the
+        active mode's ``/`` rule: fixed-point quantizes and may be inexact, rational
+        is exact, float rounds. Same-mode is enforced by the composed ops. The old
+        value (``self``) is the denominator, so ``pct_change(0, x)`` divides by zero
+        and RAISES like any ``/`` by zero; ``pct_change(x, x)`` is ``0``.
+        """
+        return new.sub(self).div(self)
+
+    def bps(self, b: "Value") -> "Value":
+        """``b`` basis points OF ``self`` (36.2) — ``self * b / 10000``.
+
+        The basis-point twin of ``pct`` (36.1), existing SOLELY to make the
+        bps-vs-percent distinction un-confusable at the call site (the 25-bps read
+        as 25% class — 25 bps is 0.25%). It COMPUTES, composing the engine's own
+        ``*`` and ``/`` (19.3.3/19.3.4): the multiply stays on the grid, then the
+        divide by a same-mode whole ``10000`` follows the active mode's ``/`` rule —
+        fixed-point quantizes to the covering scale and may be inexact, rational is
+        exact, float rounds. Same-mode is enforced by the composed ``*``.
+        ``bps(x, 10000)`` is ``x`` and ``bps(x, 100)`` equals ``pct(x, 1)``.
+        """
+        myriad = Value._from_scaled_int(10000, 0, self.mode)
+        return self.mul(b).div(myriad)
+
+    def compound(self, rate: "Value", periods: "Value") -> "Value":
+        """Compound growth of ``self`` (the principal) at a PER-PERIOD ``rate`` over
+        ``periods`` periods (36.3) — ``principal * (1 + rate)**periods``.
+
+        Named so the period is EXPLICIT: ``rate`` is the growth PER PERIOD and
+        ``periods`` counts the SAME unit, so an annual rate can never silently act
+        monthly (the rate-period confusion class — quote a monthly rate with a month
+        count). It COMPUTES, composing ``+`` to build the per-period factor
+        ``1 + rate``, ``**`` (19.3.7) to raise it, then ``*`` to scale the principal,
+        so it inherits each mode's rule: with a WHOLE ``periods`` the power is exact
+        via mantissa arithmetic (fixed-point) or an integer Fraction power
+        (rational), and only the final multiply may quantize; a FRACTIONAL
+        ``periods`` rides ``**``'s fractional-exponent ladder (28.20.1) — exact on a
+        perfect root, otherwise an inexact series (rational REFUSES an irrational
+        power, the exact-or-refuse stance). Same-mode is enforced by the composed
+        ops. ``compound(p, r, 0)`` is ``p`` (any base to the 0th power).
+        """
+        one = Value._from_scaled_int(1, 0, self.mode)
+        factor = one.add(rate).pow(periods)
+        return self.mul(factor)
+
     def _as_integer(self, what: str) -> int:
         """This Value as a signed Python int, REFUSING any fractional part (40.7).
 
