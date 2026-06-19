@@ -817,78 +817,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                      as 0.
 
 
-[ ] 25.  ENHANCING THE TOOLS
-    [x] 25.1.  The precision of the return value MUST absolutely be indicated
-               in the return. Otherwise a simple `/` operator may mislead the
-               caller seriously. The exact/inexact information is ALREADY there
-               (computed today as the Value.exact flag) — this is purely about
-               returning it, NOT about the calculation. When an inexact value
-               is reported back for a fixed-point calculation, the precision
-               must also be reported. The return string itself should carry the
-               exact/inexact information; AND separate fields should be returned
-               alongside it — the precision (when known) and the exact/inexact
-               property (as it is calculated now).
-    [x] 25.2.  Make `help` and the `calculate` description make it obvious that
-               M@D is base-prefixed-ONLY (19.2.1): only 0x.. 0o.. 0b.. take @D;
-               a DECIMAL mantissa (123.45@2) is INVALID.
-    [x] 25.3.  The "inexact" reply pushes the caller the WRONG way: toward
-               floating-point, instead of toward a higher-precision fixed-
-               point. Steer the inexact case toward more fixed-point
-               precision, NOT toward float.
-
-                 | # | Expression          | Mode            | Result                                    |
-                 |---|---------------------|-----------------|-------------------------------------------|
-                 | 1 | 928347569 / 2345    | fixed-point     | 395884 (inexact, rounded to 0 decimals)   |
-                 | 2 | 928347569 % 2345    | fixed-point     | 1934 (exact)                              |
-                 | 3 | 928347569 / 2345    | floating-point  | 395883.82473347546 (inexact)              |
-
-               TESTED 2026-06-13: docstring path confirmed — a fresh caller
-               (Claude) asked 89237465 / 2345 and made its FIRST call with
-               min_fixed_point_precision=10 already set, never touching
-               floating-point. The precision came from the DOCSTRING
-               description of the argument (25.3.2's "documented in the
-               calculate docstring, known before the first call"), NOT from
-               the inline =K annotation hint — there was no prior inexact
-               reply in-session to read that hint from. So this validates the
-               docstring-steering path only; the annotation-string hint path
-               (25.3.2 HOW, first clause) remains untested here.
-        [x] 25.3.1.  The call should take a min_fixed_point_precision argument,
-                     accepted only in fixed-point mode.
-        [x] 25.3.2.  Direct the caller to min_fixed_point_precision.
-                     WHEN — only on an inexact fixed-point result (the one
-                     case the arg helps and float tempts).
-                     HOW — name it in that result's inexact annotation
-                     ("...rounded to N decimals — pass
-                     min_fixed_point_precision=K for more"), and document it
-                     in the calculate docstring (known before the first call).
-        [x] 25.3.3.  Cheap to compute twice: alongside the result, preview
-                     what a higher precision would have shown — "the result
-                     is 27, but with min_fixed_point_precision=4 it would be
-                     27.6523". Add this ONLY if: fixed-point mode (the
-                     default); min_fixed_point_precision was NOT given in the
-                     call; AND the preview precision actually changes the
-                     value (not 27.0000).
-                     REPLY SHAPE (decided 2026-06-13). ONE representative
-                     preview, NOT a ladder — a single nullable `preview`
-                     sibling field that mirrors the reply's own string +
-                     structured-fields duality, recursed one level:
-                       "preview": { "min_fixed_point_precision": K,
-                                    "value": "395883.82", "exact": false }
-                     null whenever the three gate conditions above are not all
-                     met. The nested object is self-documenting — its
-                     min_fixed_point_precision key IS the argument to pass and
-                     its value is what you'd get back — and the ACTUAL answer
-                     stays at the TOP level, so nesting (not just naming) keeps
-                     the what-if from being mistaken for the result. The
-                     `value` annotation string ALSO carries the hint inline
-                     ("...for more; e.g. =K -> 395883.82") so the string never
-                     lies on its own.
-                     PREVIEW PRECISION K = result scale + N, a small fixed bump
-                     (N = 4): deterministic and cheap, no adaptive search. The
-                     "changes the value" gate still applies — if scale+N renders
-                     value-equal to the result (the rare "27.0000" case), omit
-                     the preview (null).
-
 [x] 26.  Make the `analyze` AST printout more useful to the caller.
     [x] 26.1.  Print the value as "value = 1/10 (type [prec])".
     [x] 26.2.  Rename "Number" to "Literal"; show the lexeme (already shown)
@@ -903,56 +831,6 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                holds (e.g. 0.1 -> 0.1000000000000000055...).
     [x] 26.7.  For rational, show a decimal approximation beside the exact
                fraction (e.g. 1/3 = 0.3333...).
-
-
-[x] 27.  ENRICH THE `calculate` REPLY (and its docstring) for the AI caller.
-         Six reply-shape changes on top of 25.*, all so the caller reads the
-         numbers back without guessing the regime or re-deriving the bits.
-         Decided 2026-06-13. Scope is the `calculate` STRUCTURED reply; `analyze`
-         already renders hex and per-mode detail inline in its tree (26.3).
-    [x] 27.1.  Always return `mode` in the reply — the RESOLVED Mode.value
-               (e.g. "fixed-point"), even on success where it equals the
-               request. The reply must stand on its own: a request alias like
-               "double" must read back as its canonical "floating-point". On
-               the error path `mode` is null alongside value/exact/precision
-               (an unknown mode never resolved), matching _error's all-null shape.
-    [x] 27.2.  Rename the `preview` field to `offered_precision`. Same gate and
-               meaning as 25.3.3 — the what-if at result-scale + 4 decimals, null
-               unless fixed-point AND inexact AND no floor was passed — but the
-               name states what it IS: a higher precision being offered to the
-               caller, not a preview of the answer they asked for.
-    [x] 27.3.  `offered_precision` carries `mode` too (always "fixed-point" — it
-               is only ever produced in fixed-point), mirroring 27.1 so the
-               nested object is as self-describing as the top-level reply.
-    [x] 27.4.  `offered_precision.value` is ANNOTATED exactly as the top-level
-               `value` is — with its OWN exact/inexact verdict and rounding,
-               e.g. "3.3333 (inexact, rounded to 4 decimals — ...)", not a bare
-               "3.3333". The offered value is itself a fixed-point result and may
-               still be inexact (10/3 never terminates at any scale), so it must
-               declare its own precision the same way the main value does. Show
-               the offered value the same way the main value shows its value.
-    [x] 27.5.  Wherever a value STRING is returned, return a sibling
-               `value_hex_dump` with that value in hex: at the top level beside
-               `value`, and inside `offered_precision` beside its `value`. Reuse
-               Value.details()'s hex rendering (26.3) — fixed-point as M@D hex
-               (mantissa in whole-byte hex, `@scale` dropped at scale 0),
-               floating-point as the raw 64-bit IEEE-754 pattern.
-               DECISION (2026-06-13): rational has no single integer to dump (it
-               is a numerator/denominator pair) — `value_hex_dump` is NULL in
-               rational mode. It is meaningful only for the bit-backed types
-               (fixed-point's mantissa, float's IEEE bits). Null on the error
-               path too (no value to dump).
-    [x] 27.6.  The top-level `value` string KEEPS its inline worked-example hint
-               ("...for more; e.g. =4 → 3.3333") when an offered_precision exists
-               — even though offered_precision now carries that same value
-               structurally AND annotated (27.4). DECISION (2026-06-13): the
-               string must stay honest read on its own (25.3.3's rationale), so
-               the inline hint is duplicated, not relocated.
-    [x] 27.7.  Update the `calculate` docstring (the AI-facing result
-               description) to cover the new/renamed fields: `mode`,
-               `value_hex_dump` (with the null-in-rational rule), and
-               `offered_precision` (the rename of `preview`, now carrying `mode`,
-               an annotated `value`, and its own `value_hex_dump`).
 
 
 [x] 28.  MORE FUNCTIONS  (beyond abs/sqrt; call machinery is section 22. Each is the
