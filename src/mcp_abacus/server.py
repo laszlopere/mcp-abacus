@@ -878,9 +878,7 @@ def solver(
         return _solver_error(exc.message)
     try:
         # Parse first: auto-detecting an omitted `variable` (43.3) needs the AST.
-        unknowns = _resolve_unknowns(
-            variable, lower, upper, variables, resolved_algorithm, node
-        )
+        unknowns = _resolve_unknowns(variable, lower, upper, variables, resolved_algorithm, node)
     except SolverError as exc:
         return _solver_error(exc.message)
     # 43.7: a fixed-point search at scale 0 floors the variable to whole numbers and
@@ -970,9 +968,7 @@ def _resolve_unknowns(
     if variable is None:
         variable = autodetect_variable(node)  # 43.3: infer the sole free name
     if lower is None or upper is None:
-        raise SolverError(
-            f"No search bracket given: pass lower and upper bounds for {variable!r}."
-        )
+        raise SolverError(f"No search bracket given: pass lower and upper bounds for {variable!r}.")
     return [(variable, float(lower), float(upper))]
 
 
