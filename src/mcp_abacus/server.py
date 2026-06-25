@@ -27,6 +27,7 @@ from mcp_abacus.expr.value import (
     Value,
     resolve_inexact_handling,
     resolve_mode,
+    selectable_modes,
 )
 from mcp_abacus.solver import (
     Algorithm,
@@ -263,7 +264,11 @@ def _offered_precision_for(
     """
     if mode is not Mode.FIXED_POINT or floor_given is not None or value.exact:
         return None
-    assert precision is not None  # fixed-point always carries a scale
+    if precision is None:
+        # The result is not a single fixed-point scalar — e.g. a VECTOR built inside
+        # fixed-point mode (19.1.10) carries no scale of its own. There is no single
+        # scale to bump, so make no offer (the inexact verdict still surfaces).
+        return None
     floor = precision + _OFFERED_BUMP
     root.evaluate(mode, floor)
     previewed = statement.value
@@ -343,9 +348,12 @@ def _resolve_mode_and_precision(
     try:
         selected = resolve_mode(mode)
     except ValueError:
-        valid = ", ".join(m.value for m in Mode)
+        # selectable_modes drops the internal VECTOR container (19.1.10), so a bad mode
+        # is never offered or suggested "vector" — it is not a mode a caller can pick.
+        names = [m.value for m in selectable_modes()]
+        valid = ", ".join(names)
         # 43.5: a typo'd mode gets the nearest valid spelling (over names + aliases).
-        hint = did_you_mean(mode, [m.value for m in Mode] + list(MODE_ALIASES))
+        hint = did_you_mean(mode, names + list(MODE_ALIASES))
         return None, f"Unknown mode: {mode!r}.{hint} Valid modes: {valid}."
     if min_fixed_point_precision is not None:
         if selected not in (Mode.FIXED_POINT, Mode.COMPLEX):

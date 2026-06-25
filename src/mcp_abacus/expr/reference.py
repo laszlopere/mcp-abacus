@@ -19,7 +19,7 @@ from collections.abc import Callable
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
-from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode
+from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode, selectable_modes
 
 
 def _types_section() -> str:
@@ -33,7 +33,9 @@ def _types_section() -> str:
     for name, mode in MODE_ALIASES.items():
         aliases[mode].append(name)
     lines = []
-    for m in Mode:
+    # Only the SELECTABLE modes (selectable_modes drops the internal VECTOR container,
+    # 19.1.10) — the list is exactly what a caller may pass as `mode`, never more.
+    for m in selectable_modes():
         suffix = f"; aliases: {', '.join(aliases[m])}" if aliases[m] else ""
         lines.append(f"{m.value} — {MODE_HELP[m]}{suffix}")
     return "\n".join(lines)
@@ -74,6 +76,9 @@ def _language_section() -> str:
             "                both error; write a decimal value as its digits (123.45), never @.",
             "                e.g. 0x59682F00@9 = 1.5; 0xDE0B6B3A7640000@18 = 1 ETH",
             "  grouping      ( )",
+            "  vector        [a, b, …] one-dimensional list of values ([1, 2, 3], []); built",
+            "                in the current mode. No indexing or arithmetic yet — operators and",
+            "                functions refuse a vector.",
             "",
             "variables & statements:",
             "  name          identifier [A-Za-z_][A-Za-z0-9_]*; a bare name reads a",

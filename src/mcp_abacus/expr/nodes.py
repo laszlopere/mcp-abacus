@@ -19,6 +19,7 @@ from mcp_abacus.expr.value import (
     EvalContext,
     InexactHandling,
     Mode,
+    NotRepresentableError,
     UndefinedVariableError,
     Value,
     VariableStore,
@@ -609,6 +610,45 @@ class Number(Node):
 
 
 @dataclass(frozen=True, slots=True)
+class VectorLiteral(Node):
+    """A vector literal ``[a, b, …]`` — an ordered list of element sub-expressions.
+
+    The one place a VECTOR Value is built (19.1.10). Strictly one-dimensional: each
+    element evaluates in the run's chosen SCALAR mode, then ``Value.vector`` packs the
+    results into a VECTOR carrying that element mode (and refuses a nested vector). The
+    list may be EMPTY (``[]``). Like every node it has no mode of its own — the mode
+    rides the context down to the element literals, exactly as for a function's args.
+    """
+
+    elements: tuple[Node, ...]
+    line: int = field(kw_only=True, compare=False)
+    value: Value | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _validate_line(self.line)
+
+    def _label(self) -> str:
+        # 26.8: parallels LITERAL / CALL — VECTOR with its element count.
+        return f"VECTOR ({len(self.elements)} elements)"
+
+    def source(self) -> str:
+        # The bracketed, comma-separated element sources (35.2.2); "[]" when empty.
+        return "[" + ", ".join(element.source() for element in self.elements) + "]"
+
+    def _operand_form(self, scale: int | None) -> str:
+        # The bracket syntax over the elements' VALUES at the active precision (35.3.1).
+        return "[" + ", ".join(_operand_value_string(e, scale) for e in self.elements) + "]"
+
+    def _children(self) -> tuple[Node, ...]:
+        return self.elements
+
+    def _evaluate(self, ctx: EvalContext) -> Value:
+        # Each element evaluates in the run's (scalar) mode; Value.vector packs them into
+        # a one-dimensional VECTOR carrying that element mode (18.2 / 19.1.10).
+        return Value.vector([element._walk(ctx) for element in self.elements], ctx.mode)
+
+
+@dataclass(frozen=True, slots=True)
 class UnaryOp(Node):
     """A unary sign operator applied to an operand."""
 
@@ -758,7 +798,14 @@ class FuncCall(Node):
             return dispatch_special_form(self.name, ctx, self.args)
         if self.name in _NULLARY_FUNCS:
             return _NULLARY_FUNCS[self.name](ctx)
-        return _FUNCS[self.name](*(arg._walk(ctx) for arg in self.args))
+        operands = tuple(arg._walk(ctx) for arg in self.args)
+        # No function accepts a vector yet (19.1.10): refuse one uniformly here, the
+        # single point every operand-function flows through, rather than a VECTOR arm
+        # in each of the ~60 Value methods. TEMPORARY — when vector-consuming functions
+        # (covariance/correlation, 40.13/40.14) land, this becomes a per-function check.
+        if any(operand.mode is Mode.VECTOR for operand in operands):
+            raise NotRepresentableError(f"{self.name}() does not accept a vector")
+        return _FUNCS[self.name](*operands)
 
 
 @dataclass(frozen=True, slots=True)

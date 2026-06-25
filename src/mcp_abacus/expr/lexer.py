@@ -43,11 +43,15 @@ NAME = "NAME"  # identifier: function names (22.1); the function set is not the 
 OP = "OP"
 LPAREN = "LPAREN"
 RPAREN = "RPAREN"
+LBRACKET = "LBRACKET"  # vector literal open '[' (19.1.10)
+RBRACKET = "RBRACKET"  # vector literal close ']' (19.1.10)
 COMMA = "COMMA"  # argument separator, reserved for n-ary function calls (22.1)
 NEWLINE = "NEWLINE"  # statement separator (30.5); insignificant inside parentheses
 EOF = "EOF"
 
-TOKEN_KINDS: frozenset[str] = frozenset({NUMBER, NAME, OP, LPAREN, RPAREN, COMMA, NEWLINE, EOF})
+TOKEN_KINDS: frozenset[str] = frozenset(
+    {NUMBER, NAME, OP, LPAREN, RPAREN, LBRACKET, RBRACKET, COMMA, NEWLINE, EOF}
+)
 
 _DIGITS = frozenset("0123456789")
 # ^ & | bitwise, ~ bitwise NOT (24.3.2); = is the assignment operator (30.3) — not a
@@ -125,6 +129,12 @@ def tokenize(text: str) -> list[Token]:
             i += 1
         elif char == ")":
             tokens.append(Token(RPAREN, char, line))
+            i += 1
+        elif char == "[":
+            tokens.append(Token(LBRACKET, char, line))
+            i += 1
+        elif char == "]":
+            tokens.append(Token(RBRACKET, char, line))
             i += 1
         elif char == ",":
             tokens.append(Token(COMMA, char, line))

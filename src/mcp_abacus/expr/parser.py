@@ -33,11 +33,13 @@ bare node; several wrap in a Sequence.
 from mcp_abacus.expr.lexer import (
     COMMA,
     EOF,
+    LBRACKET,
     LPAREN,
     NAME,
     NEWLINE,
     NUMBER,
     OP,
+    RBRACKET,
     RPAREN,
     Token,
     tokenize,
@@ -53,6 +55,7 @@ from mcp_abacus.expr.nodes import (
     Sequence,
     UnaryOp,
     Var,
+    VectorLiteral,
     _arity_ok,
     _describe_arity,
 )
@@ -239,7 +242,33 @@ class _Parser:
             if closing.kind != RPAREN:
                 raise ParseError(f"expected ')', got {_describe(closing)}", closing.line)
             return node  # parens only shape the tree — no Group node (20.2.2)
-        raise ParseError(f"expected a number, name, or '(', got {_describe(token)}", token.line)
+        if token.kind == LBRACKET:
+            return self._vector(token)
+        raise ParseError(
+            f"expected a number, name, '(', or '[', got {_describe(token)}", token.line
+        )
+
+    def _vector(self, opening: Token) -> Node:
+        """Parse a vector literal ``'[' (expr (',' expr)*)? ']'`` after the '[' (19.1.10).
+
+        Brackets bracket like parens — NEWLINE is insignificant within, so a vector may
+        span lines; the depth gate handles that, mirroring ``_call``'s argument list. The
+        element list may be EMPTY (``[]``); each element is a FULL expression, so nested
+        operators (``[1+2, 3*4]``) and even nested ``[...]`` parse here (a nested vector is
+        refused later, at evaluation — strictly one-dimensional, 19.1.10).
+        """
+        self._depth += 1
+        elements: list[Node] = []
+        if self._peek().kind != RBRACKET:
+            elements.append(self.expression())
+            while self._peek().kind == COMMA:
+                self._advance()
+                elements.append(self.expression())
+        closing = self._advance()
+        self._depth -= 1
+        if closing.kind != RBRACKET:
+            raise ParseError(f"expected ',' or ']', got {_describe(closing)}", closing.line)
+        return VectorLiteral(tuple(elements), line=opening.line)
 
     def _call(self, name: Token) -> Node:
         """Parse ``NAME '(' (expr (',' expr)*)? ')'`` after the NAME (22.2 / 29.2).

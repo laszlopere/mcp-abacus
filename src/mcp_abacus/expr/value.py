@@ -78,7 +78,7 @@ import functools
 import math
 import operator
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, localcontext
 from enum import Enum
@@ -111,6 +111,7 @@ class Mode(Enum):
     FIXED_POINT = "fixed-point"  # scaled integer; exact, money/ERC-20-safe (19.1.2)
     RATIONAL = "rational"  # exact numerator/denominator; no irrationals (19.1.7)
     COMPLEX = "complex"  # a + b*i, each part a fixed-point scaled integer (19.1.8)
+    VECTOR = "vector"  # internal 1-D container; elements carry the real (scalar) mode (19.1.10)
 
 
 # One terse line per Mode, for the language-help `types` section. Co-located with
@@ -122,7 +123,22 @@ MODE_HELP: dict[Mode, str] = {
     Mode.FIXED_POINT: "scaled integer (mantissa x 10^-decimals); exact; money / ERC-20 safe",
     Mode.RATIONAL: "exact numerator/denominator; no irrationals",
     Mode.COMPLEX: "a + b*i over two fixed-point parts; exact + - *, rounds / and transcendentals",
+    # VECTOR is an internal container, NOT a selectable mode — kept here only to honour the
+    # one-line-per-Mode contract; `selectable_modes()` filters it out of the `types` help.
+    Mode.VECTOR: "internal one-dimensional vector of values (built with [a, b, …]); not selectable",
 }
+
+
+def selectable_modes() -> list[Mode]:
+    """The modes a caller may pick for a calculation — every Mode except VECTOR.
+
+    VECTOR is an INTERNAL container type (19.1.10): a vector only ever arises from a
+    ``[a, b, …]`` literal inside some chosen SCALAR mode, never as the mode of a whole
+    calculation (``2 + 2`` has no meaning "in vector mode"). So it is excluded
+    everywhere a mode is offered to the caller — `resolve_mode` refuses it, the help
+    `types` section omits it, and a tool's "valid modes" error never suggests it.
+    """
+    return [m for m in Mode if m is not Mode.VECTOR]
 
 
 # Input-only spellings the caller may use for a mode, each resolved to its
@@ -152,11 +168,16 @@ def resolve_mode(name: str) -> Mode:
     the valid modes (23.5/23.6).
     """
     try:
-        return Mode(name)
+        mode = Mode(name)
     except ValueError:
         if name in MODE_ALIASES:
             return MODE_ALIASES[name]
         raise
+    if mode is Mode.VECTOR:
+        # VECTOR is internal-only (see selectable_modes): treat "vector" exactly like an
+        # unknown name so a caller cannot select it, and no alias ever resolves to it.
+        raise ValueError(f"{name!r} is not a valid Mode")
+    return mode
 
 
 class InexactHandling(Enum):
@@ -370,6 +391,38 @@ class Complex:
     def __post_init__(self) -> None:
         if type(self.real) is not FixedPoint or type(self.imag) is not FixedPoint:
             raise ValueError("Complex parts must both be FixedPoint")
+
+
+@dataclass(frozen=True, slots=True)
+class Vector:
+    """A one-dimensional vector: an ordered run of Values, all in one element mode.
+
+    The VECTOR payload (19.1.10). VECTOR is an INTERNAL container, not a selectable
+    calculation mode: a vector arises only from a ``[a, b, …]`` literal evaluated in
+    some chosen SCALAR mode, and every element is a Value in THAT mode — the
+    container is generic over the element type, exactly as the engine is generic
+    over ``Mode``. ``element_mode`` records that shared scalar mode explicitly so an
+    EMPTY vector still knows what it holds (its elements give no other clue).
+
+    Strictly one-dimensional: an element is never itself a vector (``element_mode``
+    is never VECTOR), so there is no nesting to recurse through. A vector is EXACT
+    only when EVERY element is exact (an empty vector vacuously so), mirroring the
+    single ``exact`` flag every Value carries.
+    """
+
+    element_mode: "Mode"
+    elements: tuple["Value", ...]
+
+    def __post_init__(self) -> None:
+        if self.element_mode is Mode.VECTOR:
+            raise ValueError("Vector element_mode must be a scalar mode, not VECTOR")
+        for element in self.elements:
+            if type(element) is not Value:
+                raise ValueError("Vector elements must all be Value")
+            if element.mode is not self.element_mode:
+                raise ValueError(
+                    f"Vector element mode {element.mode.value} != {self.element_mode.value}"
+                )
 
 
 def _hex_bytes(magnitude: int) -> str:
@@ -1010,8 +1063,8 @@ class Value:
 
     mode: Mode
     # per-mode storage: FLOATING_POINT float, FIXED_POINT FixedPoint, RATIONAL Fraction,
-    # COMPLEX Complex (a pair of FixedPoints)
-    payload: Fraction | float | FixedPoint | Complex
+    # COMPLEX Complex (a pair of FixedPoints), VECTOR Vector (a tuple of element Values)
+    payload: Fraction | float | FixedPoint | Complex | Vector
     exact: bool
     # "How inexact" (34.5.2): the EXACT signed quantization residual stored - true
     # that THIS value's own rounding introduced, as a Fraction — None when nothing
@@ -1047,6 +1100,9 @@ class Value:
             case Mode.COMPLEX:
                 if type(self.payload) is not Complex:
                     raise ValueError("COMPLEX payload must be a Complex")
+            case Mode.VECTOR:
+                if type(self.payload) is not Vector:
+                    raise ValueError("VECTOR payload must be a Vector")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1302,6 +1358,28 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
+    @classmethod
+    def vector(cls, elements: Sequence["Value"], element_mode: "Mode") -> "Value":
+        """Build a one-dimensional VECTOR Value from already-evaluated elements (19.1.10).
+
+        The elements are Values the node walk produced (the ``[a, b, …]`` literal's
+        items), all in ``element_mode`` — the scalar mode the calculation runs in. An
+        empty literal ``[]`` is allowed; ``element_mode`` is what tells it what it would
+        hold. The vector is EXACT iff every element is exact (vacuously so when empty).
+
+        Strictly one-dimensional: an element that is itself a vector is refused with a
+        NotRepresentableError (an ArithmeticError, so the node walk attaches the line) —
+        nesting like ``[[1,2],[3,4]]`` is not supported. The per-element mode match is
+        enforced structurally by ``Vector``; this only adds the user-facing 1-D rule.
+        """
+        items = tuple(elements)
+        if any(item.mode is Mode.VECTOR for item in items):
+            raise NotRepresentableError(
+                "vectors must be one-dimensional; a vector cannot hold a vector"
+            )
+        exact = all(item.exact for item in items)
+        return cls(Mode.VECTOR, Vector(element_mode, items), exact=exact)
+
     # --- binary operators (19.3.1-19.3.7) -------------------------------
     # Each requires ``other`` in the SAME mode ("No mode mixing") and returns a
     # new Value ("Immutable"). Signatures may gain mode-specific arguments later.
@@ -1315,6 +1393,12 @@ class Value:
         """
         if not isinstance(other, Value):
             raise TypeError(f"Value {op} requires a Value, got {type(other).__name__}")
+        if self.mode is Mode.VECTOR or other.mode is Mode.VECTOR:
+            # Vectors are a container with no arithmetic yet (19.1.10): refuse every
+            # binary op here, the one precondition all of them share, rather than
+            # repeating an identical VECTOR arm in each operation's match. A clean
+            # NotRepresentableError (ArithmeticError) so the node walk attaches the line.
+            raise NotRepresentableError(f"vectors do not support {op}")
         if other.mode is not self.mode:
             raise TypeError(f"mode mismatch: {self.mode.value} {op} {other.mode.value}")
         return self.exact and other.exact
@@ -1608,6 +1692,8 @@ class Value:
                 return Value(self.mode, FixedPoint(-fp.mantissa, fp.decimals), exact=self.exact)
             case Mode.COMPLEX:
                 return self._complex_neg()
+            case Mode.VECTOR:
+                raise NotRepresentableError("vectors do not support unary -")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1623,6 +1709,8 @@ class Value:
                 return Value(self.mode, FixedPoint(+fp.mantissa, fp.decimals), exact=self.exact)
             case Mode.COMPLEX:
                 return self._complex_pos()
+            case Mode.VECTOR:
+                raise NotRepresentableError("vectors do not support unary +")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1652,6 +1740,8 @@ class Value:
                 return Value(Mode.RATIONAL, inverted, exact=self.exact)
             case Mode.COMPLEX:
                 raise NotRepresentableError("bitwise NOT is undefined for complex numbers")
+            case Mode.VECTOR:
+                raise NotRepresentableError("vectors do not support bitwise ~")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3829,6 +3919,10 @@ class Value:
                 # rounded at, so the inexact verdict reads "rounded to N decimals".
                 assert isinstance(self.payload, Complex)
                 return max(self.payload.real.decimals, self.payload.imag.decimals)
+            case Mode.VECTOR:
+                # A vector has no single decimal scale — each element carries its own;
+                # the envelope drops the `[scale]` tag (the elements show their own).
+                return None
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3855,6 +3949,8 @@ class Value:
                 return float(self.payload)
             case Mode.COMPLEX:
                 raise NotRepresentableError("a complex value has no single real float")
+            case Mode.VECTOR:
+                raise NotRepresentableError("a vector has no single real float")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3913,6 +4009,11 @@ class Value:
                 if re_fp.mantissa == 0:
                     return f"{'-' if im_fp.mantissa < 0 else ''}{im_mag}i"
                 return f"{re_str}{'-' if im_fp.mantissa < 0 else '+'}{im_mag}i"
+            case Mode.VECTOR:
+                # Bracketed, comma-separated, each element in its own mode's format —
+                # the same `[a, b, …]` spelling the literal is written in (`[]` empty).
+                assert isinstance(self.payload, Vector)
+                return "[" + ", ".join(item.to_string() for item in self.payload.elements) + "]"
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3975,6 +4076,8 @@ class Value:
                     "a complex part rounded onto the fixed-point grid (a root/transcendental, "
                     "or a quotient that did not fit the scale)"
                 )
+            case Mode.VECTOR:
+                return "a vector element is inexact"
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -4005,6 +4108,8 @@ class Value:
                 return None
             case Mode.COMPLEX:
                 return None  # two parts, no single integer to dump
+            case Mode.VECTOR:
+                return None  # many elements, no single integer to dump
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -4028,6 +4133,8 @@ class Value:
                 return [f"≈ {self._rational_approx()}"]
             case Mode.COMPLEX:
                 return []  # the a+bi rendering already carries both parts
+            case Mode.VECTOR:
+                return []  # the [a, b, …] rendering already carries every element
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
