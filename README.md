@@ -37,6 +37,12 @@ type; it calculates *using* that type.
     `1i` (e.g. `3+4i`, `2.5i`). Exact `+ - *` (`(3+4i)*(1+2i)` → `-5+10i`,
     `sqrt(-1)` → `1i`), rounds `/` and the transcendentals onto the grid; no
     ordering, bitwise, integer (`gcd`/`factorial`), or solver support
+
+  A **vector literal** `[a, b, …]` builds a one-dimensional list of values in the
+  chosen mode (e.g. `[1, 2, 3]`, the empty `[]`, or `[1+1, 2*3]` → `[2, 6]`); it is
+  an internal container, not a selectable mode. For now vectors only construct and
+  render — operators and functions refuse one, there is no indexing (`b[i]`), and
+  nesting (`[[1,2],[3,4]]`) is rejected.
 - **`analyze`** — evaluate an expression and return its whole parse tree, each
   node annotated with the value it computed, so you can see *where* a surprising
   answer rounded or overflowed (e.g. `(1 + 1/2) * 3` is `3` in fixed-point — the
