@@ -171,11 +171,15 @@ def test_max_min_carry_the_chosen_operands_exactness():
 @pytest.mark.parametrize(
     ("expression", "error"),
     [
-        # A vector is legal only as the SOLE operand (19.1.10): mixing it with a scalar
-        # or another vector defers to the unsettled multi-vector call shape (40.13).
-        ("min([1, 2], 3)", "min cannot mix a vector with other operands"),
-        ("max(3, [1, 2])", "max cannot mix a vector with other operands"),
-        ("min([1, 2], [3, 4])", "min cannot mix a vector with other operands"),
+        # A vector is legal only as the SOLE operand (19.1.10): the two forms are an
+        # OVERLOAD, not a blend, so mixing a vector with a scalar or another vector
+        # refuses with a message spelling both forms out (defers 40.13).
+        ("min([1, 2], 3)", "min has two forms — min(vector) or min(a, b, …) — and cannot mix them"),
+        ("max(3, [1, 2])", "max has two forms — max(vector) or max(a, b, …) — and cannot mix them"),
+        (
+            "min([1, 2], [3, 4])",
+            "min has two forms — min(vector) or min(a, b, …) — and cannot mix them",
+        ),
         # An empty vector has nothing to select from — a minimum/maximum of no values.
         ("min([])", "min of an empty vector is undefined"),
         ("max([])", "max of an empty vector is undefined"),

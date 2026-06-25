@@ -2151,16 +2151,19 @@ class Value:
         ``max([a, b, …])`` ranges over the vector's ELEMENTS, reducing a list rather
         than its arguments. Either way the caller then selects one operand verbatim.
 
-        A vector is legal only as the SOLE operand: mixing it with anything else
-        (``max([1, 2], 3)`` or two vectors) refuses, deferring the multi-vector call
-        shape (40.13). An EMPTY vector has nothing to select from, so it refuses too
-        — a maximum/minimum of no values is undefined.
+        These are two OVERLOADS, not a blend: a vector is legal only as the SOLE
+        operand, so mixing it with anything else (``max([1, 2], 3)`` or two vectors)
+        refuses with a message that spells the two forms out — it defers the
+        multi-vector call shape (40.13). An EMPTY vector has nothing to select from,
+        so it refuses too — a maximum/minimum of no values is undefined.
         """
         operands = (self, *others)
         if not any(v.mode is Mode.VECTOR for v in operands):
             return operands
         if len(operands) > 1:
-            raise NotRepresentableError(f"{op} cannot mix a vector with other operands")
+            raise NotRepresentableError(
+                f"{op} has two forms — {op}(vector) or {op}(a, b, …) — and cannot mix them"
+            )
         assert isinstance(self.payload, Vector)
         if not self.payload.elements:
             raise NotRepresentableError(f"{op} of an empty vector is undefined")

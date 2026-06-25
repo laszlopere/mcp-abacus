@@ -163,7 +163,11 @@ def test_max_and_min_reduce_over_a_vector():
         ("max([3, 1, 2])", "3 (exact)", None),
         ("min([3, 1, 2])", "1 (exact)", None),
         ("min([1.50, 1.5])", "1.50 (exact)", None),  # tie -> earliest, its scale wins
-        ("min([1, 2], 3)", None, "min cannot mix a vector with other operands"),
+        (
+            "min([1, 2], 3)",
+            None,
+            "min has two forms — min(vector) or min(a, b, …) — and cannot mix them",
+        ),
         ("max([])", None, "max of an empty vector is undefined"),
     ]
     payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
