@@ -417,7 +417,7 @@ def test_calculate_exact_fixed_point_is_not_steered():
 def test_calculate_reports_errors_as_a_plain_message():
     # The diagnostic stands on its own — no machine-style "error (line N):" prefix.
     result = _calc(asyncio.run(mcp.call_tool("calculate", {"expression": "1 +"})))
-    assert result["error"] == "expected a number, name, or '(', got end of input"
+    assert result["error"] == "expected a number, name, '(', or '[', got end of input"
     assert result["value"] is None and result["exact"] is None and result["precision"] is None
 
 
@@ -504,7 +504,7 @@ def test_analyze_unknown_mode_returns_null_tree_with_the_mode_list():
 def test_analyze_reports_malformed_expression_as_a_plain_message_with_null_tree():
     result = _calc(asyncio.run(mcp.call_tool("analyze", {"expression": "1 +"})))
     assert result["tree"] is None
-    assert result["error"] == "expected a number, name, or '(', got end of input"
+    assert result["error"] == "expected a number, name, '(', or '[', got end of input"
 
 
 def test_invoking_through_the_app_returns_the_info_payload():

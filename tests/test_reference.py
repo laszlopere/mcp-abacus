@@ -9,19 +9,22 @@ from mcp_abacus.expr import reference
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
-from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode
+from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode, selectable_modes
 
 
-def test_types_section_lists_every_live_mode_with_its_description():
+def test_types_section_lists_every_selectable_mode_with_its_description():
+    # Only the SELECTABLE modes are advertised — the internal VECTOR container (19.1.10)
+    # is deliberately omitted, since a caller can never pass it as `mode`.
     text = reference.render("types")
-    for mode in Mode:
+    for mode in selectable_modes():
         assert mode.value in text
         assert MODE_HELP[mode] in text
+    assert Mode.VECTOR.value not in text
 
 
-def test_types_section_has_one_line_per_mode():
+def test_types_section_has_one_line_per_selectable_mode():
     lines = reference.render("types").splitlines()
-    assert len(lines) == len(list(Mode))
+    assert len(lines) == len(selectable_modes())
 
 
 def test_types_section_advertises_every_accepted_mode_alias():

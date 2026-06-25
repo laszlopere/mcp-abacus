@@ -64,11 +64,20 @@ def test_mode_is_a_plain_enum():
 
 
 def test_built_modes_exist():
-    assert list(Mode) == [Mode.FLOATING_POINT, Mode.FIXED_POINT, Mode.RATIONAL, Mode.COMPLEX]
+    # VECTOR (19.1.10) is an INTERNAL container member — a built Mode, but not a
+    # selectable calculation mode (see test_vectors.py for that carve-out).
+    assert list(Mode) == [
+        Mode.FLOATING_POINT,
+        Mode.FIXED_POINT,
+        Mode.RATIONAL,
+        Mode.COMPLEX,
+        Mode.VECTOR,
+    ]
     assert Mode.FLOATING_POINT.value == "floating-point"
     assert Mode.FIXED_POINT.value == "fixed-point"
     assert Mode.RATIONAL.value == "rational"
     assert Mode.COMPLEX.value == "complex"
+    assert Mode.VECTOR.value == "vector"
 
 
 # --- construction & storage (19.1.1) ---------------------------------------

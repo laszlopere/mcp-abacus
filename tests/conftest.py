@@ -62,9 +62,11 @@ def _human_readable_trace(request, monkeypatch):
     solver: the over-the-wire tool (ClientSession.call_tool, as test_e2e drives a
     server subprocess), the in-process tool (FastMCP mcp.call_tool, as
     test_solver_e2e drives it), and the engine itself (solver.search, when a test
-    calls it directly with a parsed node). For the engine seam the source text is
-    recovered by tracing parse() and keying on id(node), since search() is handed the
-    AST, not the program string. At teardown
+    calls it directly with a parsed node). `calculate` is framed the same Code /
+    Result way for the calculate-driven e2e modules (test_functions_e2e at the
+    in-process seam, test_vectors_e2e over the wire), each gated by module name.
+    For the engine seam the source text is recovered by tracing parse() and keying
+    on id(node), since search() is handed the AST, not the program string. At teardown
     each run prints the abacus program under a "Code" rule and the outcome under a
     "Result" rule: the found ``solution`` on success, or the message (a "No solution…"
     or a rejected request) on failure. Non-solver work passes straight through, so
@@ -138,6 +140,12 @@ def _human_readable_trace(request, monkeypatch):
             state["muted"] = False
         if name == "solver":
             _record(arguments, json.loads(result.content[0].text))
+        elif name == "calculate" and request.module.__name__ == "test_vectors_e2e":
+            # The vector e2e tests drive `calculate` over the wire (client seam), so frame
+            # each as a Code / Result block here — the over-the-wire twin of the mcp-seam
+            # gating above for test_functions_e2e. Gated to that module so other client-
+            # seam calculate tests (test_e2e) stay unaffected.
+            _record_calculate(arguments, json.loads(result.content[0].text))
         return result
 
     # Engine seam: parse() records each node's source; the engine looks it up and

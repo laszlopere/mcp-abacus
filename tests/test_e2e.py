@@ -575,7 +575,7 @@ def test_malformed_expression_returns_an_error_not_a_protocol_failure():
     # The tool reports user errors as ordinary text (a plain, self-contained
     # message), so the call itself succeeds at the protocol level.
     assert result.isError is False
-    assert _payload(result)["error"] == "expected a number, name, or '(', got end of input"
+    assert _payload(result)["error"] == "expected a number, name, '(', or '[', got end of input"
 
 
 def test_unknown_mode_lists_the_valid_modes():
