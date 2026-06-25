@@ -139,6 +139,19 @@ def test_sum_masks_its_index_in_referenced_names():
         # binary64 selects too, carrying the operand's inexact flag.
         ("max(1, 2, 3)", "floating-point", "3.0 (inexact)"),
         ("min(1.5, 2.5)", "floating-point", "1.5 (inexact)"),
+        # A SINGLE vector operand is reduced over its ELEMENTS (19.1.10) — the same
+        # verbatim selection, just over the list instead of the arguments.
+        ("max([3, 1, 2])", None, "3 (exact)"),  # fixed-point default
+        ("min([3, 1, 2])", None, "1 (exact)"),
+        ("max([5])", None, "5 (exact)"),  # one element -> that element
+        ("min([5])", None, "5 (exact)"),
+        ("min([-3, -5, -1])", None, "-5 (exact)"),  # ordering respects sign
+        # The chosen element keeps its OWN scale, and a tie keeps the EARLIEST.
+        ("max([1.5, 2.250, 0.5])", None, "2.250 (exact)"),  # scale 3 preserved
+        ("min([1.50, 1.5, 1.500])", None, "1.50 (exact)"),  # tie -> earliest's scale
+        # rational / binary64 elements reduce exactly the way scalar args do.
+        ("max([1/2, 2/3, 1/6])", "rational", "2/3 (exact)"),
+        ("min([1, 2, 3])", "floating-point", "1.0 (inexact)"),
     ],
 )
 def test_max_min(expression, mode, value):
@@ -148,8 +161,30 @@ def test_max_min(expression, mode, value):
 def test_max_min_carry_the_chosen_operands_exactness():
     # Selection carries the picked operand's own exactness: max keeps the exact 2,
     # min picks the inexact sqrt(2) (which rounds in fixed-point) and is inexact.
+    # A vector reduction selects verbatim too, so it carries the element's flag.
     assert _value("max(2, sqrt(2))") == "2 (exact)"
     assert _value("min(2, sqrt(2))").startswith("1 (inexact")
+    assert _value("max([2, sqrt(2)])") == "2 (exact)"
+    assert _value("min([2, sqrt(2)])").startswith("1 (inexact")
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # A vector is legal only as the SOLE operand (19.1.10): mixing it with a scalar
+        # or another vector defers to the unsettled multi-vector call shape (40.13).
+        ("min([1, 2], 3)", "min cannot mix a vector with other operands"),
+        ("max(3, [1, 2])", "max cannot mix a vector with other operands"),
+        ("min([1, 2], [3, 4])", "min cannot mix a vector with other operands"),
+        # An empty vector has nothing to select from — a minimum/maximum of no values.
+        ("min([])", "min of an empty vector is undefined"),
+        ("max([])", "max of an empty vector is undefined"),
+    ],
+)
+def test_max_min_vector_refusals(expression, error):
+    payload = _calc(expression)
+    assert payload["value"] is None, f"{expression!r} unexpectedly succeeded"
+    assert payload["error"] == error
 
 
 # --- product(i, lo, hi, expr): the range-product (Π) special form (40.19) ------

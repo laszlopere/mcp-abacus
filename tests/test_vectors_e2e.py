@@ -4,9 +4,10 @@
 """End-to-end tests for vector literals over the real MCP stdio path (TODO 19.1.10).
 
 Vectors are a NEW one-dimensional container held by the universal Value class. This
-first cut covers construction + rendering only: a ``[a, b, …]`` literal builds a
-vector in whatever scalar mode the calculation runs in, the result renders as
-``[…]`` with its own exact/inexact verdict, and every scalar operator and function
+first cut covers construction + rendering: a ``[a, b, …]`` literal builds a vector
+in whatever scalar mode the calculation runs in, and the result renders as ``[…]``
+with its own exact/inexact verdict. The selection aggregates ``max``/``min`` reduce
+over a vector's elements (28.2/28.3); every OTHER scalar operator and function still
 REFUSES a vector with a clean message. There is no indexing and no arithmetic yet,
 and nesting is rejected — those refusals are asserted here too.
 
@@ -141,8 +142,9 @@ def test_operators_refuse_vectors():
 
 
 def test_functions_refuse_a_vector_argument():
-    # No function consumes a vector yet: passing one is refused uniformly, naming the
-    # function. (Variadic stats like avg keep their loose-arg form, avg(1,2,3).)
+    # Most functions don't consume a vector: passing one is refused uniformly, naming
+    # the function. (Variadic stats like avg keep their loose-arg form, avg(1,2,3).)
+    # The exceptions are max/min, which reduce over a vector — see the next test.
     cases = [
         ("sqrt([1,2,3])", "sqrt() does not accept a vector"),
         ("avg([1,2,3])", "avg() does not accept a vector"),
@@ -151,6 +153,23 @@ def test_functions_refuse_a_vector_argument():
     for (expr, message), payload in zip(cases, payloads, strict=True):
         assert payload["value"] is None, f"{expr!r} unexpectedly succeeded"
         assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+
+
+def test_max_and_min_reduce_over_a_vector():
+    # max/min are the first vector-CONSUMING functions (28.2/28.3): a single vector
+    # operand is reduced over its elements, selecting one VERBATIM (its own scale). A
+    # vector mixed with anything else, or an empty one, refuses over the real stdio path.
+    cases = [
+        ("max([3, 1, 2])", "3 (exact)", None),
+        ("min([3, 1, 2])", "1 (exact)", None),
+        ("min([1.50, 1.5])", "1.50 (exact)", None),  # tie -> earliest, its scale wins
+        ("min([1, 2], 3)", None, "min cannot mix a vector with other operands"),
+        ("max([])", None, "max of an empty vector is undefined"),
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
 
 
 def test_nested_vectors_are_rejected():
