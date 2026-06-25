@@ -129,7 +129,7 @@ def test_shared_front_end_reports_unknown_mode_and_bad_precision():
     mode, error = _resolve_mode_and_precision("int128", None)
     assert mode is None and "Unknown mode" in error
     mode, error = _resolve_mode_and_precision("rational", 4)
-    assert mode is None and "only valid in fixed-point mode" in error
+    assert mode is None and "only valid in fixed-point and complex modes" in error
     mode, error = _resolve_mode_and_precision("fixed-point", -1)
     assert mode is None and "non-negative integer" in error
 

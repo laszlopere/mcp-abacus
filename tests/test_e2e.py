@@ -774,7 +774,7 @@ def test_solver_rejects_min_fixed_point_precision_outside_fixed_point():
         }
     )
     assert payload["solution"] is None
-    assert "only valid in fixed-point mode" in payload["error"]
+    assert "only valid in fixed-point and complex modes" in payload["error"]
 
 
 def test_solver_rejects_an_unknown_objective():

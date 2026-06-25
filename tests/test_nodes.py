@@ -140,6 +140,10 @@ def test_function_arities_match_the_registry():
     # (1, 1), binary pow (2, 2), variadic max (1, None), nullaries (0, 0) (29.2).
     assert FUNCTION_ARITIES == {
         "abs": (1, 1),
+        "conj": (1, 1),  # 40.12 — UNARY complex conjugate
+        "re": (1, 1),  # 40.12 — UNARY real part
+        "im": (1, 1),  # 40.12 — UNARY imaginary part
+        "arg": (1, 1),  # 40.12 — UNARY argument/phase
         "sign": (1, 1),  # 40.9 — UNARY signum
         "sqrt": (1, 1),
         "cbrt": (1, 1),
