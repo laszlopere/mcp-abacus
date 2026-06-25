@@ -103,6 +103,28 @@ def test_vector_newline_is_insignificant_inside_brackets():
     assert _bare(payload) == "[1, 2, 3]"
 
 
+def test_vector_assigned_to_a_variable_and_read_back():
+    # `name = [a, b, …]` binds a vector like any value (30.3); a later line reads it
+    # back. The program's result is the last statement — the bare reference here.
+    (payload,) = _run_calc([("v = [1.00, 1.50, 2.00]\nv", "fixed-point")])
+    assert payload["error"] is None
+    assert _bare(payload) == "[1.00, 1.50, 2.00]"
+    assert payload["exact"] is True
+    # The leading binding runs for effect; the result-bearing read line `v` shows the
+    # vector it read back out of the run's store.
+    (read,) = payload["values"]
+    assert read["source"] == "v"
+    assert read["value"].split(" (")[0] == "[1.00, 1.50, 2.00]"
+
+
+def test_vector_assignment_alone_yields_the_vector():
+    # A bare assignment also carries its own value (30.3), so a one-line program that
+    # only binds still reports the vector as its result.
+    (payload,) = _run_calc([("v = [1, 2, 3]", "fixed-point")])
+    assert payload["error"] is None
+    assert _bare(payload) == "[1, 2, 3]"
+
+
 def test_operators_refuse_vectors():
     # No arithmetic on vectors yet (19.1.10): binary and unary operators refuse one
     # with a clean, self-contained diagnostic (value is None on the error path).

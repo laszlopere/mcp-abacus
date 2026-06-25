@@ -13,7 +13,7 @@ existing per-layer suites so the vector cases stay in one place.
 import pytest
 
 from mcp_abacus.expr.lexer import LBRACKET, RBRACKET, tokenize
-from mcp_abacus.expr.nodes import Number, VectorLiteral
+from mcp_abacus.expr.nodes import Assign, Number, VectorLiteral
 from mcp_abacus.expr.parser import ParseError, parse
 from mcp_abacus.expr.value import (
     Mode,
@@ -75,6 +75,33 @@ def test_parser_unclosed_vector_is_a_parse_error():
 def test_parser_trailing_comma_is_a_parse_error():
     with pytest.raises(ParseError):
         parse("[1, 2,]")
+
+
+# --- vectors in assignments (30.3) ----------------------------------------------
+# A vector is a first-class Value, so a NAME = expr binding holds one with no special
+# casing: Assign binds the RHS Value, Var reads it back, both generic over the type.
+
+
+def test_parser_builds_a_vector_assignment():
+    node = parse("v = [1.00, 1.50, 2.00]")
+    assert isinstance(node, Assign)
+    assert node.name == "v"
+    assert isinstance(node.expr, VectorLiteral)
+    assert len(node.expr.elements) == 3
+
+
+def test_vector_assignment_binds_and_reads_back():
+    # The program's value is the last statement's — here the bare reference, which
+    # reads the vector bound on the first line straight out of the run's store.
+    result = parse("v = [1.00, 1.50, 2.00]\nv").evaluate(Mode.FIXED_POINT)
+    assert result.mode is Mode.VECTOR
+    assert result.to_string() == "[1.00, 1.50, 2.00]"
+    assert result.exact is True
+
+
+def test_vector_assignment_chains_through_another_name():
+    result = parse("a = [1, 2, 3]\nb = a\nb").evaluate(Mode.FIXED_POINT)
+    assert result.to_string() == "[1, 2, 3]"
 
 
 # --- Value.vector constructor + Vector payload (19.1.10) -------------------------
