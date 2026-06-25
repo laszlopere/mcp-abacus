@@ -42,8 +42,9 @@ type; it calculates *using* that type.
   chosen mode (e.g. `[1, 2, 3]`, the empty `[]`, or `[1+1, 2*3]` → `[2, 6]`); it is
   an internal container, not a selectable mode. The whole stats family reduces over a
   single vector's elements — `min`/`max`/`avg`/`median`/`variance`/`stddev`
-  (`avg([1, 2, 3])` → `2`) — and `covariance(x, y)` takes two equal-length vectors
-  (`covariance([1, 2, 3], [4, 5, 6])`). Otherwise vectors only construct and render —
+  (`avg([1, 2, 3])` → `2`) — and `covariance(x, y)`/`correlation(x, y)` take two
+  equal-length vectors (`covariance([1, 2, 3], [4, 5, 6])`, Pearson
+  `correlation(...)` in `[-1, 1]`). Otherwise vectors only construct and render —
   other operators and functions refuse one, there is no indexing (`b[i]`), and
   nesting (`[[1,2],[3,4]]`) is rejected.
 - **`analyze`** — evaluate an expression and return its whole parse tree, each
