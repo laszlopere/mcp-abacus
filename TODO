@@ -1323,7 +1323,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (a single operand list, cf. the multi-residual gap noted at 33.7/
                33.8). Settle a paired/multi-vector call shape FIRST (interleaved
                pairs, or a real list type); until then this and 40.14 cannot land.
-    [ ] 40.14. correlation — Pearson r = cov(x, y)/(stddev(x)*stddev(y)), range
+    [x] 40.14. correlation — Pearson r = cov(x, y)/(stddev(x)*stddev(y)), range
                [-1, 1], over PAIRED series. Inherits stddev's sqrt (28.9): always
                inexact in float/fixed-point, rational refuses (irrational root).
                Same two-vector BLOCKER as covariance (40.13) — depends on the same

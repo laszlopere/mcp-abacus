@@ -116,6 +116,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
     "covariance": Value.covariance,  # 40.13 — two vectors; population mean((x-mx)*(y-my))
+    "correlation": Value.correlation,  # 40.14 — two vectors; Pearson r, cov/(stddev*stddev)
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
     "lcm": Value.lcm,  # 40.8 — variadic; math.lcm of magnitudes, integer-only, zero absorbs to 0
     "factorial": Value.factorial,  # 40.4 — n! for a non-negative integer, exact every mode, capped
@@ -135,10 +136,10 @@ _FUNCS: dict[str, Callable[..., Value]] = {
 # payload and reduce over its elements; everything else still refuses a vector. The
 # whole variadic stats family opts in: the selection aggregates max/min (28.2/28.3)
 # and the computing ones avg/median/variance/stddev (28.4/28.7/28.8/28.9) take a
-# single vector via _series_operands; covariance (40.13) takes TWO vectors directly.
-# correlation (40.14) will join once it lands.
+# single vector via _series_operands; covariance/correlation (40.13/40.14) take TWO
+# vectors directly.
 _VECTOR_FUNCS: frozenset[str] = frozenset(
-    {"max", "min", "avg", "median", "variance", "stddev", "covariance"}
+    {"max", "min", "avg", "median", "variance", "stddev", "covariance", "correlation"}
 )
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
@@ -267,6 +268,9 @@ FUNCTION_HELP: dict[str, str] = {
     "stddev": "population standard deviation, sqrt of variance (operands or a single vector)",
     "covariance": "population covariance of two equal-length vectors, mean((x-mx)*(y-my)); "
     "exact in rational, may round in fixed-point/float",
+    "correlation": "Pearson correlation of two equal-length vectors, cov/(stddev*stddev) in "
+    "[-1, 1]; inherits stddev's sqrt (always inexact in float/fixed-point, rational refuses an "
+    "irrational root), undefined for a constant series",
     "gcd": "greatest common divisor of the operands; integer-only, sign-dropped, exact everywhere",
     "lcm": "least common multiple of the operands; integer-only, any zero gives 0, exact always",
     "factorial": "n! for a non-negative integer; exact in every type, refuses negative/non-integer "

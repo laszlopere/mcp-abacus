@@ -2193,20 +2193,56 @@ class Value:
         undefined) — both REFUSE. ``covariance([a], [b])`` is ``0`` (a lone pair has
         no spread). Pearson correlation (40.14) divides this by the stddev product.
         """
-        if self.mode is not Mode.VECTOR or other.mode is not Mode.VECTOR:
-            raise NotRepresentableError("covariance takes two vectors — covariance(x, y)")
-        assert isinstance(self.payload, Vector) and isinstance(other.payload, Vector)
-        xs, ys = self.payload.elements, other.payload.elements
-        if len(xs) != len(ys):
-            raise NotRepresentableError("covariance requires two equal-length vectors")
-        if not xs:
-            raise NotRepresentableError("covariance of empty vectors is undefined")
+        xs, ys = self._paired_vectors(other, "covariance")
         mx = xs[0].avg(*xs[1:])
         my = ys[0].avg(*ys[1:])
         products = (x.sub(mx).mul(y.sub(my)) for x, y in zip(xs, ys, strict=True))
         total = functools.reduce(Value.add, products)
         count = Value._from_scaled_int(len(xs), 0, xs[0].mode)
         return total.div(count)
+
+    def correlation(self, other: "Value") -> "Value":
+        """Pearson correlation r of two equal-length vectors (40.14) — TWO vectors.
+
+        ``self`` is x, ``other`` is y, each a VECTOR (19.1.10) — the same paired
+        two-vector shape as ``covariance`` (40.13). The standardized covariance
+        ``cov(x, y) / (stddev(x) * stddev(y))``, always in [-1, 1]: +1 perfectly
+        correlated, -1 perfectly anti-correlated, 0 uncorrelated. Both the population
+        covariance and stddevs use the same n, so it cancels. INHERITS ``stddev``'s
+        sqrt (28.9): ALWAYS inexact in float and fixed-point (and the rounded
+        cov/stddev compound — widen min_fixed_point_precision for accuracy), and in
+        RATIONAL mode it REFUSES when either stddev is irrational rather than
+        fabricate digits — exact there only when both variances are perfect squares.
+        DOMAIN is ``covariance``'s (two equal-length, non-empty vectors), plus: a
+        CONSTANT series has zero stddev, so r divides by zero and RAISES — correlation
+        is undefined when a series does not vary. ``correlation([a], [b])`` likewise
+        divides 0 by 0 (a lone pair has no spread).
+        """
+        self._paired_vectors(other, "correlation")  # validate with this op's name
+        cov = self.covariance(other)
+        return cov.div(self.stddev().mul(other.stddev()))
+
+    def _paired_vectors(
+        self, other: "Value", op: str
+    ) -> tuple[tuple["Value", ...], tuple["Value", ...]]:
+        """The two element runs a PAIRED two-vector aggregate ranges over (covariance
+        40.13, correlation 40.14) — the two-vector analogue of ``_series_operands``.
+
+        Both operands must be vectors (19.1.10), of EQUAL length (an unpaired series
+        is meaningless) and NON-EMPTY (an aggregate of no points is undefined); each
+        refuses with a message naming ``op``. Returns the two ``.elements`` tuples,
+        which share the run's element mode, so the paired arithmetic the caller does
+        is same-mode by construction.
+        """
+        if self.mode is not Mode.VECTOR or other.mode is not Mode.VECTOR:
+            raise NotRepresentableError(f"{op} takes two vectors — {op}(x, y)")
+        assert isinstance(self.payload, Vector) and isinstance(other.payload, Vector)
+        xs, ys = self.payload.elements, other.payload.elements
+        if len(xs) != len(ys):
+            raise NotRepresentableError(f"{op} requires two equal-length vectors")
+        if not xs:
+            raise NotRepresentableError(f"{op} of empty vectors is undefined")
+        return xs, ys
 
     def max_(self, *others: "Value") -> "Value":
         """Largest of one-or-more operands (28.2) — VARIADIC; SELECTION, not math.
