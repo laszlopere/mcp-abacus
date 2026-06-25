@@ -2102,16 +2102,20 @@ class Value:
         return functools.reduce(Value.add, others, self)
 
     def avg(self, *others: "Value") -> "Value":
-        """Arithmetic mean (28.4) — VARIADIC; ``sum / count``.
+        """Arithmetic mean (28.4) — VARIADIC, or over a SINGLE vector's elements.
 
-        Builds the total with ``sum_`` (exact like repeated ``+``), then divides by
-        the operand count carried as a same-mode whole number, so the result follows
-        the mode's own ``/`` rule (19.3.4): fixed-point quantizes to the covering
-        scale and may be inexact, rational is exact, float rounds. ``avg(a)`` is
-        ``a / 1`` — the single-operand identity (modulo float's inexact flag).
+        Either a flat run of operands or one vector (``avg([a, b, …])``, 19.1.10);
+        ``_series_operands`` resolves the two forms. Folds the total over ``add``
+        (exact like repeated ``+``), then divides by the count carried as a same-mode
+        whole number, so the result follows the mode's own ``/`` rule (19.3.4):
+        fixed-point quantizes to the covering scale and may be inexact, rational is
+        exact, float rounds. The divisor's mode is the operands' own (the element
+        mode when reducing a vector). ``avg(a)`` is ``a / 1`` — the single-operand
+        identity (modulo float's inexact flag).
         """
-        total = self.sum_(*others)
-        count = Value._from_scaled_int(1 + len(others), 0, self.mode)
+        operands = self._series_operands(others, "avg")
+        total = functools.reduce(Value.add, operands)
+        count = Value._from_scaled_int(len(operands), 0, operands[0].mode)
         return total.div(count)
 
     def _compare(self, other: "Value", op: str) -> int:
@@ -2143,19 +2147,23 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
-    def _selection_operands(self, others: tuple["Value", ...], op: str) -> tuple["Value", ...]:
-        """The operands a selection aggregate (max/min, 28.2/28.3) ranges over.
+    def _series_operands(self, others: tuple["Value", ...], op: str) -> tuple["Value", ...]:
+        """The operands a series aggregate ranges over — selection OR computing.
 
-        Two call shapes. The usual one is a FLAT run of scalars — ``self`` plus
-        ``others`` — returned unchanged. The other is a SINGLE vector (19.1.10):
-        ``max([a, b, …])`` ranges over the vector's ELEMENTS, reducing a list rather
-        than its arguments. Either way the caller then selects one operand verbatim.
+        Shared by the whole variadic stats family: the selection aggregates max/min
+        (28.2/28.3) and the computing ones avg/median/variance/stddev (28.4/28.7/
+        28.8/28.9). Two call shapes. The usual one is a FLAT run of scalars — ``self``
+        plus ``others`` — returned unchanged. The other is a SINGLE vector (19.1.10):
+        ``avg([a, b, …])`` ranges over the vector's ELEMENTS, reducing a list rather
+        than its arguments. Either way the caller then reduces over the operands —
+        and since an empty vector is refused, ``operands[0].mode`` is the element
+        (scalar) mode any computing aggregate must build its count/divisor in.
 
         These are two OVERLOADS, not a blend: a vector is legal only as the SOLE
-        operand, so mixing it with anything else (``max([1, 2], 3)`` or two vectors)
+        operand, so mixing it with anything else (``avg([1, 2], 3)`` or two vectors)
         refuses with a message that spells the two forms out — it defers the
-        multi-vector call shape (40.13). An EMPTY vector has nothing to select from,
-        so it refuses too — a maximum/minimum of no values is undefined.
+        multi-vector call shape (40.13). An EMPTY vector has nothing to aggregate, so
+        it refuses too — a max/mean/variance of no values is undefined.
         """
         operands = (self, *others)
         if not any(v.mode is Mode.VECTOR for v in operands):
@@ -2169,6 +2177,37 @@ class Value:
             raise NotRepresentableError(f"{op} of an empty vector is undefined")
         return self.payload.elements
 
+    def covariance(self, other: "Value") -> "Value":
+        """POPULATION covariance of two equal-length vectors (40.13) — TWO vectors.
+
+        ``self`` is x, ``other`` is y, each a VECTOR (19.1.10) — the genuinely
+        two-vector call shape the flat-variadic stats could not express (the 40.13
+        blocker). ``mean((x - mx)*(y - my))`` over the paired elements, where mx/my
+        are the per-vector means (``avg``, 28.4). Follows ``variance``'s stance
+        (28.8): no sqrt, so the result COMPUTES through the mode's own ``/`` rule via
+        the means and the final divide — EXACT in rational, MAY ROUND in fixed-point/
+        float (a rounded mean compounds; widen min_fixed_point_precision for
+        accuracy). The two vectors share the run's element mode, so the paired
+        arithmetic is same-mode by construction. DOMAIN: equal lengths (an unpaired
+        series is meaningless) and NON-EMPTY (a covariance of no points is
+        undefined) — both REFUSE. ``covariance([a], [b])`` is ``0`` (a lone pair has
+        no spread). Pearson correlation (40.14) divides this by the stddev product.
+        """
+        if self.mode is not Mode.VECTOR or other.mode is not Mode.VECTOR:
+            raise NotRepresentableError("covariance takes two vectors — covariance(x, y)")
+        assert isinstance(self.payload, Vector) and isinstance(other.payload, Vector)
+        xs, ys = self.payload.elements, other.payload.elements
+        if len(xs) != len(ys):
+            raise NotRepresentableError("covariance requires two equal-length vectors")
+        if not xs:
+            raise NotRepresentableError("covariance of empty vectors is undefined")
+        mx = xs[0].avg(*xs[1:])
+        my = ys[0].avg(*ys[1:])
+        products = (x.sub(mx).mul(y.sub(my)) for x, y in zip(xs, ys, strict=True))
+        total = functools.reduce(Value.add, products)
+        count = Value._from_scaled_int(len(xs), 0, xs[0].mode)
+        return total.div(count)
+
     def max_(self, *others: "Value") -> "Value":
         """Largest of one-or-more operands (28.2) — VARIADIC; SELECTION, not math.
 
@@ -2181,7 +2220,7 @@ class Value:
         Comparison is value-only (``_compare``, same-mode-enforced); a tie keeps the
         EARLIER operand (strict ``>``), so the choice is stable. Mirror: ``min_`` (28.3).
         """
-        operands = self._selection_operands(others, "max")
+        operands = self._series_operands(others, "max")
         best = operands[0]
         for other in operands[1:]:
             if other._compare(best, "max") > 0:
@@ -2195,7 +2234,7 @@ class Value:
         single vector operand is reduced over its elements — ``min([a, b, …])`` is
         the smallest element (19.1.10), the same vector call shape as ``max_``.
         """
-        operands = self._selection_operands(others, "min")
+        operands = self._series_operands(others, "min")
         best = operands[0]
         for other in operands[1:]:
             if other._compare(best, "min") < 0:
@@ -2203,25 +2242,29 @@ class Value:
         return best
 
     def median(self, *others: "Value") -> "Value":
-        """Middle operand by value (28.7) — VARIADIC; order-only, then maybe average.
+        """Middle operand by value (28.7) — VARIADIC, or over a SINGLE vector.
 
-        Sorts the operands by ``_compare`` (value-only, same-mode-enforced — no
-        arithmetic, so the ordering never rounds). An ODD count has a single middle,
-        returned VERBATIM like ``max_``/``min_`` (28.2/28.3): pure selection, so it
-        carries the chosen operand's own scale and exactness. An EVEN count averages
-        the two straddling middles — ``(lo + hi) / 2`` — which COMPUTES, so it
-        follows the mode's ``/`` rule exactly as ``avg`` (28.4): fixed-point may
-        round, rational is exact, float rounds. ``median(a)`` is ``a`` (odd count 1).
+        Either a flat run or one vector (``median([a, b, …])``, 19.1.10), resolved by
+        ``_series_operands``. Sorts the operands by ``_compare`` (value-only,
+        same-mode-enforced — no arithmetic, so the ordering never rounds). An ODD
+        count has a single middle, returned VERBATIM like ``max_``/``min_``
+        (28.2/28.3): pure selection, so it carries the chosen operand's own scale and
+        exactness. An EVEN count averages the two straddling middles —
+        ``(lo + hi) / 2`` — which COMPUTES, so it follows the mode's ``/`` rule
+        exactly as ``avg`` (28.4): fixed-point may round, rational is exact, float
+        rounds. ``median(a)`` is ``a`` (odd count 1).
         """
 
         def by_value(a: "Value", b: "Value") -> int:
             return a._compare(b, "median")
 
-        ordered = sorted((self, *others), key=functools.cmp_to_key(by_value))
+        ordered = sorted(
+            self._series_operands(others, "median"), key=functools.cmp_to_key(by_value)
+        )
         mid = len(ordered) // 2
         if len(ordered) % 2 == 1:
             return ordered[mid]
-        two = Value._from_scaled_int(2, 0, self.mode)
+        two = Value._from_scaled_int(2, 0, ordered[0].mode)
         return ordered[mid - 1].add(ordered[mid]).div(two)
 
     def clamp(self, lo: "Value", hi: "Value") -> "Value":
@@ -2259,28 +2302,31 @@ class Value:
         return self.add(b.sub(self).mul(t))
 
     def variance(self, *others: "Value") -> "Value":
-        """POPULATION variance (28.8) — VARIADIC; sum of squared deviations / n.
+        """POPULATION variance (28.8) — VARIADIC, or over a SINGLE vector's elements.
 
-        DIVIDES BY n (the population convention, not the sample n-1; a sample
-        variant is still to plan). Composes the aggregates already built: the mean
-        is ``avg`` (28.4), each deviation ``op - mean`` is squared with ``mul``, and
-        their total (repeated ``+``) is divided by the count. Both the mean and the
-        final divide COMPUTE, so the result follows the mode's ``/`` rule twice over:
-        fixed-point may round (and a rounded mean compounds the loss — work at a
-        wider scale via min_fixed_point_precision for accuracy), rational is exact,
-        float rounds. ``variance(a)`` is ``0`` — a lone point has no spread.
+        Either a flat run or one vector (``variance([a, b, …])``, 19.1.10), resolved
+        by ``_series_operands``. DIVIDES BY n (the population convention, not the
+        sample n-1; a sample variant is still to plan). Composes the aggregates
+        already built: the mean is ``avg`` (28.4), each deviation ``op - mean`` is
+        squared with ``mul``, and their total (repeated ``+``) is divided by the
+        count. Both the mean and the final divide COMPUTE, so the result follows the
+        mode's ``/`` rule twice over: fixed-point may round (and a rounded mean
+        compounds the loss — work at a wider scale via min_fixed_point_precision for
+        accuracy), rational is exact, float rounds. ``variance(a)`` is ``0`` — a lone
+        point has no spread.
         """
-        operands = (self, *others)
-        mean = self.avg(*others)
+        operands = self._series_operands(others, "variance")
+        mean = operands[0].avg(*operands[1:])
         deviations = (op.sub(mean) for op in operands)
         total = functools.reduce(Value.add, (d.mul(d) for d in deviations))
-        count = Value._from_scaled_int(len(operands), 0, self.mode)
+        count = Value._from_scaled_int(len(operands), 0, operands[0].mode)
         return total.div(count)
 
     def stddev(self, *others: "Value") -> "Value":
-        """POPULATION standard deviation (28.9) — VARIADIC; ``sqrt(variance)``.
+        """POPULATION standard deviation (28.9) — VARIADIC, or over a SINGLE vector.
 
-        The square root of the population ``variance`` (28.8), so it INHERITS
+        The square root of the population ``variance`` (28.8) — which resolves the
+        flat-run vs. single-vector forms (19.1.10) — so it INHERITS
         ``sqrt``'s per-mode story (19.5.2): unconditionally inexact in float and
         fixed-point, and in RATIONAL mode it raises NotRepresentableError when the
         root is irrational rather than fabricate digits — exact there only when the

@@ -1316,7 +1316,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                stays exact (rational interpolation is a Fraction). DECIDE the
                interpolation convention and whether percentile and quantile are one
                core under two scalings.
-    [ ] 40.13. covariance — population covariance mean((x-mx)*(y-my)) over PAIRED
+    [x] 40.13. covariance — population covariance mean((x-mx)*(y-my)) over PAIRED
                series x and y. Follows variance's stance (28.8): no sqrt, so EXACT
                in rational, may round in fixed-point/float. BLOCKER: needs TWO
                vectors, which the current flat-variadic call shape cannot express

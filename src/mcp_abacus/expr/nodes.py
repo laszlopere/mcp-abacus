@@ -115,6 +115,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "lerp": Value.lerp,  # 40.22 — ternary; linear interpolation a+(b-a)*t, arithmetic stance
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
+    "covariance": Value.covariance,  # 40.13 — two vectors; population mean((x-mx)*(y-my))
     "gcd": Value.gcd,  # 40.7 — variadic; math.gcd of magnitudes, integer-only, exact everywhere
     "lcm": Value.lcm,  # 40.8 — variadic; math.lcm of magnitudes, integer-only, zero absorbs to 0
     "factorial": Value.factorial,  # 40.4 — n! for a non-negative integer, exact every mode, capped
@@ -132,9 +133,13 @@ _FUNCS: dict[str, Callable[..., Value]] = {
 # Functions that ACCEPT a vector operand (19.1.10). The blanket vector refusal in
 # FuncCall._evaluate exempts these names, letting the Value method see the VECTOR
 # payload and reduce over its elements; everything else still refuses a vector. The
-# selection aggregates max/min (28.2/28.3) opt in here; covariance/correlation
-# (40.13/40.14) will join once the multi-vector call shape is settled.
-_VECTOR_FUNCS: frozenset[str] = frozenset({"max", "min"})
+# whole variadic stats family opts in: the selection aggregates max/min (28.2/28.3)
+# and the computing ones avg/median/variance/stddev (28.4/28.7/28.8/28.9) take a
+# single vector via _series_operands; covariance (40.13) takes TWO vectors directly.
+# correlation (40.14) will join once it lands.
+_VECTOR_FUNCS: frozenset[str] = frozenset(
+    {"max", "min", "avg", "median", "variance", "stddev", "covariance"}
+)
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
 # to _FUNCS but a different callable KIND — these are NOT operand-methods. With no
@@ -247,16 +252,21 @@ FUNCTION_HELP: dict[str, str] = {
     "product": "range product Π: fold the body over the index NAMED by the 1st arg from the "
     "2nd arg to the 3rd INCLUSIVE (integer steps; 1st arg a bare name, 4th the unevaluated "
     "body — NOT values); repeated *, may round in fixed-point/float, capped at 100000 terms",
-    "avg": "arithmetic mean, sum/count; follows the type's / rule",
+    "avg": "arithmetic mean, sum/count of the operands (or a single vector's elements); "
+    "follows the type's / rule",
     "max": "largest operand (or element of a single vector), returned verbatim; exact",
     "min": "smallest operand (or element of a single vector), returned verbatim; exact",
-    "median": "middle operand by value; odd count exact, even averages the two middles",
+    "median": "middle operand by value (or of a single vector's elements); odd count exact, "
+    "even averages the two middles",
     "clamp": "constrain x to [lo, hi] = min(hi, max(lo, x)); selection not math, exact in every "
     "type, carries the chosen operand verbatim, refuses lo>hi",
     "lerp": "linear interpolation a+(b-a)*t; exact in rational, may round in fixed-point/float, "
     "t unrestricted (outside [0,1] extrapolates)",
-    "variance": "population variance, sum of squared deviations / n",
-    "stddev": "population standard deviation, sqrt of variance",
+    "variance": "population variance, sum of squared deviations / n of the operands (or a "
+    "single vector's elements)",
+    "stddev": "population standard deviation, sqrt of variance (operands or a single vector)",
+    "covariance": "population covariance of two equal-length vectors, mean((x-mx)*(y-my)); "
+    "exact in rational, may round in fixed-point/float",
     "gcd": "greatest common divisor of the operands; integer-only, sign-dropped, exact everywhere",
     "lcm": "least common multiple of the operands; integer-only, any zero gives 0, exact always",
     "factorial": "n! for a non-negative integer; exact in every type, refuses negative/non-integer "
