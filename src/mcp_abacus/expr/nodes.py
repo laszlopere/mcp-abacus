@@ -129,6 +129,13 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "pv": Value.pv,  # 36.4 — present value of an nper-period payment stream at per-period rate
 }
 
+# Functions that ACCEPT a vector operand (19.1.10). The blanket vector refusal in
+# FuncCall._evaluate exempts these names, letting the Value method see the VECTOR
+# payload and reduce over its elements; everything else still refuses a vector. The
+# selection aggregates max/min (28.2/28.3) opt in here; covariance/correlation
+# (40.13/40.14) will join once the multi-vector call shape is settled.
+_VECTOR_FUNCS: frozenset[str] = frozenset({"max", "min"})
+
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
 # to _FUNCS but a different callable KIND — these are NOT operand-methods. With no
 # operand to carry the mode, a nullary takes the per-run EvalContext (29.1) and
@@ -241,8 +248,8 @@ FUNCTION_HELP: dict[str, str] = {
     "2nd arg to the 3rd INCLUSIVE (integer steps; 1st arg a bare name, 4th the unevaluated "
     "body — NOT values); repeated *, may round in fixed-point/float, capped at 100000 terms",
     "avg": "arithmetic mean, sum/count; follows the type's / rule",
-    "max": "largest operand, returned verbatim; exact",
-    "min": "smallest operand, returned verbatim; exact",
+    "max": "largest operand (or element of a single vector), returned verbatim; exact",
+    "min": "smallest operand (or element of a single vector), returned verbatim; exact",
     "median": "middle operand by value; odd count exact, even averages the two middles",
     "clamp": "constrain x to [lo, hi] = min(hi, max(lo, x)); selection not math, exact in every "
     "type, carries the chosen operand verbatim, refuses lo>hi",
@@ -799,11 +806,14 @@ class FuncCall(Node):
         if self.name in _NULLARY_FUNCS:
             return _NULLARY_FUNCS[self.name](ctx)
         operands = tuple(arg._walk(ctx) for arg in self.args)
-        # No function accepts a vector yet (19.1.10): refuse one uniformly here, the
-        # single point every operand-function flows through, rather than a VECTOR arm
-        # in each of the ~60 Value methods. TEMPORARY — when vector-consuming functions
-        # (covariance/correlation, 40.13/40.14) land, this becomes a per-function check.
-        if any(operand.mode is Mode.VECTOR for operand in operands):
+        # Most functions take only scalars: refuse a vector operand here, the single
+        # point every operand-function flows through, rather than a VECTOR arm in each
+        # of the ~60 Value methods. The vector-CONSUMING functions (28.2/28.3 today;
+        # covariance/correlation, 40.13/40.14, later) opt in via _VECTOR_FUNCS and
+        # handle the VECTOR payload themselves (e.g. min/max reduce over its elements).
+        if self.name not in _VECTOR_FUNCS and any(
+            operand.mode is Mode.VECTOR for operand in operands
+        ):
             raise NotRepresentableError(f"{self.name}() does not accept a vector")
         return _FUNCS[self.name](*operands)
 

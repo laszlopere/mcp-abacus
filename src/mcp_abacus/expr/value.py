@@ -2143,18 +2143,44 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def _selection_operands(self, others: tuple["Value", ...], op: str) -> tuple["Value", ...]:
+        """The operands a selection aggregate (max/min, 28.2/28.3) ranges over.
+
+        Two call shapes. The usual one is a FLAT run of scalars — ``self`` plus
+        ``others`` — returned unchanged. The other is a SINGLE vector (19.1.10):
+        ``max([a, b, …])`` ranges over the vector's ELEMENTS, reducing a list rather
+        than its arguments. Either way the caller then selects one operand verbatim.
+
+        A vector is legal only as the SOLE operand: mixing it with anything else
+        (``max([1, 2], 3)`` or two vectors) refuses, deferring the multi-vector call
+        shape (40.13). An EMPTY vector has nothing to select from, so it refuses too
+        — a maximum/minimum of no values is undefined.
+        """
+        operands = (self, *others)
+        if not any(v.mode is Mode.VECTOR for v in operands):
+            return operands
+        if len(operands) > 1:
+            raise NotRepresentableError(f"{op} cannot mix a vector with other operands")
+        assert isinstance(self.payload, Vector)
+        if not self.payload.elements:
+            raise NotRepresentableError(f"{op} of an empty vector is undefined")
+        return self.payload.elements
+
     def max_(self, *others: "Value") -> "Value":
         """Largest of one-or-more operands (28.2) — VARIADIC; SELECTION, not math.
 
-        Like ``sum_``, ``self`` is the first operand, so ``max(a)`` is ``a``. It
-        never computes: it returns whichever operand is greatest VERBATIM, so the
-        result carries that operand's own scale and exactness — no covering, no
-        rounding, exact iff the chosen operand was. Comparison is value-only
-        (``_compare``, same-mode-enforced); a tie keeps the EARLIER operand (strict
-        ``>``), so the choice is stable. Mirror: ``min_`` (28.3).
+        Like ``sum_``, ``self`` is the first operand, so ``max(a)`` is ``a``. A
+        single vector operand is reduced over its elements instead — ``max([a, b,
+        …])`` is the largest element (19.1.10); see ``_selection_operands`` for the
+        vector call shape. It never computes: it returns whichever operand is
+        greatest VERBATIM, so the result carries that operand's own scale and
+        exactness — no covering, no rounding, exact iff the chosen operand was.
+        Comparison is value-only (``_compare``, same-mode-enforced); a tie keeps the
+        EARLIER operand (strict ``>``), so the choice is stable. Mirror: ``min_`` (28.3).
         """
-        best = self
-        for other in others:
+        operands = self._selection_operands(others, "max")
+        best = operands[0]
+        for other in operands[1:]:
             if other._compare(best, "max") > 0:
                 best = other
         return best
@@ -2162,10 +2188,13 @@ class Value:
     def min_(self, *others: "Value") -> "Value":
         """Smallest of one-or-more operands (28.3) — the mirror of ``max_`` (28.2):
         variadic, selection-only (so exact, carrying the chosen operand's scale and
-        exactness), same-mode, and ties keep the earlier operand (strict ``<``).
+        exactness), same-mode, and ties keep the earlier operand (strict ``<``). A
+        single vector operand is reduced over its elements — ``min([a, b, …])`` is
+        the smallest element (19.1.10), the same vector call shape as ``max_``.
         """
-        best = self
-        for other in others:
+        operands = self._selection_operands(others, "min")
+        best = operands[0]
+        for other in operands[1:]:
             if other._compare(best, "min") < 0:
                 best = other
         return best
