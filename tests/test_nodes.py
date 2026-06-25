@@ -182,6 +182,7 @@ def test_function_arities_match_the_registry():
         "variance": (1, None),
         "stddev": (1, None),
         "covariance": (2, 2),  # 40.13 — BINARY, two equal-length vectors
+        "correlation": (2, 2),  # 40.14 — BINARY, two equal-length vectors
         "gcd": (1, None),  # 40.7 — variadic, minimum one operand
         "lcm": (1, None),  # 40.8 — variadic, minimum one operand
         "factorial": (1, 1),  # 40.4 — UNARY, n! for a non-negative integer

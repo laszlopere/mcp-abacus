@@ -486,6 +486,68 @@ def test_covariance_refusals(expression, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # Pearson r = cov/(stddev*stddev), standardized to [-1, 1]. It INHERITS
+        # stddev's sqrt, so it is ALWAYS inexact in float/fixed-point. A perfectly
+        # (anti-)correlated pair is +1 / -1.
+        ("correlation([1, 2, 3], [2, 4, 6])", "floating-point", "1.0 (inexact)"),
+        ("correlation([1, 2, 3], [6, 4, 2])", "floating-point", "-1.0 (inexact)"),
+        # A partial association lands strictly inside [-1, 1].
+        (
+            "correlation([1, 2, 3, 4], [1, 3, 2, 5])",
+            "floating-point",
+            "0.8315218406202998 (inexact)",
+        ),
+        # Fixed-point inherits the inexact flag too; at scale 0 the rounded cov and
+        # stddevs compound badly (the hint recovers ~0.8316 at a wider scale).
+        (
+            "correlation([1, 2, 3, 4], [1, 3, 2, 5])",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 0.8316)",
+        ),
+    ],
+)
+def test_correlation(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+def test_correlation_rational_refuses_an_irrational_root():
+    # correlation composes stddev, so it inherits sqrt's exact-or-refuse pitch in
+    # rational mode: stddev([1,2,3]) = sqrt(2/3) is irrational, so it raises rather
+    # than fabricate digits (line-tagged) — even for a perfectly correlated pair.
+    payload = _calc("correlation([1, 2, 3], [2, 4, 6])", "rational")
+    assert payload["error"] == "rational square root is irrational"
+    assert payload["value"] is None
+
+
+def test_correlation_of_a_constant_series_divides_by_zero():
+    # A series that does not vary has zero stddev, so r divides by zero and raises —
+    # Pearson correlation is undefined when a series is constant.
+    payload = _calc("correlation([2, 2, 2], [1, 2, 3])")
+    assert payload["error"] == "fixed-point division by zero"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # correlation shares covariance's two-vector domain (the _paired_vectors
+        # helper), but its messages name correlation.
+        ("correlation([1, 2, 3], [4, 5])", "correlation requires two equal-length vectors"),
+        ("correlation([], [])", "correlation of empty vectors is undefined"),
+        ("correlation([1, 2], 3)", "correlation takes two vectors — correlation(x, y)"),
+        ("correlation(3, [1, 2])", "correlation takes two vectors — correlation(x, y)"),
+    ],
+)
+def test_correlation_refusals(expression, error):
+    payload = _calc(expression)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # Fixed-point: exact only when the root lands on the grid (a perfect square at
         # the operand's scale); otherwise it rounds to that scale and flags inexact,
         # offering more decimals via min_fixed_point_precision.

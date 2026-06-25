@@ -213,6 +213,22 @@ def test_covariance_takes_two_vectors():
         assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
 
 
+def test_correlation_takes_two_vectors():
+    # correlation (40.14) is the second TWO-vector function: Pearson r in [-1, 1],
+    # cov/(stddev*stddev). A perfectly (anti-)correlated pair is +1 / -1; a constant
+    # series has zero stddev and divides by zero; the domain refusals name correlation.
+    cases = [
+        ("correlation([1, 2, 3], [2, 4, 6])", "1.0 (inexact)", None),
+        ("correlation([1, 2, 3], [6, 4, 2])", "-1.0 (inexact)", None),
+        ("correlation([2, 2, 2], [1, 2, 3])", None, "float division by zero"),
+        ("correlation([1, 2, 3], [4, 5])", None, "correlation requires two equal-length vectors"),
+    ]
+    payloads = _run_calc([(e, "floating-point") for e, _, _ in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
+
+
 def test_nested_vectors_are_rejected():
     # Strictly one-dimensional (19.1.10): an element that is itself a vector is refused.
     (payload,) = _run_calc([("[[1,2],[3,4]]", "fixed-point")])
