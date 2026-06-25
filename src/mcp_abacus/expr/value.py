@@ -110,6 +110,7 @@ class Mode(Enum):
     FLOATING_POINT = "floating-point"  # IEEE-754 double — C's "double" (19.1.1)
     FIXED_POINT = "fixed-point"  # scaled integer; exact, money/ERC-20-safe (19.1.2)
     RATIONAL = "rational"  # exact numerator/denominator; no irrationals (19.1.7)
+    COMPLEX = "complex"  # a + b*i, each part a fixed-point scaled integer (19.1.8)
 
 
 # One terse line per Mode, for the language-help `types` section. Co-located with
@@ -120,6 +121,7 @@ MODE_HELP: dict[Mode, str] = {
     Mode.FLOATING_POINT: "IEEE-754 double; ~15-17 significant digits; most decimals inexact",
     Mode.FIXED_POINT: "scaled integer (mantissa x 10^-decimals); exact; money / ERC-20 safe",
     Mode.RATIONAL: "exact numerator/denominator; no irrationals",
+    Mode.COMPLEX: "a + b*i over two fixed-point parts; exact + - *, rounds / and transcendentals",
 }
 
 
@@ -346,6 +348,28 @@ class FixedPoint:
             raise ValueError("FixedPoint mantissa must be an int")
         if type(self.decimals) is not int or self.decimals < 0:
             raise ValueError("FixedPoint decimals must be a non-negative int")
+
+
+@dataclass(frozen=True, slots=True)
+class Complex:
+    """A complex number as a pair of fixed-point parts: value == real + imag*i.
+
+    The COMPLEX payload (19.1.8). Each part is an independent ``FixedPoint`` — its
+    own mantissa and scale — so the whole engine of fixed-point semantics (the
+    covering-scale rule, half-to-even rounding, the exact signed residual) is
+    reused per part rather than reinvented: every complex operation is expressed
+    as fixed-point operations on the parts (see Value._complex_* below). A complex
+    value is EXACT only when BOTH parts are exact, mirroring the single ``exact``
+    flag every Value carries; the parts may carry different scales (the algebra
+    keeps each part at the precision its own sub-expression produced).
+    """
+
+    real: FixedPoint
+    imag: FixedPoint
+
+    def __post_init__(self) -> None:
+        if type(self.real) is not FixedPoint or type(self.imag) is not FixedPoint:
+            raise ValueError("Complex parts must both be FixedPoint")
 
 
 def _hex_bytes(magnitude: int) -> str:
@@ -957,6 +981,8 @@ def _lexeme_scale(lexeme: str) -> int:
     read straight off the source so the nullary-precision pre-walk (29.3) need not
     evaluate the tree. Mirrors from_lexeme's three literal cases.
     """
+    if lexeme[-1:] in ("i", "j"):  # imaginary suffix (complex mode): scale of its magnitude
+        lexeme = lexeme[:-1]
     if "@" in lexeme:  # M@D (20.5): the scale is the explicit '@<decimals>' tail
         return int(lexeme.partition("@")[2])
     if lexeme[:2].lower() in {"0x", "0b", "0o"}:  # base-prefixed integers (20.4)
@@ -983,8 +1009,9 @@ class Value:
     """
 
     mode: Mode
-    # per-mode storage: FLOATING_POINT float, FIXED_POINT FixedPoint, RATIONAL Fraction
-    payload: Fraction | float | FixedPoint
+    # per-mode storage: FLOATING_POINT float, FIXED_POINT FixedPoint, RATIONAL Fraction,
+    # COMPLEX Complex (a pair of FixedPoints)
+    payload: Fraction | float | FixedPoint | Complex
     exact: bool
     # "How inexact" (34.5.2): the EXACT signed quantization residual stored - true
     # that THIS value's own rounding introduced, as a Fraction — None when nothing
@@ -1017,6 +1044,9 @@ class Value:
             case Mode.RATIONAL:
                 if type(self.payload) is not Fraction:
                     raise ValueError("RATIONAL payload must be a Fraction")
+            case Mode.COMPLEX:
+                if type(self.payload) is not Complex:
+                    raise ValueError("COMPLEX payload must be a Complex")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1039,6 +1069,11 @@ class Value:
         more decimals instead. It only affects FIXED_POINT (other modes have no
         decimal scale) and defaults to 0 — no floor, behaviour unchanged.
         """
+        # An imaginary literal (trailing 'i'/'j', lexed only onto a decimal) is only
+        # meaningful in complex mode; refuse it cleanly elsewhere rather than letting
+        # the per-mode parse choke on the suffix.
+        if lexeme[-1:] in ("i", "j") and mode is not Mode.COMPLEX:
+            raise NotRepresentableError("imaginary literal requires complex mode")
         # M@D (20.5): an integer mantissa '@' a decimal scale, == M * 10**-D.
         # Like the base-prefixed integers it is valid in EVERY mode (the
         # side-by-side product needs the same literal to evaluate in all modes).
@@ -1070,6 +1105,18 @@ class Value:
                 # Every literal is exact, so rational values start exact=True.
                 fraction = Fraction(int(lexeme, 0)) if base_prefixed else Fraction(lexeme)
                 return cls(Mode.RATIONAL, fraction, exact=True)
+            case Mode.COMPLEX:
+                # A trailing 'i'/'j' (lexed only onto a decimal) makes the literal
+                # IMAGINARY (real part 0); otherwise it is a real (imag part 0). Either
+                # way the magnitude parses as a FIXED_POINT part, so a complex literal
+                # inherits the fixed-point scale of its digits.
+                imaginary = lexeme[-1:] in ("i", "j")
+                body = lexeme[:-1] if imaginary else lexeme
+                part = cls.from_lexeme(body, Mode.FIXED_POINT, min_decimals)
+                assert isinstance(part.payload, FixedPoint)
+                zero = FixedPoint(0, part.payload.decimals)
+                parts = Complex(zero, part.payload) if imaginary else Complex(part.payload, zero)
+                return cls(Mode.COMPLEX, parts, exact=part.exact)
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
@@ -1103,6 +1150,14 @@ class Value:
                 )
             case Mode.RATIONAL:
                 return cls(Mode.RATIONAL, Fraction(mantissa, 10**decimals), exact=True)
+            case Mode.COMPLEX:
+                real = cls._from_scaled_int(mantissa, decimals, Mode.FIXED_POINT, min_decimals)
+                assert isinstance(real.payload, FixedPoint)
+                return cls(
+                    Mode.COMPLEX,
+                    Complex(real.payload, FixedPoint(0, real.payload.decimals)),
+                    exact=real.exact,
+                )
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
@@ -1133,6 +1188,12 @@ class Value:
             case Mode.FIXED_POINT | Mode.RATIONAL:
                 mantissa, _lossless = _fp_quantize(frac.numerator, frac.denominator, scale)
                 return cls._from_scaled_int(mantissa, scale, mode)
+            case Mode.COMPLEX:
+                # The solver drives a REAL candidate; complex search is unsupported, so
+                # there is no real-to-complex binding to materialise here.
+                raise NotRepresentableError(
+                    "complex mode has no real-candidate binding (the solver is real-valued)"
+                )
             case _:
                 raise ValueError(f"unsupported mode: {mode!r}")
 
@@ -1164,6 +1225,13 @@ class Value:
                 return cls(Mode.FIXED_POINT, FixedPoint(_pi_scaled(scale), scale), exact=False)
             case Mode.RATIONAL:
                 raise NotRepresentableError("pi is irrational; no rational value")
+            case Mode.COMPLEX:
+                scale = ctx.nullary_precision
+                return cls(
+                    Mode.COMPLEX,
+                    Complex(FixedPoint(_pi_scaled(scale), scale), FixedPoint(0, scale)),
+                    exact=False,
+                )
             case _:
                 raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
@@ -1182,6 +1250,13 @@ class Value:
                 return cls(Mode.FIXED_POINT, FixedPoint(_e_scaled(scale), scale), exact=False)
             case Mode.RATIONAL:
                 raise NotRepresentableError("e is irrational; no rational value")
+            case Mode.COMPLEX:
+                scale = ctx.nullary_precision
+                return cls(
+                    Mode.COMPLEX,
+                    Complex(FixedPoint(_e_scaled(scale), scale), FixedPoint(0, scale)),
+                    exact=False,
+                )
             case _:
                 raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
@@ -1222,6 +1297,8 @@ class Value:
                 # The full ns at scale 9; the chokepoint sets exactness per mode
                 # (float rounds the double, rational stays exact).
                 return cls._from_scaled_int(now_ns, 9, ctx.mode)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("time() is a real clock reading; no complex value")
             case _:
                 raise ValueError(f"unsupported mode: {ctx.mode!r}")
 
@@ -1265,6 +1342,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 return Value(Mode.RATIONAL, self.payload + other.payload, exact=exact)
+            case Mode.COMPLEX:
+                return self._complex_add(other)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1282,6 +1361,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 return Value(Mode.RATIONAL, self.payload - other.payload, exact=exact)
+            case Mode.COMPLEX:
+                return self._complex_sub(other)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1299,6 +1380,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 return Value(Mode.RATIONAL, self.payload * other.payload, exact=exact)
+            case Mode.COMPLEX:
+                return self._complex_mul(other)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1320,6 +1403,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 return Value(Mode.RATIONAL, self.payload / other.payload, exact=exact)
+            case Mode.COMPLEX:
+                return self._complex_div(other)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1341,6 +1426,8 @@ class Value:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 # Fraction // Fraction floors to an int; re-wrap as a Fraction.
                 return Value(Mode.RATIONAL, Fraction(self.payload // other.payload), exact=exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("floor division is undefined for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1365,6 +1452,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 return Value(Mode.RATIONAL, self.payload % other.payload, exact=exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("modulo is undefined for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1452,6 +1541,8 @@ class Value:
                 if other.payload.denominator != 1:
                     raise NotRepresentableError("rational power requires an integer exponent")
                 return Value(Mode.RATIONAL, self.payload ** int(other.payload), exact=exact)
+            case Mode.COMPLEX:
+                return self._complex_pow(other)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1486,6 +1577,8 @@ class Value:
                 p, q = self.payload, other.payload
                 num, den = intop(p.numerator, q.numerator), intop(p.denominator, q.denominator)
                 return Value(Mode.RATIONAL, Fraction(num, den), exact=exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError(f"bitwise {symbol} is undefined for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1513,6 +1606,8 @@ class Value:
                 assert isinstance(self.payload, FixedPoint)
                 fp = self.payload
                 return Value(self.mode, FixedPoint(-fp.mantissa, fp.decimals), exact=self.exact)
+            case Mode.COMPLEX:
+                return self._complex_neg()
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1526,6 +1621,8 @@ class Value:
                 assert isinstance(self.payload, FixedPoint)
                 fp = self.payload
                 return Value(self.mode, FixedPoint(+fp.mantissa, fp.decimals), exact=self.exact)
+            case Mode.COMPLEX:
+                return self._complex_pos()
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1553,6 +1650,8 @@ class Value:
                 fr = self.payload
                 inverted = Fraction(~fr.numerator, ~fr.denominator)
                 return Value(Mode.RATIONAL, inverted, exact=self.exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("bitwise NOT is undefined for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1578,8 +1677,41 @@ class Value:
                 assert isinstance(self.payload, FixedPoint)
                 fp = self.payload
                 return Value(self.mode, FixedPoint(abs(fp.mantissa), fp.decimals), exact=self.exact)
+            case Mode.COMPLEX:
+                return self._complex_abs()
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def conj(self) -> "Value":
+        """Complex conjugate a-bi (40.12). A real value is its own conjugate, so in
+        every non-complex mode this is the identity (returned verbatim, exactness
+        intact); in complex mode it negates the imaginary part."""
+        if self.mode is Mode.COMPLEX:
+            return self._complex_conj()
+        return self
+
+    def re(self) -> "Value":
+        """Real part Re(z) (40.12). The identity in a real mode (the value IS its real
+        part); in complex mode the real part as a complex value with zero imaginary."""
+        if self.mode is Mode.COMPLEX:
+            return self._complex_re()
+        return self
+
+    def im(self) -> "Value":
+        """Imaginary part Im(z) (40.12). Zero in every real mode (a real has no
+        imaginary part); in complex mode the imaginary magnitude as a complex value."""
+        if self.mode is Mode.COMPLEX:
+            return self._complex_im()
+        return Value._from_scaled_int(0, 0, self.mode)
+
+    def arg(self) -> "Value":
+        """Argument/phase arg(z) in radians (40.12) — atan2(Im z, Re z). In a real
+        mode this is atan2(0, x): 0 for x >= 0, pi for x < 0, inheriting atan2's
+        per-mode exactness (rational refuses the irrational pi). Complex mode takes
+        the angle of the two parts."""
+        if self.mode is Mode.COMPLEX:
+            return self._complex_arg()
+        return Value._from_scaled_int(0, 0, self.mode).atan2(self)
 
     def sign(self) -> "Value":
         """Signum (40.9) — UNARY classification: -1, 0, or +1 by the operand's sign,
@@ -1607,6 +1739,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 s = (self.payload > 0) - (self.payload < 0)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("sign is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
         return Value._from_scaled_int(s, 0, self.mode)
@@ -1696,6 +1830,8 @@ class Value:
                 shift = Fraction(10) ** n
                 floored = Fraction(math.floor(self.payload * shift)) / shift
                 return Value(Mode.RATIONAL, floored, exact=self.exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("floor is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1747,6 +1883,8 @@ class Value:
                 shift = Fraction(10) ** n
                 ceiled = Fraction(math.ceil(self.payload * shift)) / shift
                 return Value(Mode.RATIONAL, ceiled, exact=self.exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("ceil is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1795,6 +1933,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 return Value(Mode.RATIONAL, Fraction(round(self.payload, n)), exact=self.exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("round is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1849,6 +1989,8 @@ class Value:
                 shift = Fraction(10) ** n
                 truncated = Fraction(math.trunc(self.payload * shift)) / shift
                 return Value(Mode.RATIONAL, truncated, exact=self.exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("trunc is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -1904,6 +2046,10 @@ class Value:
                 a = x.mantissa * 10**y.decimals
                 b = y.mantissa * 10**x.decimals
                 return (a > b) - (a < b)
+            case Mode.COMPLEX:
+                # No total order on C — so min/max/median/clamp, which all route
+                # through here, refuse rather than invent a magnitude/real-part order.
+                raise NotRepresentableError(f"{op} is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -2183,6 +2329,10 @@ class Value:
                 if self.payload.denominator != 1:
                     raise NotRepresentableError(f"{what} requires integer operands")
                 return self.payload.numerator
+            case Mode.COMPLEX:
+                # gcd/lcm/factorial/comb/perm all read operands through here; complex
+                # has no integer ring the engine commits to, so they refuse.
+                raise NotRepresentableError(f"{what} is undefined for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -2393,6 +2543,8 @@ class Value:
                 if root_num * root_num != fr.numerator or root_den * root_den != fr.denominator:
                     raise NotRepresentableError("rational square root is irrational")
                 return Value(Mode.RATIONAL, Fraction(root_num, root_den), exact=self.exact)
+            case Mode.COMPLEX:
+                return self._complex_sqrt()
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -2449,6 +2601,8 @@ class Value:
                 return Value(
                     Mode.RATIONAL, Fraction(num_sign * root_num, root_den), exact=self.exact
                 )
+            case Mode.COMPLEX:
+                raise NotRepresentableError("cbrt is not supported for complex numbers")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -2473,6 +2627,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.sin(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_sin()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:
@@ -2512,6 +2668,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.cos(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_cos()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:
@@ -2551,6 +2709,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.tan(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_tan()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:
@@ -2598,6 +2758,8 @@ class Value:
                 assert isinstance(self.payload, float)
                 cot = math.cos(self.payload) / math.sin(self.payload)
                 return Value(Mode.FLOATING_POINT, cot, exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("cot is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:
@@ -2646,6 +2808,8 @@ class Value:
                 if abs(self.payload) > 1:
                     raise NotRepresentableError("arcsine argument outside the domain [-1, 1]")
                 return Value(Mode.FLOATING_POINT, math.asin(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("asin is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if abs(self.payload) > 1:
@@ -2689,6 +2853,8 @@ class Value:
                 if abs(self.payload) > 1:
                     raise NotRepresentableError("arccosine argument outside the domain [-1, 1]")
                 return Value(Mode.FLOATING_POINT, math.acos(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("acos is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if abs(self.payload) > 1:
@@ -2733,6 +2899,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.atan(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("atan is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # atan(0) = 0, the only exact rational case
@@ -2777,6 +2945,8 @@ class Value:
                 return Value(
                     Mode.FLOATING_POINT, math.atan2(self.payload, other.payload), exact=False
                 )
+            case Mode.COMPLEX:
+                raise NotRepresentableError("atan2 is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction) and isinstance(other.payload, Fraction)
                 if (
@@ -2836,6 +3006,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.degrees(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("degrees is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # degrees(0) = 0, the only exact rational case
@@ -2876,6 +3048,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.radians(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("radians is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # radians(0) = 0, the only exact rational case
@@ -2919,6 +3093,10 @@ class Value:
             Weierstrass); otherwise NotRepresentableError, the exact-or-refuse stance
             of sqrt.
         """
+        if self.mode is Mode.COMPLEX:
+            # complex log handles its own (optional) base, so it intercepts before the
+            # real two-arg path; ln(z) = ln|z| + arg(z)*i, refusing z == 0.
+            return self._complex_log(base)
         if base is not None:
             return self._log_base(base)
         match self.mode:
@@ -3040,6 +3218,8 @@ class Value:
                 if self.payload <= 0:
                     raise NotRepresentableError("logarithm of a non-positive value")
                 return Value(Mode.FLOATING_POINT, math.log10(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_log_int_base(10)
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 fr = self.payload
@@ -3100,6 +3280,8 @@ class Value:
                 if self.payload <= 0:
                     raise NotRepresentableError("logarithm of a non-positive value")
                 return Value(Mode.FLOATING_POINT, math.log2(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_log_int_base(2)
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload <= 0:
@@ -3142,6 +3324,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.exp(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_exp()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # exp(0) = 1, the only exact rational case
@@ -3176,6 +3360,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.sinh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_sinh()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # sinh(0) = 0, the only exact rational case
@@ -3210,6 +3396,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.cosh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_cosh()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # cosh(0) = 1, the only exact rational case
@@ -3247,6 +3435,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.tanh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                return self._complex_tanh()
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # tanh(0) = 0, the only exact rational case
@@ -3283,6 +3473,8 @@ class Value:
             case Mode.FLOATING_POINT:
                 assert isinstance(self.payload, float)
                 return Value(Mode.FLOATING_POINT, math.asinh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("asinh is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload == 0:  # asinh(0) = 0, the only exact rational case
@@ -3322,6 +3514,8 @@ class Value:
                 if self.payload < 1:
                     raise NotRepresentableError(below)
                 return Value(Mode.FLOATING_POINT, math.acosh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("acosh is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if self.payload < 1:
@@ -3364,6 +3558,8 @@ class Value:
                 if abs(self.payload) >= 1:
                     raise NotRepresentableError(outside)
                 return Value(Mode.FLOATING_POINT, math.atanh(self.payload), exact=False)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("atanh is not supported for complex numbers")
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 if abs(self.payload) >= 1:
@@ -3388,6 +3584,227 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    # --- complex (19.1.8) -----------------------------------------------
+    # COMPLEX is built ENTIRELY on the FIXED_POINT engine. A complex value is a
+    # pair of FixedPoints; every operation below decomposes into fixed-point
+    # operations on those parts, wrapped as throwaway FIXED_POINT Values so the
+    # existing real add/sub/mul/div/sqrt/exp/sin/cos/... methods can be called and
+    # recombined. The covering-scale rule, half-to-even rounding and exactness
+    # propagation are therefore inherited per part rather than reinvented, and a
+    # landmark like (3+4i)*(1+2i) or sqrt(-1) stays EXACT because each part's real
+    # arithmetic does. The transcendentals use the standard real decompositions
+    # (exp(a+bi)=e^a(cos b+i sin b), log z=ln|z|+i·arg z, ...).
+
+    def _parts(self) -> tuple["Value", "Value"]:
+        """This complex value's (real, imag) parts as FIXED_POINT Values.
+
+        The whole value carries ONE ``exact`` flag, so both parts inherit it; a
+        recombining op ANDs the result parts' flags back into one (exact only
+        where every part stayed exact), keeping the single-flag contract.
+        """
+        assert isinstance(self.payload, Complex)
+        return (
+            Value(Mode.FIXED_POINT, self.payload.real, exact=self.exact),
+            Value(Mode.FIXED_POINT, self.payload.imag, exact=self.exact),
+        )
+
+    @staticmethod
+    def _complex_of(re: "Value", im: "Value") -> "Value":
+        """Pack two FIXED_POINT result Values into one COMPLEX Value (exact iff both)."""
+        assert isinstance(re.payload, FixedPoint) and isinstance(im.payload, FixedPoint)
+        return Value(Mode.COMPLEX, Complex(re.payload, im.payload), exact=re.exact and im.exact)
+
+    @staticmethod
+    def _fp_zero(like: "Value") -> "Value":
+        """An exact FIXED_POINT zero at ``like``'s scale — the imag part of a real result."""
+        assert isinstance(like.payload, FixedPoint)
+        return Value(Mode.FIXED_POINT, FixedPoint(0, like.payload.decimals), exact=True)
+
+    @staticmethod
+    def _complex_int(n: int) -> "Value":
+        """The real integer ``n`` as a scale-0 COMPLEX value (n + 0i), exact."""
+        z = Value(Mode.FIXED_POINT, FixedPoint(n, 0), exact=True)
+        return Value._complex_of(z, Value._fp_zero(z))
+
+    @staticmethod
+    def _fp_nonneg(v: "Value") -> "Value":
+        """Clamp a FIXED_POINT radicand to >= 0, healing a tiny negative from rounding.
+
+        sqrt's two radicands (|z|±re)/2 are non-negative in exact arithmetic, but
+        the magnitude |z| is itself a rounded root, so it can dip a half-ULP below
+        |re| and push a radicand microscopically negative — which real sqrt would
+        refuse. Flooring at zero keeps the principal square root defined.
+        """
+        assert isinstance(v.payload, FixedPoint)
+        if v.payload.mantissa < 0:
+            return Value(Mode.FIXED_POINT, FixedPoint(0, v.payload.decimals), exact=False)
+        return v
+
+    def _complex_add(self, other: "Value") -> "Value":
+        (ar, ai), (br, bi) = self._parts(), other._parts()
+        return Value._complex_of(ar.add(br), ai.add(bi))
+
+    def _complex_sub(self, other: "Value") -> "Value":
+        (ar, ai), (br, bi) = self._parts(), other._parts()
+        return Value._complex_of(ar.sub(br), ai.sub(bi))
+
+    def _complex_mul(self, other: "Value") -> "Value":
+        (ar, ai), (br, bi) = self._parts(), other._parts()
+        # (ar+ai·i)(br+bi·i) = (ar·br - ai·bi) + (ar·bi + ai·br)·i
+        return Value._complex_of(ar.mul(br).sub(ai.mul(bi)), ar.mul(bi).add(ai.mul(br)))
+
+    def _complex_div(self, other: "Value") -> "Value":
+        (ar, ai), (br, bi) = self._parts(), other._parts()
+        denom = br.mul(br).add(bi.mul(bi))  # |other|^2, a real fixed-point value
+        assert isinstance(denom.payload, FixedPoint)
+        if denom.payload.mantissa == 0:
+            raise ZeroDivisionError("complex division by zero")
+        # multiply by the conjugate, then scale by 1/|other|^2
+        re = ar.mul(br).add(ai.mul(bi)).div(denom)
+        im = ai.mul(br).sub(ar.mul(bi)).div(denom)
+        return Value._complex_of(re, im)
+
+    def _complex_neg(self) -> "Value":
+        re, im = self._parts()
+        return Value._complex_of(re.neg(), im.neg())
+
+    def _complex_pos(self) -> "Value":
+        re, im = self._parts()
+        return Value._complex_of(re.pos(), im.pos())
+
+    def _complex_conj(self) -> "Value":
+        re, im = self._parts()
+        return Value._complex_of(re, im.neg())
+
+    def _complex_re(self) -> "Value":
+        re, _im = self._parts()
+        return Value._complex_of(re, Value._fp_zero(re))
+
+    def _complex_im(self) -> "Value":
+        _re, im = self._parts()
+        return Value._complex_of(im, Value._fp_zero(im))
+
+    def _complex_magnitude(self) -> "Value":
+        """|z| as a real FIXED_POINT value — sqrt(re^2 + im^2), the abs/log radius."""
+        re, im = self._parts()
+        return re.mul(re).add(im.mul(im)).sqrt()
+
+    def _complex_abs(self) -> "Value":
+        mag = self._complex_magnitude()
+        return Value._complex_of(mag, Value._fp_zero(mag))
+
+    def _complex_arg(self) -> "Value":
+        re, im = self._parts()
+        ang = im.atan2(re)  # atan2(y, x): self is y, other is x
+        return Value._complex_of(ang, Value._fp_zero(ang))
+
+    def _complex_sqrt(self) -> "Value":
+        """Principal square root via the algebraic real-part form.
+
+        sqrt(z) = sqrt((|z|+re)/2) + sign(im)·sqrt((|z|-re)/2)·i, with sign(im) taken
+        as +1 when im == 0 (the principal branch). Algebraic (not polar) so the grid
+        landmarks stay exact: sqrt(-1) = i, sqrt(3+4i) = 2+i.
+        """
+        re, im = self._parts()
+        assert isinstance(im.payload, FixedPoint)
+        mag = self._complex_magnitude()
+        two = Value(Mode.FIXED_POINT, FixedPoint(2, 0), exact=True)
+        re_part = Value._fp_nonneg(mag.add(re).div(two)).sqrt()
+        im_mag = Value._fp_nonneg(mag.sub(re).div(two)).sqrt()
+        im_part = im_mag if im.payload.mantissa >= 0 else im_mag.neg()
+        return Value._complex_of(re_part, im_part)
+
+    def _complex_exp(self) -> "Value":
+        re, im = self._parts()
+        ex = re.exp()  # e^re, real
+        return Value._complex_of(ex.mul(im.cos()), ex.mul(im.sin()))
+
+    def _complex_ln(self) -> "Value":
+        """Natural log: ln|z| + arg(z)·i (principal branch). Refuses z == 0."""
+        re, im = self._parts()
+        lnr = self._complex_magnitude().ln()  # ln raises on |z| == 0
+        ang = im.atan2(re)
+        return Value._complex_of(lnr, ang)
+
+    def _complex_log(self, base: "Value | None") -> "Value":
+        ln_z = self._complex_ln()
+        if base is None:
+            return ln_z
+        return ln_z._complex_div(base._complex_ln())
+
+    def _complex_log_int_base(self, base: int) -> "Value":
+        """log base ``base`` (10, 2) as complex ln(z)/ln(base).
+
+        The base is materialised at the operand's own scale, not scale 0 — otherwise
+        ln(base) would be computed on a scale-0 integer and round catastrophically
+        (ln(10) -> 2), poisoning the quotient.
+        """
+        assert isinstance(self.payload, Complex)
+        scale = max(self.payload.real.decimals, self.payload.imag.decimals)
+        base_v = Value(
+            Mode.COMPLEX,
+            Complex(FixedPoint(base * 10**scale, scale), FixedPoint(0, scale)),
+            exact=True,
+        )
+        return self._complex_ln()._complex_div(base_v._complex_ln())
+
+    def _complex_sin(self) -> "Value":
+        # sin(a+bi) = sin a·cosh b + i·cos a·sinh b
+        re, im = self._parts()
+        return Value._complex_of(re.sin().mul(im.cosh()), re.cos().mul(im.sinh()))
+
+    def _complex_cos(self) -> "Value":
+        # cos(a+bi) = cos a·cosh b - i·sin a·sinh b
+        re, im = self._parts()
+        return Value._complex_of(re.cos().mul(im.cosh()), re.sin().mul(im.sinh()).neg())
+
+    def _complex_tan(self) -> "Value":
+        return self._complex_sin()._complex_div(self._complex_cos())
+
+    def _complex_sinh(self) -> "Value":
+        # sinh(a+bi) = sinh a·cos b + i·cosh a·sin b
+        re, im = self._parts()
+        return Value._complex_of(re.sinh().mul(im.cos()), re.cosh().mul(im.sin()))
+
+    def _complex_cosh(self) -> "Value":
+        # cosh(a+bi) = cosh a·cos b + i·sinh a·sin b
+        re, im = self._parts()
+        return Value._complex_of(re.cosh().mul(im.cos()), re.sinh().mul(im.sin()))
+
+    def _complex_tanh(self) -> "Value":
+        return self._complex_sinh()._complex_div(self._complex_cosh())
+
+    def _complex_is_real_integer(self) -> int | None:
+        """The exponent's integer value when it is a real whole number, else None."""
+        assert isinstance(self.payload, Complex)
+        re, im = self.payload.real, self.payload.imag
+        if im.mantissa != 0:
+            return None
+        if re.mantissa % 10**re.decimals != 0:
+            return None
+        return re.mantissa // 10**re.decimals
+
+    def _complex_pow(self, other: "Value") -> "Value":
+        """z ** w. An integer real exponent uses exact repeated multiplication
+        (squaring); any other exponent goes through exp(w·ln z), inexact."""
+        n = other._complex_is_real_integer()
+        if n is not None:
+            if n == 0:
+                return Value._complex_int(1)
+            base = self if n > 0 else Value._complex_int(1)._complex_div(self)
+            result = Value._complex_int(1)
+            factor = base
+            k = abs(n)
+            while k:  # exponentiation by squaring over complex mul
+                if k & 1:
+                    result = result._complex_mul(factor)
+                k >>= 1
+                if k:
+                    factor = factor._complex_mul(factor)
+            return result
+        # general branch: z**w = exp(w · ln z); ln refuses z == 0
+        return other._complex_mul(self._complex_ln())._complex_exp()
+
     # --- reporting (25.1) -----------------------------------------------
 
     def precision(self) -> int | None:
@@ -3407,6 +3824,11 @@ class Value:
                 return self.payload.decimals
             case Mode.FLOATING_POINT | Mode.RATIONAL:
                 return None
+            case Mode.COMPLEX:
+                # the wider of the two parts' scales — the precision the result was
+                # rounded at, so the inexact verdict reads "rounded to N decimals".
+                assert isinstance(self.payload, Complex)
+                return max(self.payload.real.decimals, self.payload.imag.decimals)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3431,6 +3853,8 @@ class Value:
             case Mode.RATIONAL:
                 assert isinstance(self.payload, Fraction)
                 return float(self.payload)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("a complex value has no single real float")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3473,6 +3897,22 @@ class Value:
             case Mode.RATIONAL:
                 # Fraction renders as "n" when integral, else "n/d" (10.3).
                 return str(self.payload)
+            case Mode.COMPLEX:
+                # Render as a+bi: each part via the fixed-point formatter, the imag
+                # part carrying an explicit sign and an `i`. A zero imag collapses to
+                # the bare real (a real result), a zero real to the bare imaginary
+                # (so sqrt(-1) reads "1i", not "0+1i").
+                assert isinstance(self.payload, Complex)
+                re_fp, im_fp = self.payload.real, self.payload.imag
+                re_str = Value(Mode.FIXED_POINT, re_fp, exact=True).to_string()
+                if im_fp.mantissa == 0:
+                    return re_str
+                im_mag = Value(
+                    Mode.FIXED_POINT, FixedPoint(abs(im_fp.mantissa), im_fp.decimals), exact=True
+                ).to_string()
+                if re_fp.mantissa == 0:
+                    return f"{'-' if im_fp.mantissa < 0 else ''}{im_mag}i"
+                return f"{re_str}{'-' if im_fp.mantissa < 0 else '+'}{im_mag}i"
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3530,6 +3970,11 @@ class Value:
                 return "irrational; no exact value in any numeric type"
             case Mode.RATIONAL:
                 return "inherited from an inexact input"
+            case Mode.COMPLEX:
+                return (
+                    "a complex part rounded onto the fixed-point grid (a root/transcendental, "
+                    "or a quotient that did not fit the scale)"
+                )
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3558,6 +4003,8 @@ class Value:
                 return f"0x{raw}"
             case Mode.RATIONAL:
                 return None
+            case Mode.COMPLEX:
+                return None  # two parts, no single integer to dump
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -3579,6 +4026,8 @@ class Value:
                 if self.payload.denominator == 1:
                     return []  # an integer is its own decimal — nothing to approximate
                 return [f"≈ {self._rational_approx()}"]
+            case Mode.COMPLEX:
+                return []  # the a+bi rendering already carries both parts
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

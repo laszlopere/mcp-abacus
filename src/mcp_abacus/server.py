@@ -76,7 +76,8 @@ mcp = _AbacusFastMCP(
         "behaves exactly as that type would in real code -- it rounds where the "
         "type rounds and stays exact where the type is exact. Modes: fixed-point "
         "(default; exact scaled integer, money / ERC-20-safe), floating-point "
-        "(IEEE-754 double; aliases float64, double), and rational (exact "
+        "(IEEE-754 double; aliases float64, double), complex (a+bi over two "
+        "fixed-point parts; imaginary unit 1i), and rational (exact "
         "numerator/denominator). Every answer is labelled with its own precision "
         "verdict (exact vs inexact, rounded to N decimals), so a result that "
         "merely looks precise can never be mistaken for the true value. Tools: "
@@ -332,8 +333,9 @@ def _resolve_mode_and_precision(
     """Resolve `mode` and validate `min_fixed_point_precision`, shared by every tool.
 
     Returns ``(resolved_mode, None)`` on success or ``(None, message)`` on the first
-    bad argument. min_fixed_point_precision is valid ONLY in fixed-point mode (the
-    other modes have no decimal scale) and must be a non-negative integer. Factored
+    bad argument. min_fixed_point_precision is valid in the modes that carry a decimal
+    scale — fixed-point and complex (whose two parts are fixed-point) — and must be a
+    non-negative integer; the float/rational modes have no scale to floor. Factored
     out of the parse/evaluate front-end so calculate, analyze, and solver share one
     mode/precision contract — the same resolution, the same checks, and the same
     error wording, whichever tool flags it.
@@ -346,10 +348,10 @@ def _resolve_mode_and_precision(
         hint = did_you_mean(mode, [m.value for m in Mode] + list(MODE_ALIASES))
         return None, f"Unknown mode: {mode!r}.{hint} Valid modes: {valid}."
     if min_fixed_point_precision is not None:
-        if selected is not Mode.FIXED_POINT:
+        if selected not in (Mode.FIXED_POINT, Mode.COMPLEX):
             return None, (
-                f"min_fixed_point_precision is only valid in fixed-point mode, "
-                f"not {selected.value}."
+                f"min_fixed_point_precision is only valid in fixed-point and complex "
+                f"modes, not {selected.value}."
             )
         if min_fixed_point_precision < 0:
             return None, (
@@ -428,9 +430,10 @@ def calculate(
                 "Numeric type the WHOLE calculation runs in: 'fixed-point' "
                 "(default; exact scaled integer, money/ERC-20-safe; alias 'decimal'), "
                 "'floating-point' (IEEE-754 double; aliases 'float64', 'double', "
-                "'float', 'ieee754'), or 'rational' (exact numerator/denominator; "
-                "aliases 'fraction', 'frac'). Note 'decimal' resolves to fixed-point, "
-                "NOT a decimal float. `help('types')` lists the full set."
+                "'float', 'ieee754'), 'rational' (exact numerator/denominator; "
+                "aliases 'fraction', 'frac'), or 'complex' (a+bi over two fixed-point "
+                "parts; write the imaginary unit as '1i', e.g. '3+4i'). Note 'decimal' "
+                "resolves to fixed-point, NOT a decimal float. `help('types')` lists the full set."
             )
         ),
     ] = "fixed-point",
@@ -469,6 +472,8 @@ def calculate(
       fixed-point   (default) exact scaled integer; money / ERC-20-safe; alias decimal
       floating-point  IEEE-754 double; ~15-17 sig. digits; aliases float64, double, float, ieee754
       rational        exact numerator/denominator; no irrationals; aliases fraction, frac
+      complex         a+bi over two fixed-point parts; imaginary unit `1i` (e.g. 3+4i);
+                      exact + - *, rounds / and transcendentals; no ordering/bitwise/solver
 
     Grammar. Binary `+ - * / // %`; unary prefix `+ - ~`; `**` is POWER,
     right-assoc, binds tighter than unary minus: -2**2 == -(2**2). Bitwise
@@ -867,6 +872,10 @@ def solver(
     if mode_error is not None:
         return _solver_error(mode_error)
     assert selected is not None  # mode_error is None means a mode resolved
+    if selected is Mode.COMPLEX:
+        # The search engines bracket a sign change / order a real objective; complex
+        # results have neither, so the solver does not run in complex mode.
+        return _solver_error("the solver is real-valued; complex mode is not supported")
     try:
         resolved_objective = resolve_objective(objective)
         resolved_algorithm = resolve_algorithm(algorithm)

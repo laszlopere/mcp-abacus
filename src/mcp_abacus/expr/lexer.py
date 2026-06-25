@@ -154,6 +154,14 @@ def _lex_number(text: str, start: int, line: int) -> tuple[str, int]:
     end = match.end()
     if text[end : end + 1] == "@":
         return _lex_at_decimals(text, start, end, line, is_base_prefixed)
+    # A trailing 'i'/'j' on a DECIMAL makes it an imaginary literal (3+4i, 2.5i) for
+    # complex mode — the textbook/Python spelling. Like '@' it attaches only to a
+    # decimal (never a base-prefixed integer), is kept as part of the raw lexeme, and
+    # is mode-checked later in Value.from_lexeme (it refuses outside complex mode). It
+    # is a SUFFIX, so a bare `i` stays an ordinary identifier the _NAME branch lexes —
+    # `i` remains free as a variable name; the imaginary unit is written `1i`.
+    if not is_base_prefixed and text[end : end + 1] in ("i", "j"):
+        return _finish(text, start, end + 1, line)
     return _finish(text, start, end, line)
 
 

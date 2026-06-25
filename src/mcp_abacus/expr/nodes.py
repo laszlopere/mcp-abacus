@@ -73,6 +73,10 @@ _BINARY_FUNCS: dict[str, Callable[[Value, Value], Value]] = {
 # parser's concern; both consult this table (the parser via FUNCTION_ARITIES).
 _FUNCS: dict[str, Callable[..., Value]] = {
     "abs": Value.abs_,  # 22.4.1 — exact magnitude in every mode (shape of neg())
+    "conj": Value.conj,  # 40.12 — complex conjugate a-bi; identity on reals
+    "re": Value.re,  # 40.12 — real part Re(z); identity on reals
+    "im": Value.im,  # 40.12 — imaginary part Im(z); 0 on reals
+    "arg": Value.arg,  # 40.12 — argument/phase atan2(Im, Re); 0/pi on reals
     "sign": Value.sign,  # 40.9 — signum -1/0/+1; exact classification (float keeps binary64 flag)
     "sqrt": Value.sqrt,  # 22.4.2 — irrational, inexact except on the mode's grid
     "cbrt": Value.cbrt,  # 28.21 — cube root; odd root so negatives OK, inexact except perfect cubes
@@ -189,7 +193,11 @@ CONSTANT_NAMES: frozenset[str] = frozenset({"pi", "e"})
 # value is the descriptor AFTER the rendered signature — facts only, no signature
 # (the section prepends it); the model fills in the prose.
 FUNCTION_HELP: dict[str, str] = {
-    "abs": "absolute value; exact in every type",
+    "abs": "absolute value (complex: modulus sqrt(re^2+im^2)); exact in every type",
+    "conj": "complex conjugate a-bi; the identity on real values",
+    "re": "real part Re(z); the identity on real values",
+    "im": "imaginary part Im(z); 0 on real values",
+    "arg": "argument/phase in radians, atan2(Im, Re); 0 or pi on real values",
     "sign": "signum -1/0/+1 by the operand's sign; an exact classification (works on any value), "
     "float keeps the binary64 inexact flag",
     "sqrt": "square root; refuses negatives, inexact except on the type's grid "
@@ -486,7 +494,7 @@ class Node(ABC):
         precision of the literals it shares the expression with.
         """
         nullary_precision = min_fixed_point_precision
-        if mode is Mode.FIXED_POINT:
+        if mode in (Mode.FIXED_POINT, Mode.COMPLEX):  # both carry a fixed-point scale
             nullary_precision = max(min_fixed_point_precision, self._max_literal_scale())
         ctx = EvalContext(
             mode=mode,
