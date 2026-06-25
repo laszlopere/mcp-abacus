@@ -280,6 +280,10 @@ def test_range_fold_arity_is_a_parse_error():
         ("avg(1, 2)", "rational", "3/2 (exact)"),  # ... even when it does not reduce
         # binary64 rounds and carries the inexact flag.
         ("avg(2, 4)", "floating-point", "3.0 (inexact)"),
+        # A SINGLE vector is reduced over its ELEMENTS (19.1.10) — same result as the
+        # equivalent flat run, in every mode.
+        ("avg([2, 4, 6])", None, "4 (exact)"),
+        ("avg([1, 2])", "rational", "3/2 (exact)"),
     ],
 )
 def test_avg(expression, mode, value):
@@ -306,6 +310,10 @@ def test_avg(expression, mode, value):
             "for more; e.g. =4 → 2.5000)",
         ),
         ("median(2, 4)", "rational", "3 (exact)"),  # even average, exact in rational
+        # A SINGLE vector is reduced over its ELEMENTS (19.1.10) — odd selects, even
+        # averages, just as the flat forms.
+        ("median([3, 1, 2])", None, "2 (exact)"),
+        ("median([2, 4])", "rational", "3 (exact)"),
     ],
 )
 def test_median(expression, mode, value):
@@ -340,6 +348,9 @@ def test_median_odd_carries_the_selected_operands_exactness():
             "3 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
             "for more; e.g. =4 → 2.6667)",
         ),
+        # A SINGLE vector is reduced over its ELEMENTS (19.1.10) — same as the flat run.
+        ("variance([1, 2, 3, 4, 5])", None, "2 (exact)"),
+        ("variance([2, 4, 6])", "rational", "8/3 (exact)"),
     ],
 )
 def test_variance(expression, mode, value):
@@ -365,6 +376,8 @@ def test_variance(expression, mode, value):
             "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
             "for more; e.g. =4 → 1.4142)",
         ),
+        # A SINGLE vector is reduced over its ELEMENTS (19.1.10) — same as the flat run.
+        ("stddev([2, 4, 4, 4, 5, 5, 7, 9])", None, "2 (exact)"),
     ],
 )
 def test_stddev(expression, mode, value):
@@ -376,6 +389,97 @@ def test_stddev_rational_refuses_an_irrational_root():
     # no rational root, so it raises rather than fabricate digits (line-tagged).
     payload = _calc("stddev(1, 2, 3, 4, 5)", "rational")
     assert payload["error"] == "rational square root is irrational"
+    assert payload["value"] is None
+
+
+def test_stddev_empty_vector_surfaces_variances_refusal():
+    # stddev is sqrt(variance), so an empty vector is caught by variance and its
+    # message names variance — the same composition that surfaces sqrt's message above.
+    payload = _calc("stddev([])")
+    assert payload["error"] == "variance of an empty vector is undefined"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        # The whole computing-stats family now shares min/max's two OVERLOADS (a flat
+        # run OR a single vector, 19.1.10): an empty vector has nothing to aggregate,
+        # and a vector cannot be mixed with another operand. (stddev delegates to
+        # variance, so its empty-vector message is variance's — see the dedicated case.)
+        "avg([])",
+        "median([])",
+        "variance([])",
+    ],
+)
+def test_vector_stats_refuse_an_empty_vector(expression):
+    op = expression[: expression.index("(")]
+    payload = _calc(expression)
+    assert payload["error"] == f"{op} of an empty vector is undefined"
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "avg([1, 2], 3)",
+        "variance([1, 2], 3)",
+        "median(3, [1, 2])",
+    ],
+)
+def test_vector_stats_refuse_mixing_a_vector_with_operands(expression):
+    op = expression[: expression.index("(")]
+    payload = _calc(expression)
+    assert payload["error"] == (
+        f"{op} has two forms — {op}(vector) or {op}(a, b, …) — and cannot mix them"
+    )
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # POPULATION covariance of two PAIRED vectors: mean((x-mx)*(y-my)). The
+        # all-integer 2,4,6,8 / 1,3,5,7 has means 5 and 4, paired products 9,1,1,9 = 20,
+        # /4 = 5 — exact in every mode.
+        ("covariance([2, 4, 6, 8], [1, 3, 5, 7])", None, "5 (exact)"),
+        ("covariance([2, 4, 6, 8], [1, 3, 5, 7])", "rational", "5 (exact)"),
+        ("covariance([2, 4, 6, 8], [1, 3, 5, 7])", "floating-point", "5.0 (inexact)"),
+        # Perfectly anti-correlated series gives a NEGATIVE covariance.
+        ("covariance([1, 2, 3], [6, 5, 4])", "rational", "-2/3 (exact)"),
+        # A lone pair has no spread -> 0, exact in every mode.
+        ("covariance([5], [9])", None, "0 (exact)"),
+        # It COMPUTES through the means and final divide, so it follows the mode's /
+        # rule like variance: rational stays exact even when it does not reduce...
+        ("covariance([1, 2, 3], [4, 5, 6])", "rational", "2/3 (exact)"),
+        # ... while fixed-point at scale 0 rounds 2/3 and flags inexact, float rounds.
+        ("covariance([1, 2, 3], [4, 5, 6])", "floating-point", "0.6666666666666666 (inexact)"),
+        (
+            "covariance([1, 2, 3], [4, 5, 6])",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 0.6667)",
+        ),
+    ],
+)
+def test_covariance(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # covariance is the genuinely TWO-vector shape (40.13): both operands must be
+        # vectors, equal length, and non-empty.
+        ("covariance([1, 2, 3], [4, 5])", "covariance requires two equal-length vectors"),
+        ("covariance([], [])", "covariance of empty vectors is undefined"),
+        ("covariance([1, 2], 3)", "covariance takes two vectors — covariance(x, y)"),
+        ("covariance(3, [1, 2])", "covariance takes two vectors — covariance(x, y)"),
+    ],
+)
+def test_covariance_refusals(expression, error):
+    payload = _calc(expression)
+    assert payload["error"] == error
     assert payload["value"] is None
 
 

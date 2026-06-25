@@ -6,10 +6,11 @@
 Vectors are a NEW one-dimensional container held by the universal Value class. This
 first cut covers construction + rendering: a ``[a, b, …]`` literal builds a vector
 in whatever scalar mode the calculation runs in, and the result renders as ``[…]``
-with its own exact/inexact verdict. The selection aggregates ``max``/``min`` reduce
-over a vector's elements (28.2/28.3); every OTHER scalar operator and function still
-REFUSES a vector with a clean message. There is no indexing and no arithmetic yet,
-and nesting is rejected — those refusals are asserted here too.
+with its own exact/inexact verdict. The stats family reduces over a vector's elements
+— ``max``/``min``/``avg``/``median``/``variance``/``stddev`` (28.2–28.9) — and
+``covariance`` takes two vectors (40.13); every OTHER scalar operator and function
+still REFUSES a vector with a clean message. There is no indexing and no general
+arithmetic yet, and nesting is rejected — those refusals are asserted here too.
 
 Kept in its own file (not folded into test_e2e.py): the suite launches mcp-abacus as
 a real child process and speaks MCP over stdio, the exact path a production client
@@ -143,11 +144,12 @@ def test_operators_refuse_vectors():
 
 def test_functions_refuse_a_vector_argument():
     # Most functions don't consume a vector: passing one is refused uniformly, naming
-    # the function. (Variadic stats like avg keep their loose-arg form, avg(1,2,3).)
-    # The exceptions are max/min, which reduce over a vector — see the next test.
+    # the function. (A variadic arity is no protection — gcd still refuses a vector.)
+    # The exceptions are the stats family (max/min/avg/median/variance/stddev reduce
+    # over a vector, covariance takes two) — see the next tests.
     cases = [
         ("sqrt([1,2,3])", "sqrt() does not accept a vector"),
-        ("avg([1,2,3])", "avg() does not accept a vector"),
+        ("gcd([1,2,3])", "gcd() does not accept a vector"),
     ]
     payloads = _run_calc([(e, "fixed-point") for e, _ in cases])
     for (expr, message), payload in zip(cases, payloads, strict=True):
@@ -171,6 +173,41 @@ def test_max_and_min_reduce_over_a_vector():
         ("max([])", None, "max of an empty vector is undefined"),
     ]
     payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
+
+
+def test_computing_stats_reduce_over_a_vector():
+    # avg/median/variance/stddev join max/min as vector-CONSUMING (28.4/28.7/28.8/28.9):
+    # a single vector is reduced over its elements, same as the equivalent flat run.
+    cases = [
+        ("avg([2, 4, 6])", "4 (exact)", None),
+        ("median([3, 1, 2])", "2 (exact)", None),
+        ("variance([1, 2, 3, 4, 5])", "2 (exact)", None),
+        ("stddev([2, 4, 4, 4, 5, 5, 7, 9])", "2 (exact)", None),
+        ("variance([])", None, "variance of an empty vector is undefined"),
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
+
+
+def test_covariance_takes_two_vectors():
+    # covariance (40.13) is the first TWO-vector function: paired population covariance
+    # mean((x-mx)*(y-my)), refusing unequal-length, empty, or non-vector arguments.
+    cases = [
+        ("covariance([2, 4, 6, 8], [1, 3, 5, 7])", "5 (exact)", None),
+        (
+            "covariance([1, 2, 3], [6, 5, 4])",
+            "-2/3 (exact)",
+            None,
+        ),  # anti-correlated, exact rational
+        ("covariance([1, 2, 3], [4, 5])", None, "covariance requires two equal-length vectors"),
+        ("covariance([1, 2], 3)", None, "covariance takes two vectors — covariance(x, y)"),
+    ]
+    payloads = _run_calc([(e, "rational") for e, _, _ in cases])
     for (expr, value, message), payload in zip(cases, payloads, strict=True):
         assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
         assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
