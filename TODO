@@ -548,6 +548,10 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [ ] 19.1.6.  decimal — base-10 arbitrary precision (prec, rounding).
         [x] 19.1.7.  rational — exact numerator/denominator; no irrationals.
         [ ] 19.1.8.  bigfloat — arbitrary-precision binary (sqrt/pi/trig).
+        [x] 19.1.9.  complex — a + b*i over two fixed-point parts; imaginary
+                     unit written `1i`. Exact + - *, rounds / and the
+                     transcendentals onto the grid; no ordering/bitwise/
+                     integer/solver support (each refuses).
     [ ] 19.2.  Implement from_lexeme() — raw literal -> Value for every
                20.1.3 form, incl. base-prefixed integers (20.4). The
                behaviour contract is in value.py's class docstring.

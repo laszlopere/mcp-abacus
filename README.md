@@ -19,7 +19,7 @@ the production code will? A floating-point answer that merely *looks* precise is
 worse than no answer — it launders a rounding error into a confident claim.
 
 mcp-abacus is built for that caller. It does **type-faithful calculation**: you
-pick a numeric type/mode (fixed-point, IEEE-754 double, exact rational) and the
+pick a numeric type/mode (fixed-point, IEEE-754 double, exact rational, complex) and the
 *whole* expression behaves exactly as that type would in real code — it rounds
 where the type rounds, stays exact where the type is exact, and carries the
 result onward bit-for-bit. Every answer comes back labelled with its own
@@ -33,6 +33,10 @@ type; it calculates *using* that type.
   - `fixed-point` *(default)* — exact scaled integer; money / ERC-20-safe
   - `floating-point` — IEEE-754 double (aliases `float64`, `double`)
   - `rational` — exact numerator/denominator; no silent rounding
+  - `complex` — `a + b*i` over two fixed-point parts; write the imaginary unit as
+    `1i` (e.g. `3+4i`, `2.5i`). Exact `+ - *` (`(3+4i)*(1+2i)` → `-5+10i`,
+    `sqrt(-1)` → `1i`), rounds `/` and the transcendentals onto the grid; no
+    ordering, bitwise, integer (`gcd`/`factorial`), or solver support
 - **`analyze`** — evaluate an expression and return its whole parse tree, each
   node annotated with the value it computed, so you can see *where* a surprising
   answer rounded or overflowed (e.g. `(1 + 1/2) * 3` is `3` in fixed-point — the
