@@ -147,6 +147,7 @@ def test_function_arities_match_the_registry():
         "sign": (1, 1),  # 40.9 — UNARY signum
         "sqrt": (1, 1),
         "cbrt": (1, 1),
+        "hypot": (1, None),  # VARIADIC — Euclidean norm over 1+ coordinates (40.20)
         "pow": (2, 2),  # BINARY — fixed arity 2 (28.20); atan2 is the other (40.1)
         "floor": (1, 2),  # operand + optional ndigits — the first (1, 2) function (28.23)
         "ceil": (1, 2),  # operand + optional ndigits — mirror of floor (28.24)

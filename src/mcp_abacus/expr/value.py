@@ -2974,6 +2974,70 @@ class Value:
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
+    def hypot(self, *others: "Value") -> "Value":
+        """Euclidean norm sqrt(x1**2 + x2**2 + ... + xn**2) (40.20) — VARIADIC, the
+        sum shape (28.x). ``self`` is the first coordinate, so ``hypot(x)`` is just
+        ``|x|`` (the lone coordinate) and ``hypot(a, b)`` is the familiar
+        leg-to-hypotenuse sqrt(a**2 + b**2). EVERY real is in DOMAIN — squaring
+        erases the sign — so unlike ``sqrt`` (19.5.2) there is no negative refusal.
+
+        INHERITS sqrt's stance: the norm is irrational in general, so inexact in
+        float/fixed-point and exact in rational ONLY when the sum of squares is a
+        perfect square. Crucially the sum of squares is accumulated EXACTLY (not by
+        folding over ``mul``/``add``, which would round each square back to the
+        scale before summing) and rounded ONCE at the final root — a single
+        half-ULP rounding, the ULP-accurate norm.
+
+        floating-point: ``math.hypot`` — the type's own Euclidean norm, which avoids
+            the intermediate overflow naive squaring suffers; unconditionally inexact.
+        fixed-point: SUPPORTED (crypto). Sum the squared mantissas as exact bignums
+            at the doubled scale, then the rounded integer sqrt (``math.isqrt``) at
+            the covering scale — ``max`` of the operands' decimals (19.1.2). Exact
+            only when EVERY operand was exact AND that sum is a perfect square (the
+            integer sqrt left no remainder; a tie is impossible, as in ``sqrt``).
+        rational: exact sum of squares, then sqrt's exact-or-refuse — exact only when
+            both numerator and denominator of the sum are perfect squares; otherwise
+            the norm is irrational and it raises NotRepresentableError.
+        """
+        operands = (self, *others)
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                coords: list[float] = []
+                for v in operands:
+                    assert isinstance(v.payload, float)
+                    coords.append(v.payload)
+                return Value(Mode.FLOATING_POINT, math.hypot(*coords), exact=False)
+            case Mode.FIXED_POINT:
+                fps: list[FixedPoint] = []
+                for v in operands:
+                    assert isinstance(v.payload, FixedPoint)
+                    fps.append(v.payload)
+                d = max(fp.decimals for fp in fps)
+                # Σ xi**2 as an exact integer at scale 2*d: (mi * 10**(d - di))**2.
+                total = sum((fp.mantissa * 10 ** (d - fp.decimals)) ** 2 for fp in fps)
+                # sqrt(total * 10**-2d) held at scale d == round(isqrt(total)) * 10**-d.
+                root = math.isqrt(total)
+                remainder = total - root * root  # 0 <= remainder <= 2*root
+                if remainder > root:  # nearest is root+1 (a tie is impossible)
+                    root += 1
+                exact = all(v.exact for v in operands) and remainder == 0
+                return Value(Mode.FIXED_POINT, FixedPoint(root, d), exact=exact)
+            case Mode.RATIONAL:
+                total_fr = Fraction(0)
+                for v in operands:
+                    assert isinstance(v.payload, Fraction)
+                    total_fr += v.payload * v.payload
+                num, den = total_fr.numerator, total_fr.denominator
+                root_num, root_den = math.isqrt(num), math.isqrt(den)
+                if root_num * root_num != num or root_den * root_den != den:
+                    raise NotRepresentableError("rational euclidean norm is irrational")
+                exact = all(v.exact for v in operands)
+                return Value(Mode.RATIONAL, Fraction(root_num, root_den), exact=exact)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("hypot is not supported for complex numbers")
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
     def sin(self) -> "Value":
         """Sine, argument in radians (28.10) — transcendental, so inexact except
         the trivial sin(0) = 0.

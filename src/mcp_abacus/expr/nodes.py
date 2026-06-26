@@ -81,6 +81,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "sign": Value.sign,  # 40.9 — signum -1/0/+1; exact classification (float keeps binary64 flag)
     "sqrt": Value.sqrt,  # 22.4.2 — irrational, inexact except on the mode's grid
     "cbrt": Value.cbrt,  # 28.21 — cube root; odd root so negatives OK, inexact except perfect cubes
+    "hypot": Value.hypot,  # 40.20 — variadic Euclidean norm sqrt(Σ xi**2); inherits sqrt's stance
     "pow": Value.pow,  # 28.20 — binary; the call form of **, reuses Value.pow (fixed-arity 2)
     "floor": Value.floor,  # 28.23 — round toward -inf; optional ndigits (1,2), mostly exact
     "ceil": Value.ceil,  # 28.24 — round toward +inf; mirror of floor, optional ndigits (1,2)
@@ -235,6 +236,8 @@ FUNCTION_HELP: dict[str, str] = {
     "(rational needs a perfect square)",
     "cbrt": "cube root; negatives OK (odd root), inexact except on the type's grid "
     "(rational needs a perfect cube)",
+    "hypot": "variadic euclidean norm sqrt(x1^2+...+xn^2); any reals, inexact except "
+    "on the type's grid (rational needs a perfect-square sum)",
     "pow": "x to the power y; the call form of the ** operator",
     "floor": "round toward -inf; optional ndigits (default 0); exact except float with ndigits>0",
     "ceil": "round toward +inf; optional ndigits (default 0); exact except float with ndigits>0",

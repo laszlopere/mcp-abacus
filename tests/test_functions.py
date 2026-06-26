@@ -747,6 +747,61 @@ def test_cbrt_refuses_with_a_line_tagged_error(expression, mode, error):
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # hypot (40.20): variadic Euclidean norm sqrt(x1**2 + ... + xn**2), inheriting
+        # sqrt's stance. Fixed-point default — exact only when the sum of squares is a
+        # perfect square at the covering scale; the squares accumulate exactly and round
+        # ONCE at the root, so 1.5/2.0 land on 2.5 (a per-square fold would lose 2.25).
+        ("hypot(3, 4)", None, "5 (exact)"),  # the 3-4-5 triangle
+        ("hypot(1.5, 2.0)", None, "2.5 (exact)"),  # single rounding keeps it exact
+        ("hypot(0.3, 0.4)", None, "0.5 (exact)"),
+        ("hypot(2, 3, 6)", None, "7 (exact)"),  # 4 + 9 + 36 = 49; VARIADIC, 3 coords
+        ("hypot(5)", None, "5 (exact)"),  # the lone-coordinate identity, |x|
+        ("hypot(-5)", None, "5 (exact)"),  # every real in domain — squaring erases sign
+        (
+            "hypot(1, 1)",
+            None,
+            "1 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 1.4142)",
+        ),
+        (
+            "hypot(1.000000, 1.000000)",
+            None,
+            "1.414214 (inexact, rounded to 6 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =10 → 1.4142135624)",
+        ),
+        # binary64 hypot is unconditionally inexact, even for a perfect norm; it uses the
+        # type's own math.hypot, which stays finite where naive squaring would overflow.
+        ("hypot(3, 4)", "floating-point", "5.0 (inexact)"),
+        ("hypot(2, 3, 6)", "floating-point", "7.0 (inexact)"),
+        ("hypot(3e200, 4e200)", "floating-point", "4.9999999999999995e+200 (inexact)"),
+        # Rational is exact only when the sum of squares is a perfect square (both parts).
+        ("hypot(3, 4)", "rational", "5 (exact)"),
+        ("hypot(2, 3, 6)", "rational", "7 (exact)"),
+        ("hypot(3/5, 4/5)", "rational", "1 (exact)"),  # 9/25 + 16/25 = 1
+    ],
+)
+def test_hypot(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # Rational refuses an irrational norm (no scale to round to) — the sum of
+        # squares is not a perfect square.
+        ("hypot(1, 1)", "rational", "rational euclidean norm is irrational"),
+        ("hypot(1, 2)", "rational", "rational euclidean norm is irrational"),
+    ],
+)
+def test_hypot_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # factorial (40.4): n! for a non-negative integer, EXACT in every mode — a
         # product of integers with no rounding.
         ("factorial(0)", None, "1 (exact)"),  # fixed-point default; 0! = 1
