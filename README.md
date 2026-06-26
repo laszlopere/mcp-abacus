@@ -43,7 +43,11 @@ type; it calculates *using* that type.
   an internal container, not a selectable mode. The whole stats family reduces over a
   single vector's elements — `min`/`max`/`avg`/`median`/`variance`/`stddev`
   (`avg([1, 2, 3])` → `2`), as do the integer reducers `gcd`/`lcm`
-  (`gcd([54, 24, 6])` → `6`) — and `covariance(x, y)`/`correlation(x, y)` take two
+  (`gcd([54, 24, 6])` → `6`). The order statistics take a leading point then the
+  data (a run or one vector): `quantile(q, …)` for `q` in `[0, 1]` and
+  `percentile(p, …)` for `p` in `[0, 100]` read the value at that rank (type-7
+  linear interpolation), generalising `median` — `percentile(50, [1, 2, 3, 4])`
+  is the median. And `covariance(x, y)`/`correlation(x, y)` take two
   equal-length vectors (`covariance([1, 2, 3], [4, 5, 6])`, Pearson
   `correlation(...)` in `[-1, 1]`). Going the other way, `factor(n)` PRODUCES a
   vector — the prime factors of a positive integer, ascending with multiplicity
