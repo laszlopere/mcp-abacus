@@ -7,7 +7,11 @@ import dataclasses
 
 import pytest
 
+from mcp_abacus.expr.forms import dispatch_special_form
 from mcp_abacus.expr.nodes import (
+    _SPECIAL_FORM_ARITIES,
+    _SPECIAL_FORM_BOUND_VAR,
+    _SPECIAL_FORM_NAMES,
     BINARY_OPS,
     FUNCTION_ARITIES,
     UNARY_OPS,
@@ -21,6 +25,7 @@ from mcp_abacus.expr.nodes import (
     Var,
     _arity_of,
 )
+from mcp_abacus.expr.value import EvalContext, Mode
 
 
 def _example_tree(line: int = 1) -> BinOp:
@@ -207,6 +212,39 @@ def test_function_arities_match_the_registry():
         "sum": (4, 4),  # special form (40.19) — range Σ, sum(i, lo, hi, expr)
         "product": (4, 4),  # special form (40.19) — range Π, product(i, lo, hi, expr)
     }
+
+
+def test_special_form_bound_var_covers_every_special_form():
+    # _SPECIAL_FORM_BOUND_VAR records which argument of each form is the bound index/var
+    # NAME, read at FuncCall.referenced_names() (nodes.py) to mask it from the free-name
+    # set. A form added to the arity registry WITHOUT a bound-var entry would KeyError at
+    # runtime the first time its referenced_names is taken, so keep the two registries
+    # in lockstep — the analogue of the FUNCTION_HELP/FUNCTION_ARITIES mirror guard.
+    assert set(_SPECIAL_FORM_BOUND_VAR) == _SPECIAL_FORM_NAMES
+
+
+def test_every_special_form_is_dispatchable():
+    # dispatch_special_form is a hand-written if-chain ending in "unknown special form".
+    # A form added to the registry but not wired into the chain would parse and then fail
+    # to evaluate. Drive each registered name through dispatch with a trivial valid arg
+    # tuple (the bound-var slot a Var, the rest Numbers) and assert none falls through to
+    # the unknown-form branch. Other eval errors are fine — only the fall-through is a bug.
+    ctx = EvalContext(mode=Mode.FLOATING_POINT)
+    for name in _SPECIAL_FORM_NAMES:
+        lo, _hi = _SPECIAL_FORM_ARITIES[name]
+        bound = _SPECIAL_FORM_BOUND_VAR[name]
+        args = tuple(Var("x", line=1) if i == bound else Number("1", line=1) for i in range(lo))
+        try:
+            dispatch_special_form(name, ctx, args)
+        except Exception as exc:  # noqa: BLE001 — we only care it is not the fall-through
+            assert "unknown special form" not in str(exc)
+
+
+def test_dispatch_special_form_rejects_an_unregistered_name():
+    # The fall-through itself: a name not in the chain raises the unknown-form error.
+    ctx = EvalContext(mode=Mode.FLOATING_POINT)
+    with pytest.raises(Exception, match="unknown special form"):
+        dispatch_special_form("bogus", ctx, (Number("1", line=1),))
 
 
 def test_arity_of_treats_defaulted_param_as_optional():
