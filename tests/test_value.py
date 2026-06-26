@@ -271,6 +271,20 @@ def test_binary_exactness_is_and_of_both_operands(op):
     assert getattr(_v(6.0, exact=False), op)(_v(2.0, exact=False)).exact is False
 
 
+@pytest.mark.parametrize("op", ("add", "sub", "mul", "div"))
+def test_fixed_point_binary_exactness_is_and_of_both_operands(op):
+    # The fixed-point sibling of the float test above: _fp_value's `exact_in and lossless`
+    # gates exactness on BOTH operands, so an INEXACT operand poisons even a lossless op
+    # (here every op fits the covering scale, so the only inexactness comes from the flag).
+    # The float test only proves the binary64 path; this proves the scaled-int path.
+    inexact = Value(Mode.FIXED_POINT, FixedPoint(141, 2), exact=False)  # 1.41, flagged inexact
+    exact = Value(Mode.FIXED_POINT, FixedPoint(100, 2), exact=True)  # 1.00, exact
+    assert getattr(exact, op)(exact).exact is True
+    assert getattr(exact, op)(inexact).exact is False
+    assert getattr(inexact, op)(exact).exact is False
+    assert getattr(inexact, op)(inexact).exact is False
+
+
 @pytest.mark.parametrize("op", UNARY_OPS)
 def test_unary_ops_preserve_exactness(op):
     assert getattr(_v(1.0, exact=True), op)().exact is True
@@ -878,6 +892,20 @@ def test_sqrt_fixed_point_is_exact_on_a_perfect_square_at_scale(lexeme, text):
     assert r.exact is True
 
 
+def test_fixed_point_root_of_an_inexact_operand_stays_inexact():
+    # The roots gate exactness on `self.exact AND lands on the grid`. The perfect-square
+    # tests above feed EXACT literals, so the AND's left side is never exercised false: a
+    # perfect square/cube/norm of an INEXACT operand must stay inexact (the operand's own
+    # uncertainty survives a clean root). Carries no residual — nothing was rounded.
+    sq = Value(Mode.FIXED_POINT, FixedPoint(225, 2), exact=False).sqrt()  # sqrt(2.25) = 1.50
+    assert sq.to_string() == "1.50" and sq.exact is False
+    cb = Value(Mode.FIXED_POINT, FixedPoint(8, 0), exact=False).cbrt()  # cbrt(8) = 2
+    assert cb.to_string() == "2" and cb.exact is False
+    four = Value(Mode.FIXED_POINT, FixedPoint(4, 0), exact=True)
+    hy = Value(Mode.FIXED_POINT, FixedPoint(3, 0), exact=False).hypot(four)  # hypot(3, 4) = 5
+    assert hy.to_string() == "5" and hy.exact is False
+
+
 def test_sqrt_fixed_point_rounds_to_nearest_not_floor():
     # sqrt(3) == 1.732... at scale 0: isqrt's floor is 1, but nearest is 2, so the
     # result rounds UP — it is not a bare integer-sqrt floor.
@@ -1036,8 +1064,10 @@ def test_from_real_fixed_point_quantises_to_scale_and_is_exact():
 
 
 def test_from_real_fixed_point_rounds_half_to_even():
-    # 0.125 at scale 2 -> 0.12 (round half to even, the engine-wide rule).
+    # The engine-wide tie rule, in BOTH directions (each value is an exact binary tie):
+    # 0.125 -> 0.12 rounds the tie DOWN to the even digit, 0.375 -> 0.38 rounds it UP.
     assert Value.from_real(0.125, Mode.FIXED_POINT, scale=2).payload == FixedPoint(12, 2)
+    assert Value.from_real(0.375, Mode.FIXED_POINT, scale=2).payload == FixedPoint(38, 2)
 
 
 def test_from_real_rational_is_the_quantised_fraction():

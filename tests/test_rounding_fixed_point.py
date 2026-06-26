@@ -98,10 +98,23 @@ def test_fixed_point_power_exactness(expression, text, exact):
     "expression, error",
     [
         ("100.00 / 8", None),  # exact -> nothing rounded, no residual
-        ("100.00 / 3", Fraction(-1, 300)),  # 33.33 - 100/3
+        ("100.00 / 3", Fraction(-1, 300)),  # 33.33 - 100/3, rounds DOWN -> negative
         ("1.5 * 1.5", Fraction(-1, 20)),  # 2.2 - 2.25, exactly -1/2 ULP at scale 1
         ("1.5 ** 2", Fraction(-1, 20)),  # integer power overflows like the mul
         ("2 ** 0.5", None),  # irrational root -> no exact-rational residual
+        # The POSITIVE branch: a value that rounds UP carries a positive residual. The
+        # mirror of the cases above, which all round down — without these the sign of
+        # `error` is only ever exercised negative.
+        ("3.0 / 4.0", Fraction(1, 20)),  # 0.8 - 0.75, +1/2 ULP (tie rounds up to even 8)
+        ("1.5 ** 3", Fraction(1, 40)),  # 3.4 - 3.375, integer power rounding up
+        # A STRICTLY-INTERIOR residual (|error| < 1/2 ULP), not a tie: 0.2 - 1.1/7 = 3/70
+        # ~= 0.0429 < 0.05. Catches an off-by-one in the half-ULP bound the tie cases miss.
+        ("1.1 / 7", Fraction(3, 70)),
+        # Covering-scale rounding between DIFFERENT operand scales (2 and 1 -> scale 2).
+        ("1.25 * 1.5", Fraction(1, 200)),  # 1.88 - 1.875, rounds up at the covering scale
+        # A negative divisor that rounds: the den<0 sign-normalization signs both the
+        # quotient and its residual. -0.33 - (-1/3) = +1/300.
+        ("1.00 / -3.00", Fraction(1, 300)),
     ],
 )
 def test_fixed_point_stores_quantization_error(expression, error):
