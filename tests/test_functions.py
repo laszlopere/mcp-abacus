@@ -108,6 +108,20 @@ def test_sum_reads_outer_variables():
     assert _value("k = 3\nsum(i, 1, 3, k*i)", "rational") == "18 (exact)"
 
 
+def test_sum_nests_with_the_outer_index_feeding_the_inner_bound():
+    # A special form nested in another's body: the inner sum's upper bound is the outer
+    # index i, so the body re-evaluates with i rebound each outer term —
+    # Σ_{i=1..3} Σ_{j=1..i} j = 1 + 3 + 6 = 10. Pins the child-store seeding across forms.
+    assert _value("sum(i, 1, 3, sum(j, 1, i, j))") == "10 (exact)"
+
+
+def test_inner_index_shadows_an_outer_index_of_the_same_name():
+    # When the nested fold reuses the OUTER index name, the inner binding shadows it (it is
+    # not 1+2 doubled): Σ_{i=1..2} (Σ_{i=1..2} i) = Σ_{i=1..2} 3 = 6. Proves each form's
+    # index is a fresh dummy in its own child scope, not a shared outer variable.
+    assert _value("sum(i, 1, 2, sum(i, 1, 2, i))") == "6 (exact)"
+
+
 def test_sum_masks_its_index_in_referenced_names():
     # The index is BOUND (a dummy the fold rebinds per term), so it is not a free reference —
     # only genuinely free names (here `n` and `t`) leak out, keeping the index from being
@@ -752,11 +766,18 @@ def test_cbrt_refuses_with_a_line_tagged_error(expression, mode, error):
         # perfect square at the covering scale; the squares accumulate exactly and round
         # ONCE at the root, so 1.5/2.0 land on 2.5 (a per-square fold would lose 2.25).
         ("hypot(3, 4)", None, "5 (exact)"),  # the 3-4-5 triangle
+        ("hypot(5, 12)", None, "13 (exact)"),  # another Pythagorean triple
+        ("hypot(20, 21)", None, "29 (exact)"),  # a non-multiple-of-5 triple
         ("hypot(1.5, 2.0)", None, "2.5 (exact)"),  # single rounding keeps it exact
         ("hypot(0.3, 0.4)", None, "0.5 (exact)"),
+        # MIXED operand scales: the covering scale is max(decimals), and each mantissa is
+        # rescaled by 10**(d - di) before summing — 0.30 (scale 2) with 0.4 (scale 1).
+        ("hypot(0.30, 0.4)", None, "0.50 (exact)"),
         ("hypot(2, 3, 6)", None, "7 (exact)"),  # 4 + 9 + 36 = 49; VARIADIC, 3 coords
+        ("hypot(6, 8, 0)", None, "10 (exact)"),  # a zero coordinate drops out (6-8-10)
         ("hypot(5)", None, "5 (exact)"),  # the lone-coordinate identity, |x|
         ("hypot(-5)", None, "5 (exact)"),  # every real in domain — squaring erases sign
+        ("hypot(0)", None, "0 (exact)"),  # the origin
         (
             "hypot(1, 1)",
             None,
@@ -773,15 +794,24 @@ def test_cbrt_refuses_with_a_line_tagged_error(expression, mode, error):
         # type's own math.hypot, which stays finite where naive squaring would overflow.
         ("hypot(3, 4)", "floating-point", "5.0 (inexact)"),
         ("hypot(2, 3, 6)", "floating-point", "7.0 (inexact)"),
+        ("hypot(5)", "floating-point", "5.0 (inexact)"),  # lone-coordinate identity, per mode
         ("hypot(3e200, 4e200)", "floating-point", "4.9999999999999995e+200 (inexact)"),
         # Rational is exact only when the sum of squares is a perfect square (both parts).
         ("hypot(3, 4)", "rational", "5 (exact)"),
         ("hypot(2, 3, 6)", "rational", "7 (exact)"),
+        ("hypot(5)", "rational", "5 (exact)"),  # lone-coordinate identity stays exact here
         ("hypot(3/5, 4/5)", "rational", "1 (exact)"),  # 9/25 + 16/25 = 1
     ],
 )
 def test_hypot(expression, mode, value):
     assert _value(expression, mode) == value
+
+
+def test_hypot_inexact_operand_poisons_the_result():
+    # The exact flag is `all(operand.exact) and a perfect square`. A perfect norm built
+    # from an INEXACT coordinate stays inexact — sqrt(2) is irrational, so hypot(3, sqrt(2))
+    # has an inexact operand even though it does not itself land off the grid.
+    assert _value("hypot(3, sqrt(2))").startswith("3 (inexact")
 
 
 @pytest.mark.parametrize(
@@ -796,6 +826,16 @@ def test_hypot(expression, mode, value):
 def test_hypot_refuses_with_a_line_tagged_error(expression, mode, error):
     payload = _calc(expression, mode)
     assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize("name", ["hypot", "avg", "max", "min", "variance", "gcd", "lcm"])
+def test_variadic_functions_refuse_below_their_arity_floor(name):
+    # A variadic (1, None) function needs at least one operand; calling it with none is a
+    # parse-time arity error, not a domain refusal. Pins the lower-bound wording for the
+    # whole family (the (1, None) arity declares a MINIMUM, not a fixed count).
+    payload = _calc(f"{name}()")
+    assert payload["error"] == f"function '{name}' takes at least 1 argument(s), but 0 given"
     assert payload["value"] is None
 
 
