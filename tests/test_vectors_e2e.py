@@ -9,8 +9,10 @@ in whatever scalar mode the calculation runs in, and the result renders as ``[�
 with its own exact/inexact verdict. The stats family reduces over a vector's elements
 — ``max``/``min``/``avg``/``median``/``variance``/``stddev`` (28.2–28.9) — and
 ``covariance`` takes two vectors (40.13); every OTHER scalar operator and function
-still REFUSES a vector with a clean message. There is no indexing and no general
-arithmetic yet, and nesting is rejected — those refusals are asserted here too.
+still REFUSES a vector with a clean message. Going the other way, ``factor`` (40.23)
+is the first vector-PRODUCING function: a scalar integer in, a vector of its prime
+factors out. There is no indexing and no general arithmetic yet, and nesting is
+rejected — those refusals are asserted here too.
 
 Kept in its own file (not folded into test_e2e.py): the suite launches mcp-abacus as
 a real child process and speaks MCP over stdio, the exact path a production client
@@ -251,6 +253,64 @@ def test_correlation_takes_two_vectors():
     for (expr, value, message), payload in zip(cases, payloads, strict=True):
         assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
         assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
+
+
+def test_factor_produces_a_vector_of_primes():
+    # factor (40.23) is the first vector-PRODUCING function: a scalar integer in, a
+    # VECTOR of its prime factors out — ascending, WITH multiplicity, so the product
+    # of the elements reconstructs n. A prime factors to itself; factor(1) is the
+    # empty product []. Default fixed-point mode renders each factor at scale 0.
+    cases = [
+        # (expression, rendered, exact)
+        ("factor(12)", "[2, 2, 3]", True),
+        ("factor(7)", "[7]", True),  # a prime factors to itself
+        ("factor(1)", "[]", True),  # the empty product, vacuously exact
+        ("factor(360)", "[2, 2, 2, 3, 3, 5]", True),
+        ("factor(97)", "[97]", True),  # a larger prime, found above the wheel
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _r, _x in cases])
+    for (expr, rendered, exact), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
+        assert _bare(payload) == rendered, f"{expr!r} -> {payload['value']!r}"
+        assert payload["exact"] is exact, f"{expr!r} exact mismatch"
+        assert payload["precision"] is None  # a vector has no single decimal scale
+        assert payload["value_hex_dump"] is None  # nor a single integer to dump
+
+
+def test_factor_follows_the_run_mode_for_its_elements():
+    # The produced vector carries the run's element mode, exactly as a vector LITERAL
+    # would: rational holds the factors exactly, floating-point renders them as inexact
+    # doubles (a float vector is always inexact). The empty product stays exact in
+    # every mode.
+    cases = [
+        # (expression, mode, rendered, exact)
+        ("factor(12)", "rational", "[2, 2, 3]", True),
+        ("factor(12)", "floating-point", "[2.0, 2.0, 3.0]", False),
+        ("factor(1)", "floating-point", "[]", True),
+    ]
+    payloads = _run_calc([(e, m) for e, m, _r, _x in cases])
+    for (expr, _mode, rendered, exact), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] is None, f"{expr!r} errored: {payload['error']}"
+        assert _bare(payload) == rendered, f"{expr!r} -> {payload['value']!r}"
+        assert payload["exact"] is exact, f"{expr!r} exact mismatch"
+
+
+def test_factor_refusals():
+    # DOMAIN positive integers only. 0 and negatives refuse; a non-integer hits the
+    # shared integer-domain gate (gcd/lcm, 40.7/40.8); a value past the cap refuses
+    # rather than locking up trial division; and a vector argument is refused like any
+    # scalar-only function — factor PRODUCES a vector, it does not consume one.
+    cases = [
+        ("factor(0)", "factor requires a positive integer"),
+        ("factor(-12)", "factor requires a positive integer"),
+        ("factor(2.5)", "factor requires integer operands"),
+        ("factor(1000000000001)", "factor argument too large (limit 1000000000000)"),
+        ("factor([2, 3])", "factor() does not accept a vector"),
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _ in cases])
+    for (expr, message), payload in zip(cases, payloads, strict=True):
+        assert payload["value"] is None, f"{expr!r} unexpectedly succeeded"
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
 
 
 def test_nested_vectors_are_rejected():
