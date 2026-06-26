@@ -1154,3 +1154,75 @@ def test_explicit_variable_still_works():
     assert payload["error"] is None
     assert payload["variable"] == "n"
     assert _num(payload["solution"]) == pytest.approx(50.0, abs=1e-6)
+
+
+# --- error paths: rejections and unevaluable domains over the seam -------------
+# These exercise the validate-and-refuse branches the success tests never reach.
+# Each pins the EXACT message and the full null-shape reply (every data field None),
+# the solver's _solver_error mirror of calculate's _error.
+
+_SOLVER_DATA_FIELDS = (
+    "variable",
+    "solution",
+    "solution_hex_dump",
+    "solutions",
+    "value",
+    "value_hex_dump",
+    "mode",
+    "exact",
+    "precision",
+    "objective",
+    "algorithm",
+    "iterations",
+)
+
+
+def test_solver_rejects_complex_mode():
+    # The solver is real-valued (it minimises |expr| / brackets a sign change, both of
+    # which need an ordering complex lacks), so a complex-mode request refuses outright —
+    # and the whole reply is the null shape, only `error` populated.
+    payload = _solve("x**2 - 2", variable="x", lower=0, upper=2, mode="complex")
+    assert payload["error"] == "the solver is real-valued; complex mode is not supported"
+    assert all(payload[field] is None for field in _SOLVER_DATA_FIELDS)
+
+
+def test_solver_reports_when_the_expression_is_unevaluable_across_the_bracket():
+    # DISTINCT from "No solution" (a value was found but missed zero): here EVERY candidate
+    # raised a domain error (sqrt of a negative across the whole [-4, -1]), so the search
+    # never had a value to compare — a different, named failure.
+    payload = _solve("sqrt(x) - 1", variable="x", lower=-4, upper=-1)
+    assert payload["error"] == (
+        "The expression could not be evaluated anywhere in [-4.0, -1.0] "
+        "(every candidate for 'x' raised a domain error)."
+    )
+
+
+def test_nelder_mead_reports_when_the_box_is_entirely_unevaluable():
+    # The multi-unknown twin of the above: the Nelder-Mead box message names the box.
+    payload = _solve("sqrt(x) - 1", variables={"x": [-4, -1]}, algorithm="nelder-mead")
+    assert payload["error"] == (
+        "The expression could not be evaluated anywhere in the search box "
+        "(x in [-4.0, -1.0]) (every candidate raised a domain error)."
+    )
+
+
+def test_solver_rejects_giving_both_unknown_forms():
+    # variable+lower+upper (single) XOR variables (multiple) — supplying both is ambiguous
+    # about which search the caller wants, so it refuses rather than guess.
+    payload = _solve("x + y", variable="x", lower=0, upper=1, variables={"y": [0, 1]})
+    assert payload["error"] == (
+        "Give exactly one unknown form: variable + lower + upper (single), "
+        "or variables (multiple); not both."
+    )
+
+
+def test_solver_rejects_an_empty_variables_map():
+    payload = _solve("x", variables={}, algorithm="nelder-mead")
+    assert payload["error"] == "No unknowns given: 'variables' is empty."
+
+
+def test_solver_rejects_a_malformed_bracket_pair():
+    # Each `variables` entry must be a [lower, upper] PAIR; a three-element list is malformed
+    # and the error echoes the (floated) list it got.
+    payload = _solve("x", variables={"x": [0, 1, 2]}, algorithm="nelder-mead")
+    assert payload["error"] == "Bracket for 'x' must be a [lower, upper] pair, got [0.0, 1.0, 2.0]."
