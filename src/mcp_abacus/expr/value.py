@@ -2551,13 +2551,16 @@ class Value:
         through ``_as_integer``, so a fixed-point value with a fractional part, a
         rational with denominator != 1, or a non-whole float REFUSES. Sign is
         dropped (``math.gcd`` works on magnitudes) and ``gcd(0, 0)`` is 0. The
-        result is a whole number at scale 0 in fixed-point.
+        result is a whole number at scale 0 in fixed-point. A single vector
+        operand is reduced over its elements — ``gcd([a, b, …])`` (19.1.10), the
+        same vector call shape as ``max_``/``min_`` (28.2/28.3).
         """
-        ints = [self._as_integer("gcd")]
-        for other in others:
-            self._same_mode(other, "gcd")
+        operands = self._series_operands(others, "gcd")
+        ints = [operands[0]._as_integer("gcd")]
+        for other in operands[1:]:
+            operands[0]._same_mode(other, "gcd")
             ints.append(other._as_integer("gcd"))
-        return Value._from_scaled_int(math.gcd(*ints), 0, self.mode)
+        return Value._from_scaled_int(math.gcd(*ints), 0, operands[0].mode)
 
     def lcm(self, *others: "Value") -> "Value":
         """Least common multiple of one-or-more operands (40.8) — VARIADIC; ``math.lcm``.
@@ -2570,13 +2573,16 @@ class Value:
         and no inexact flag. ``lcm(a)`` is ``|a|`` (the one-operand fold), sign is
         dropped (a multiple is taken in magnitude), and ANY zero operand makes the
         whole result 0 (0 shares every multiple), matching ``math.lcm``. The result
-        is a whole number at scale 0 in fixed-point.
+        is a whole number at scale 0 in fixed-point. A single vector operand is
+        reduced over its elements — ``lcm([a, b, …])`` (19.1.10), the same vector
+        call shape as ``gcd`` (40.7).
         """
-        ints = [self._as_integer("lcm")]
-        for other in others:
-            self._same_mode(other, "lcm")
+        operands = self._series_operands(others, "lcm")
+        ints = [operands[0]._as_integer("lcm")]
+        for other in operands[1:]:
+            operands[0]._same_mode(other, "lcm")
             ints.append(other._as_integer("lcm"))
-        return Value._from_scaled_int(math.lcm(*ints), 0, self.mode)
+        return Value._from_scaled_int(math.lcm(*ints), 0, operands[0].mode)
 
     def factorial(self) -> "Value":
         """n! for a NON-NEGATIVE INTEGER n (40.4) — UNARY, EXACT in every mode (a

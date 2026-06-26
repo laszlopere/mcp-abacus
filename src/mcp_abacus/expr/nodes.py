@@ -137,9 +137,21 @@ _FUNCS: dict[str, Callable[..., Value]] = {
 # whole variadic stats family opts in: the selection aggregates max/min (28.2/28.3)
 # and the computing ones avg/median/variance/stddev (28.4/28.7/28.8/28.9) take a
 # single vector via _series_operands; covariance/correlation (40.13/40.14) take TWO
-# vectors directly.
+# vectors directly. The integer-only reducers gcd/lcm (40.7/40.8) take a single
+# vector through the same _series_operands path.
 _VECTOR_FUNCS: frozenset[str] = frozenset(
-    {"max", "min", "avg", "median", "variance", "stddev", "covariance", "correlation"}
+    {
+        "max",
+        "min",
+        "avg",
+        "median",
+        "variance",
+        "stddev",
+        "covariance",
+        "correlation",
+        "gcd",
+        "lcm",
+    }
 )
 
 # The nullary set (29.2): zero-argument calls like pi(). A SECOND registry, parallel
