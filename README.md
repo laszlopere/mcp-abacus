@@ -45,9 +45,11 @@ type; it calculates *using* that type.
   (`avg([1, 2, 3])` → `2`), as do the integer reducers `gcd`/`lcm`
   (`gcd([54, 24, 6])` → `6`) — and `covariance(x, y)`/`correlation(x, y)` take two
   equal-length vectors (`covariance([1, 2, 3], [4, 5, 6])`, Pearson
-  `correlation(...)` in `[-1, 1]`). Otherwise vectors only construct and render —
-  other operators and functions refuse one, there is no indexing (`b[i]`), and
-  nesting (`[[1,2],[3,4]]`) is rejected.
+  `correlation(...)` in `[-1, 1]`). Going the other way, `factor(n)` PRODUCES a
+  vector — the prime factors of a positive integer, ascending with multiplicity
+  (`factor(12)` → `[2, 2, 3]`, `factor(1)` → `[]`). Otherwise vectors only
+  construct and render — other operators and functions refuse one, there is no
+  indexing (`b[i]`), and nesting (`[[1,2],[3,4]]`) is rejected.
 - **`analyze`** — evaluate an expression and return its whole parse tree, each
   node annotated with the value it computed, so you can see *where* a surprising
   answer rounded or overflowed (e.g. `(1 + 1/2) * 3` is `3` in fixed-point — the
