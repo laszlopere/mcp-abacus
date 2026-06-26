@@ -2305,6 +2305,112 @@ class Value:
         two = Value._from_scaled_int(2, 0, ordered[0].mode)
         return ordered[mid - 1].add(ordered[mid]).div(two)
 
+    def quantile(self, first: "Value", *rest: "Value") -> "Value":
+        """Value at quantile fraction q in [0, 1] of the data (40.12) — q is ``self``,
+        the data is ``first`` + ``rest`` (arity (2, None): a point plus >= 1 datum), or
+        a single vector ``quantile(q, [a, b, …])`` (19.1.10).
+
+        The order-statistic generalisation of ``median`` (28.7, which is exactly
+        ``quantile(0.5, …)``): sorts the data by value (``_compare``, same-mode;
+        complex has no order so refuses) and reads the value at fractional rank
+        ``h = (n - 1) * q`` — the LINEAR / type-7 convention (NumPy's and R's default,
+        and the one that reproduces median's even-count average). When ``h`` lands on
+        an integer rank the datum is returned VERBATIM (EXACT like median's odd case,
+        carrying that datum's own scale/exactness); otherwise it INTERPOLATES linearly
+        between the two straddling data — ``x[k] + gamma*(x[k+1] - x[k])`` — which
+        COMPUTES, so it follows the mode's stance exactly as median's even case (28.7):
+        rational EXACT (a Fraction blend), fixed-point MAY ROUND (default scale; widen
+        with min_fixed_point_precision), float inexact. DOMAIN: q in [0, 1] (outside is
+        undefined — REFUSES) and the point must be a SCALAR. ``quantile(q, a)`` is ``a``
+        (a lone datum is every quantile). ``percentile`` is this same core scaled by 100,
+        so ``quantile(0.5, …)`` == ``percentile(50, …)`` == ``median``.
+        """
+        return self._quantile((first, *rest), "quantile", 1)
+
+    def percentile(self, first: "Value", *rest: "Value") -> "Value":
+        """Value at percentile rank p in [0, 100] of the data (40.12) — ``quantile``
+        scaled by 100, so ``percentile(p, …)`` is ``quantile(p / 100, …)``.
+
+        p is ``self``, the data is ``first`` + ``rest`` (arity (2, None)), or a single
+        vector ``percentile(p, [a, b, …])`` (19.1.10). Shares ``quantile``'s LINEAR
+        type-7 core and its whole per-mode story: EXACT verbatim datum when the rank
+        ``(n - 1) * p / 100`` is integral, else linear INTERPOLATION between the two
+        straddling data (rational exact, fixed-point may round, float inexact). DOMAIN:
+        p in [0, 100] (REFUSES outside) and the point must be a SCALAR.
+        ``percentile(50, …)`` equals ``median`` (28.7); ``percentile(p, a)`` is ``a``.
+        """
+        return self._quantile((first, *rest), "percentile", 100)
+
+    def _quantile(self, data: tuple["Value", ...], op: str, full: int) -> "Value":
+        """Shared core for ``quantile``/``percentile`` (40.12) — ``self`` is the rank
+        point, ``full`` the value meaning 100% (1 for quantile, 100 for percentile).
+
+        Resolves the two data forms (a flat run, or a sole non-empty vector — mixing a
+        vector with other operands or an empty vector REFUSES, like ``_series_operands``
+        but with the leading point excluded) and sorts by value. The type-7 rank
+        ``(n - 1) * point / full`` is computed EXACTLY as a positional ``Fraction`` (a
+        position is not a mode-typed quantity, and computing it in fixed-point would
+        quantize it to whole indices — collapsing the very interpolation we want, and
+        making ``percentile`` disagree with ``quantile``). An integral rank selects the
+        datum verbatim (exact); otherwise the fractional weight ``gamma`` drives the
+        blend ``x[k] + gamma*(x[k+1] - x[k])`` in the MODE's own arithmetic, so the
+        rounding lands only where median's even case rounds. The point must be a scalar
+        in ``[0, full]``.
+        """
+        if self.mode is Mode.VECTOR:
+            raise NotRepresentableError(f"{op}'s point must be a scalar, not a vector")
+        if any(v.mode is Mode.VECTOR for v in data):
+            if len(data) > 1:
+                raise NotRepresentableError(
+                    f"{op} has two data forms — {op}(p, vector) or {op}(p, a, b, …) "
+                    "— and cannot mix them"
+                )
+            assert isinstance(data[0].payload, Vector)
+            if not data[0].payload.elements:
+                raise NotRepresentableError(f"{op} of an empty vector is undefined")
+            operands: tuple[Value, ...] = data[0].payload.elements
+        else:
+            operands = data
+
+        def by_value(a: "Value", b: "Value") -> int:
+            return a._compare(b, op)
+
+        ordered = sorted(operands, key=functools.cmp_to_key(by_value))
+        point = self._exact_value(op)
+        if not 0 <= point <= full:
+            raise NotRepresentableError(f"{op} point must be between 0 and {full}")
+        rank = Fraction(len(ordered) - 1) * point / full
+        k = math.floor(rank)
+        gamma = rank - k
+        if gamma == 0:  # the rank lands on a datum — selected verbatim, exact
+            return ordered[k]
+        num = Value._from_scaled_int(gamma.numerator, 0, self.mode)
+        den = Value._from_scaled_int(gamma.denominator, 0, self.mode)
+        spread = ordered[k + 1].sub(ordered[k])
+        return ordered[k].add(spread.mul(num).div(den))
+
+    def _exact_value(self, op: str) -> Fraction:
+        """This Value's stored magnitude as an exact ``Fraction`` — the real-number
+        view ``quantile`` (40.12) reasons about positions with.
+
+        Each real mode has one: fixed-point is ``mantissa / 10**decimals``, rational is
+        the payload itself, and float is the EXACT value of the stored double (which is
+        what makes the rank faithful to what the mode actually holds). Complex and
+        vector have no single real magnitude and REFUSE, naming ``op``.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Fraction(self.payload)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                return Fraction(self.payload.mantissa, 10**self.payload.decimals)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                return self.payload
+            case _:
+                raise NotRepresentableError(f"{op}'s point must be a real number")
+
     def clamp(self, lo: "Value", hi: "Value") -> "Value":
         """Constrain x to the range [lo, hi] = min(hi, max(lo, x)) (40.21) — TERNARY
         fixed-arity-3; ``self`` is x, ``lo``/``hi`` the bounds.

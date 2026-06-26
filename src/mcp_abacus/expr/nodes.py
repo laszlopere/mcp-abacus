@@ -111,6 +111,8 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "max": Value.max_,  # 28.2 — variadic; selection (largest), exact, carries the operand verbatim
     "min": Value.min_,  # 28.3 — variadic; mirror of max (smallest)
     "median": Value.median,  # 28.7 — variadic; order-only, odd selects (exact), even averages
+    "quantile": Value.quantile,  # 40.12 — (q, data…); type-7 order statistic, q in [0,1]
+    "percentile": Value.percentile,  # 40.12 — (p, data…); quantile scaled by 100, p in [0,100]
     "clamp": Value.clamp,  # 40.21 — ternary; min(hi, max(lo, x)) selection, exact, refuses lo>hi
     "lerp": Value.lerp,  # 40.22 — ternary; linear interpolation a+(b-a)*t, arithmetic stance
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
@@ -146,6 +148,8 @@ _VECTOR_FUNCS: frozenset[str] = frozenset(
         "min",
         "avg",
         "median",
+        "quantile",
+        "percentile",
         "variance",
         "stddev",
         "covariance",
@@ -272,6 +276,10 @@ FUNCTION_HELP: dict[str, str] = {
     "min": "smallest operand (or element of a single vector), returned verbatim; exact",
     "median": "middle operand by value (or of a single vector's elements); odd count exact, "
     "even averages the two middles",
+    "quantile": "value at quantile fraction q in [0,1] of the data (a run or one vector), "
+    "type-7 linear; exact on a datum, else interpolates (rational exact, fixed-point/float round)",
+    "percentile": "value at percentile rank p in [0,100] of the data; quantile scaled by 100, "
+    "so percentile(50, …) is the median; exact on a datum, else interpolates",
     "clamp": "constrain x to [lo, hi] = min(hi, max(lo, x)); selection not math, exact in every "
     "type, carries the chosen operand verbatim, refuses lo>hi",
     "lerp": "linear interpolation a+(b-a)*t; exact in rational, may round in fixed-point/float, "

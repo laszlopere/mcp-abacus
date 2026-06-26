@@ -1306,7 +1306,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                trivial degrees(0) = radians(0) = 0; rational refuses non-zero (pi
                has no rational value). NB this is unit scaling, NOT a trig function
                — no domain limit, every real converts.
-    [ ] 40.12. percentile(p, ...) / quantile(q, ...) — the value at rank p (0-100)
+    [x] 40.12. percentile(p, ...) / quantile(q, ...) — the value at rank p (0-100)
                or q (0-1) of the operands, the order-statistic generalization of
                median (28.7, which is the 50th percentile). A leading point arg +
                the data set: arity (2, None) (the point plus >= 1 datum). EXACT
