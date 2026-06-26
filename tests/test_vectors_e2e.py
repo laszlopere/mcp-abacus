@@ -144,12 +144,13 @@ def test_operators_refuse_vectors():
 
 def test_functions_refuse_a_vector_argument():
     # Most functions don't consume a vector: passing one is refused uniformly, naming
-    # the function. (A variadic arity is no protection — gcd still refuses a vector.)
-    # The exceptions are the stats family (max/min/avg/median/variance/stddev reduce
-    # over a vector, covariance takes two) — see the next tests.
+    # the function. (A variadic arity is no protection — factorial-style integer
+    # functions still refuse.) The exceptions are the reducing family (max/min/avg/
+    # median/variance/stddev and the integer reducers gcd/lcm take a single vector,
+    # covariance/correlation take two) — see the next tests.
     cases = [
         ("sqrt([1,2,3])", "sqrt() does not accept a vector"),
-        ("gcd([1,2,3])", "gcd() does not accept a vector"),
+        ("factorial([1,2,3])", "factorial() does not accept a vector"),
     ]
     payloads = _run_calc([(e, "fixed-point") for e, _ in cases])
     for (expr, message), payload in zip(cases, payloads, strict=True):
@@ -187,6 +188,29 @@ def test_computing_stats_reduce_over_a_vector():
         ("variance([1, 2, 3, 4, 5])", "2 (exact)", None),
         ("stddev([2, 4, 4, 4, 5, 5, 7, 9])", "2 (exact)", None),
         ("variance([])", None, "variance of an empty vector is undefined"),
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        assert payload["value"] == value, f"{expr!r} -> {payload['value']!r}"
+
+
+def test_integer_reducers_reduce_over_a_vector():
+    # gcd/lcm (40.7/40.8) join the reducing family: a single vector is reduced over its
+    # elements, same as the equivalent flat run, keeping the integer-only domain. A
+    # vector mixed with a scalar, or an empty one, refuses; a fractional element still
+    # hits the integer-domain gate.
+    cases = [
+        ("gcd([54, 24, 6])", "6 (exact)", None),
+        ("lcm([2, 3, 4])", "12 (exact)", None),
+        ("gcd([42])", "42 (exact)", None),  # single-element vector folds to |a|
+        (
+            "gcd([1, 2], 3)",
+            None,
+            "gcd has two forms — gcd(vector) or gcd(a, b, …) — and cannot mix them",
+        ),
+        ("lcm([])", None, "lcm of an empty vector is undefined"),
+        ("gcd([2.5, 5])", None, "gcd requires integer operands"),
     ]
     payloads = _run_calc([(e, "fixed-point") for e, _, _ in cases])
     for (expr, value, message), payload in zip(cases, payloads, strict=True):
