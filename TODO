@@ -1367,6 +1367,25 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                3. Plain arithmetic (no sqrt), so the avg/division stance: EXACT in
                rational, may round in fixed-point/float. t unrestricted (t outside
                [0, 1] extrapolates).
+    [x] 40.23. factor(n) — prime factorization, UNARY, RETURNS a VECTOR of primes in
+               ascending order WITH multiplicity (factor(12) = [2, 2, 3], factor(7) =
+               [7]) so the product of the elements reconstructs n. EXACT in every mode
+               (pure integer math, no rounding — trial division / Pollard rho). This is
+               the FIRST function whose RESULT is a VECTOR: until now a VECTOR only comes
+               from a `[...]` literal (19.1.10, the one place Value.vector is built). So
+               the work is two-sided — not just a Value method but a producer feeding the
+               VECTOR container, and the server already renders a non-scalar vector result
+               (server.py:268). Element mode follows the run mode (integer-valued primes
+               in the fixed-point/rational/float spelling). DOMAIN integer-valued n only,
+               the gcd/lcm stance (40.7/40.8) — a non-integer refuses (exact-or-refuse).
+               DECIDE: (a) lower bound — n >= 2 only, or accept n = 1 as the empty vector
+               [] (the empty product), and refuse 0 / negatives (or factor |n| and drop
+               sign like gcd?); (b) shape — repeated primes WITH multiplicity (above) vs
+               unique primes vs prime^exponent pairs (the latter two need a second
+               function or a pair encoding the flat VECTOR can't hold); (c) name —
+               factor / factorize / primefactors / factorint. Settle the vector-PRODUCER
+               plumbing here; it is the prerequisite any future list-returning function
+               (divisors, range, …) reuses.
 
 
 [ ] 42.  SOLVER: compare candidate objectives in-mode, not via to_float(). The

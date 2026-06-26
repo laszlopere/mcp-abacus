@@ -817,6 +817,8 @@ _INTEGER_LOG_LIMIT = 4096  # cap on the candidate exponent _integer_log will ver
 
 _MAX_FACTORIAL = 1000  # cap on n in factorial(n); keeps a huge operand from blowing up
 
+_MAX_FACTOR = 10**12  # cap on n in factor(n); bounds trial division to ~sqrt(n) ~ 10**6 steps
+
 
 def _fp_ln(fp: FixedPoint) -> tuple[int, int]:
     """Natural log of a POSITIVE fixed-point value (28.17), as a scaled int.
@@ -2702,6 +2704,56 @@ class Value:
                 return Value._from_scaled_int(p, 0, self.mode)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def factor(self) -> "Value":
+        """Prime factorization of a positive integer (40.23) — UNARY, the FIRST
+        function whose RESULT is a VECTOR (19.1.10).
+
+        Returns the prime factors in ASCENDING order WITH multiplicity, so their
+        product reconstructs the operand: ``factor(12) = [2, 2, 3]``, ``factor(7) =
+        [7]``, ``factor(1) = []`` (the empty product). The factors are packed
+        straight into a one-dimensional VECTOR carrying the run's element mode —
+        until now a vector only ever arose from a ``[a, b, …]`` literal (the one
+        place ``Value.vector`` was built); this is the first vector-PRODUCING
+        function.
+
+        DOMAIN integer-valued operands only, the gcd/lcm stance (40.7/40.8): the
+        operand goes through ``_as_integer`` (so a fractional fixed-point value, a
+        rational with denominator != 1, a non-whole float, or any complex value
+        REFUSES), and it must be POSITIVE — 0 and negatives REFUSE. A prime
+        factorization is defined over the positive integers; 1 is the empty
+        product (``[]``), not an error. The operand is capped at ``_MAX_FACTOR`` so
+        a huge value cannot lock the process up in trial division.
+
+        EXACT in fixed-point/rational — a 2,3-wheel trial division on Python ints
+        never leaves the grid, and each factor is a whole number at scale 0 like
+        gcd/lcm. In floating-point each element carries the usual binary64 inexact
+        flag (the factors are small and exactly representable, but a float value is
+        unconditionally inexact), so the vector reports inexact — matching how a
+        float vector literal renders. An empty result (``factor(1)``) is vacuously
+        exact in every mode.
+        """
+        n = self._as_integer("factor")
+        if n < 1:
+            raise NotRepresentableError("factor requires a positive integer")
+        if n > _MAX_FACTOR:
+            raise NotRepresentableError(f"factor argument too large (limit {_MAX_FACTOR})")
+        primes: list[int] = []
+        for small in (2, 3):  # strip 2 and 3 first so the wheel can skip their multiples
+            while n % small == 0:
+                primes.append(small)
+                n //= small
+        candidate = 5  # then only 6k±1 candidates remain: 5, 7, 11, 13, 17, 19, …
+        while candidate * candidate <= n:
+            for trial in (candidate, candidate + 2):
+                while n % trial == 0:
+                    primes.append(trial)
+                    n //= trial
+            candidate += 6
+        if n > 1:  # a single prime factor above sqrt of the original is left over
+            primes.append(n)
+        elements = [Value._from_scaled_int(p, 0, self.mode) for p in primes]
+        return Value.vector(elements, self.mode)
 
     def sqrt(self) -> "Value":
         """Square root (19.5.2) — irrational, so inexact except where the root
