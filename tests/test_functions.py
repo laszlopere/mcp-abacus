@@ -329,6 +329,103 @@ def test_median_odd_carries_the_selected_operands_exactness():
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [
+        # quantile(q in [0, 1], data…) — the type-7 order statistic generalising
+        # median (28.7). A rank landing ON a datum returns it VERBATIM (exact like
+        # median's odd case): (n-1)*q integral selects sorted[rank].
+        ("quantile(0, 3, 1, 2)", None, "1 (exact)"),  # min
+        ("quantile(1, 3, 1, 2)", None, "3 (exact)"),  # max
+        ("quantile(0.25, 1, 2, 3, 4, 5)", None, "2 (exact)"),  # (5-1)*0.25 = 1 -> sorted[1]
+        ("quantile(0.5, 1, 2, 3)", None, "2 (exact)"),  # odd count, lands on the middle
+        ("quantile(0.5, 5)", None, "5 (exact)"),  # a lone datum is every quantile
+        # Data is sorted by value first, so order of arguments does not matter.
+        ("quantile(0.5, 4, 2, 3, 1)", "rational", "5/2 (exact)"),
+        # A fractional rank INTERPOLATES linearly between the two straddling data, so it
+        # follows the mode's / rule exactly as median's even case: rational EXACT...
+        ("quantile(0.5, 1, 2, 3, 4)", "rational", "5/2 (exact)"),  # midway 2..3
+        ("quantile(0.3, 1, 2, 3, 4)", "rational", "19/10 (exact)"),  # 1 + 0.9*(2-1)
+        ("quantile(0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)", "rational", "19/10 (exact)"),
+        # ... float rounds and flags inexact...
+        ("quantile(0.5, 1, 2, 3, 4)", "floating-point", "2.5 (inexact)"),
+        # ... and fixed-point at scale 0 rounds 2.5 with the precision hint (matching
+        # median(1, 2, 3, 4)); a wider floor recovers it exactly.
+        (
+            "quantile(0.5, 1, 2, 3, 4)",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 2.5000)",
+        ),
+        # A SINGLE vector is the data (19.1.10) — same as the flat run.
+        ("quantile(0.5, [4, 2, 3, 1])", "rational", "5/2 (exact)"),
+        ("quantile(0.25, [1, 2, 3, 4, 5])", None, "2 (exact)"),
+    ],
+)
+def test_quantile(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # percentile(p in [0, 100], data…) is quantile scaled by 100, so percentile(50,
+        # …) is the median (28.7) and agrees datum-for-datum with quantile(0.5, …).
+        ("percentile(50, 1, 2, 3)", None, "2 (exact)"),
+        ("percentile(25, 1, 2, 3, 4, 5)", None, "2 (exact)"),
+        ("percentile(50, 1, 2, 3, 4)", "rational", "5/2 (exact)"),
+        ("percentile(50, 1, 2, 3, 4)", "floating-point", "2.5 (inexact)"),
+        (
+            "percentile(50, 1, 2, 3, 4)",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 2.5000)",
+        ),
+        ("percentile(50, [1, 2, 3])", None, "2 (exact)"),
+    ],
+)
+def test_percentile(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+def test_quantile_widening_the_floor_recovers_the_interpolated_value():
+    # The interpolation rounds only where median's even case does; raising the
+    # fixed-point floor recovers it exactly, like median (29.4 / 28.7).
+    assert _value("quantile(0.5, 1, 2, 3, 4)", floor=4) == "2.5000 (exact)"
+    assert _value("percentile(50, 1, 2, 3, 4)", floor=4) == "2.5000 (exact)"
+
+
+def test_quantile_landing_on_a_datum_carries_its_exactness():
+    # A rank that lands on a datum SELECTS it verbatim, carrying that operand's own
+    # exactness — here the inexact (rounded) fixed-point sqrt(2) at the median rank.
+    assert _value("quantile(0.5, 1, sqrt(2), 3)").startswith("1 (inexact")
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # The point is a fraction/percentage of the range — outside it is undefined.
+        ("quantile(7, 1, 2)", "quantile point must be between 0 and 1"),
+        ("quantile(-0.1, 1, 2)", "quantile point must be between 0 and 1"),
+        ("percentile(150, 1, 2)", "percentile point must be between 0 and 100"),
+        ("percentile(-1, 1, 2)", "percentile point must be between 0 and 100"),
+        # The data has the same two forms as median, minus the leading point.
+        ("quantile(0.5, [])", "quantile of an empty vector is undefined"),
+        (
+            "quantile(0.5, [1, 2], 3)",
+            "quantile has two data forms — quantile(p, vector) or quantile(p, a, b, …) "
+            "— and cannot mix them",
+        ),
+        # The point must be a scalar, not a vector.
+        ("quantile([0.5], 1, 2)", "quantile's point must be a scalar, not a vector"),
+    ],
+)
+def test_quantile_refusals(expression, error):
+    payload = _calc(expression)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
         # POPULATION variance (/ n): sum of squared deviations from the mean / n.
         # The textbook 2,4,4,4,5,5,7,9 has mean 5, squared-deviation sum 32, /8 = 4 —
         # all-integer arithmetic, so exact in every mode.

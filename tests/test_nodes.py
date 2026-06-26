@@ -177,6 +177,8 @@ def test_function_arities_match_the_registry():
         "max": (1, None),
         "min": (1, None),
         "median": (1, None),
+        "quantile": (2, None),  # 40.12 — point + at least one datum
+        "percentile": (2, None),  # 40.12 — point + at least one datum
         "clamp": (3, 3),  # 40.21 — TERNARY, constrain x to [lo, hi]
         "lerp": (3, 3),  # 40.22 — TERNARY, linear interpolation a+(b-a)*t
         "variance": (1, None),
