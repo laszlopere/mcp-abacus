@@ -317,7 +317,7 @@ def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
 
     tools = {t.name: t for t in asyncio.run(go()).tools}
     # `info` is nullary; the other four expose parameters that must all be described.
-    expected_param_counts = {"analyze": 3, "calculate": 4, "help": 1, "solver": 9}
+    expected_param_counts = {"analyze": 3, "calculate": 4, "help": 2, "solver": 9}
     for name, count in expected_param_counts.items():
         properties = tools[name].inputSchema["properties"]
         assert len(properties) == count, f"{name}: param count changed to {len(properties)}"

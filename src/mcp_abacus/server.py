@@ -156,6 +156,16 @@ def help_(
             )
         ),
     ],
+    search_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional case-insensitive substring; keeps only the section's lines that "
+                "contain it (e.g. 'sin' over 'functions' returns the sin/asin/asinh/sinh rows). "
+                "Omit or leave empty to return the whole section."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Return mcp-abacus reference text for one section, to drive the evaluator.
 
@@ -165,8 +175,11 @@ def help_(
     solving / optimising one variable over a bracket). `section` is restricted to
     these four names — advertised as a schema enum — so any other value is rejected
     with the valid list.
+
+    `search_filter`, when given, narrows the section to the lines that contain it as
+    a case-insensitive substring; a filter that matches nothing says so.
     """
-    return reference.render(section)
+    return reference.render(section, search_filter)
 
 
 def _annotate(

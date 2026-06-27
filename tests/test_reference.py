@@ -120,6 +120,33 @@ def test_solver_section_states_the_bracket_and_unknown_rules():
     assert "must NOT" in text and "assigned" in text  # the unknown is free, not assigned
 
 
+def test_search_filter_keeps_only_matching_lines_case_insensitively():
+    # The whole point: 'sin' over functions returns the sin family and nothing else.
+    filtered = reference.render("functions", "SIN").splitlines()
+    assert filtered  # non-empty
+    assert all("sin" in line.lower() for line in filtered)
+    names = {line.split("(", 1)[0].strip() for line in filtered}
+    assert {"sin", "asin", "asinh", "sinh"} <= names
+
+
+def test_search_filter_works_on_any_section_not_just_functions():
+    filtered = reference.render("types", "rational")
+    assert filtered  # the rational mode line survives
+    assert all("rational" in line.lower() for line in filtered.splitlines())
+
+
+def test_empty_or_omitted_search_filter_returns_the_whole_section():
+    full = reference.render("functions")
+    assert reference.render("functions", None) == full
+    assert reference.render("functions", "") == full
+
+
+def test_search_filter_that_matches_nothing_reports_instead_of_emptiness():
+    text = reference.render("functions", "no_such_function_xyz")
+    assert "no_such_function_xyz" in text
+    assert "match" in text
+
+
 def test_unknown_section_lists_the_valid_sections_instead_of_erroring():
     text = reference.render("bogus")
     assert "bogus" in text

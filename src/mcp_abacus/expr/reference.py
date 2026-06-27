@@ -220,10 +220,23 @@ def index() -> str:
     return "\n".join(f"{name} — {desc}" for name, (desc, _) in _SECTIONS.items())
 
 
-def render(section: str) -> str:
-    """Return ``section``'s reference text, or the valid-section list if unknown."""
+def render(section: str, search_filter: str | None = None) -> str:
+    """Return ``section``'s reference text, or the valid-section list if unknown.
+
+    A non-empty ``search_filter`` keeps only the lines that contain it as a
+    case-insensitive substring (e.g. ``"sin"`` over ``functions`` keeps the
+    ``sin``/``asin``/``asinh``/``sinh`` rows). A filter that matches nothing
+    reports that rather than returning an empty string.
+    """
     entry = _SECTIONS.get(section)
     if entry is None:
         listing = "\n".join(f"  {name} — {desc}" for name, (desc, _) in _SECTIONS.items())
         return f"unknown section {section!r}. valid sections:\n{listing}"
-    return entry[1]()
+    text = entry[1]()
+    if not search_filter:
+        return text
+    needle = search_filter.lower()
+    matches = [line for line in text.splitlines() if needle in line.lower()]
+    if not matches:
+        return f"no lines in section {section!r} match {search_filter!r}."
+    return "\n".join(matches)
