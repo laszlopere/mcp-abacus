@@ -166,6 +166,17 @@ def help_(
             )
         ),
     ] = None,
+    details: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, expands the 'functions' section: each matching function is shown "
+                "as a card with its signature, arity, and description instead of a one-line "
+                "row. Combine with 'search_filter' to detail one function. No effect on the "
+                "other sections."
+            )
+        ),
+    ] = False,
 ) -> str:
     """Return mcp-abacus reference text for one section, to drive the evaluator.
 
@@ -177,9 +188,11 @@ def help_(
     with the valid list.
 
     `search_filter`, when given, narrows the section to the lines that contain it as
-    a case-insensitive substring; a filter that matches nothing says so.
+    a case-insensitive substring; a filter that matches nothing says so. `details`
+    expands the 'functions' section into per-function cards (signature, arity,
+    description).
     """
-    return reference.render(section, search_filter)
+    return reference.render(section, search_filter, details)
 
 
 def _annotate(

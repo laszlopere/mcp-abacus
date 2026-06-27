@@ -16,8 +16,14 @@ a wrong guess is self-correcting.
 
 from collections.abc import Callable
 
+from mcp_abacus.expr.function_details import FUNCTION_DETAILS
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
-from mcp_abacus.expr.nodes import FUNCTION_ARITIES, FUNCTION_HELP, UNARY_OPS
+from mcp_abacus.expr.nodes import (
+    FUNCTION_ARITIES,
+    FUNCTION_HELP,
+    UNARY_OPS,
+    _describe_arity,
+)
 from mcp_abacus.expr.parser import _BINDING_POWER, _POWER_OPS
 from mcp_abacus.expr.value import MODE_ALIASES, MODE_HELP, Mode, selectable_modes
 
@@ -133,6 +139,40 @@ def _functions_section() -> str:
     )
 
 
+def _matching_functions(needle: str | None) -> list[str]:
+    # The function names whose compact `signature — description` row contains
+    # ``needle`` (case-insensitive), or all of them when no needle is given — the
+    # same match the section's text filter applies, so details/non-details select
+    # the identical set.
+    names = sorted(FUNCTION_ARITIES)
+    if not needle:
+        return names
+    n = needle.lower()
+    return [
+        name
+        for name in names
+        if n in f"{_signature(name, *FUNCTION_ARITIES[name])}  — {FUNCTION_HELP[name]}".lower()
+    ]
+
+
+def _function_details(needle: str | None) -> str | None:
+    # A detail card per matching function: a `signature — arity` header at column 0,
+    # then the multi-paragraph FUNCTION_DETAILS prose indented by four. The header is
+    # the only unindented line, so cards stay distinguishable however the prose wraps.
+    # None when nothing matches, so the caller can report it rather than return "".
+    names = _matching_functions(needle)
+    if not names:
+        return None
+    cards = []
+    for name in names:
+        lo, hi = FUNCTION_ARITIES[name]
+        prose = "\n".join(
+            f"    {line}" if line else "" for line in FUNCTION_DETAILS[name].splitlines()
+        )
+        cards.append(f"{_signature(name, lo, hi)} — {_describe_arity(lo, hi)}\n{prose}")
+    return "\n\n".join(cards)
+
+
 def _solver_section() -> str:
     # Built from the solver's live objective enum and aliases, so the section cannot
     # drift from what the tool accepts. Imported LOCALLY: the solver is a higher-level
@@ -220,18 +260,27 @@ def index() -> str:
     return "\n".join(f"{name} — {desc}" for name, (desc, _) in _SECTIONS.items())
 
 
-def render(section: str, search_filter: str | None = None) -> str:
+def render(section: str, search_filter: str | None = None, details: bool = False) -> str:
     """Return ``section``'s reference text, or the valid-section list if unknown.
 
     A non-empty ``search_filter`` keeps only the lines that contain it as a
     case-insensitive substring (e.g. ``"sin"`` over ``functions`` keeps the
     ``sin``/``asin``/``asinh``/``sinh`` rows). A filter that matches nothing
     reports that rather than returning an empty string.
+
+    ``details`` expands the ``functions`` section: each matching function becomes
+    a card with its signature, arity, and description instead of a one-line row.
+    It has no effect on the other sections, which carry no per-item detail.
     """
     entry = _SECTIONS.get(section)
     if entry is None:
         listing = "\n".join(f"  {name} — {desc}" for name, (desc, _) in _SECTIONS.items())
         return f"unknown section {section!r}. valid sections:\n{listing}"
+    if details and section == "functions":
+        cards = _function_details(search_filter)
+        if cards is None:
+            return f"no functions match {search_filter!r}."
+        return cards
     text = entry[1]()
     if not search_filter:
         return text

@@ -147,6 +147,72 @@ def test_search_filter_that_matches_nothing_reports_instead_of_emptiness():
     assert "match" in text
 
 
+# A detail card's header is the only line at column 0; the prose under it is indented.
+def _detail_headers(text):
+    return [ln for ln in text.splitlines() if ln and not ln[0].isspace()]
+
+
+def test_details_renders_a_card_with_signature_arity_and_description():
+    from mcp_abacus.expr.function_details import FUNCTION_DETAILS
+    from mcp_abacus.expr.nodes import _describe_arity
+
+    out = reference.render("functions", "atan2", details=True)
+    header = next(h for h in _detail_headers(out) if h.startswith("atan2("))
+    assert _describe_arity(*FUNCTION_ARITIES["atan2"]) in header  # arity on the header
+    # the long-form prose (not the one-liner) is what the card carries
+    assert FUNCTION_DETAILS["atan2"].split("\n\n")[0] in out
+    assert FUNCTION_HELP["atan2"] not in out  # the terse one-liner is NOT the detail
+
+
+def test_details_selects_the_same_functions_as_the_plain_filter():
+    # The detail set must mirror the row filter exactly — same substring, same names.
+    detailed = {
+        h.split("(", 1)[0]
+        for h in _detail_headers(reference.render("functions", "sin", details=True))
+    }
+    plain = {
+        ln.split("(", 1)[0].strip() for ln in reference.render("functions", "sin").splitlines()
+    }
+    assert detailed == plain
+    assert {"sin", "asin", "asinh", "sinh"} <= detailed
+
+
+def test_details_with_no_filter_cards_every_function():
+    headers = _detail_headers(reference.render("functions", details=True))
+    assert len(headers) == len(FUNCTION_ARITIES)
+
+
+def test_function_details_covers_exactly_the_registry():
+    # The drift guard: every function has long-form detail text and there is no stale
+    # entry for a removed function — FUNCTION_DETAILS and FUNCTION_ARITIES share names.
+    from mcp_abacus.expr.function_details import FUNCTION_DETAILS
+
+    assert set(FUNCTION_DETAILS) == set(FUNCTION_ARITIES)
+
+
+def test_each_function_detail_is_nonempty_and_at_most_three_paragraphs():
+    # The authoring contract: prose present, blank-line-separated, capped at 3 paras.
+    from mcp_abacus.expr.function_details import FUNCTION_DETAILS
+
+    for name, text in FUNCTION_DETAILS.items():
+        assert text.strip(), f"{name} has empty detail text"
+        paragraphs = text.split("\n\n")
+        assert len(paragraphs) <= 3, f"{name} has {len(paragraphs)} paragraphs (>3)"
+        assert all(p.strip() for p in paragraphs), f"{name} has a blank paragraph"
+
+
+def test_details_is_a_no_op_on_non_function_sections():
+    # The other sections carry no per-item detail, so details must not alter them.
+    assert reference.render("types", details=True) == reference.render("types")
+    assert reference.render("solver", details=True) == reference.render("solver")
+
+
+def test_details_that_matches_no_function_reports_instead_of_emptiness():
+    text = reference.render("functions", "no_such_function_xyz", details=True)
+    assert "no_such_function_xyz" in text
+    assert "match" in text
+
+
 def test_unknown_section_lists_the_valid_sections_instead_of_erroring():
     text = reference.render("bogus")
     assert "bogus" in text
