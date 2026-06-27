@@ -19,6 +19,7 @@ from collections.abc import Callable
 from mcp_abacus.expr.function_details import FUNCTION_DETAILS
 from mcp_abacus.expr.lexer import _BASE_PREFIXES
 from mcp_abacus.expr.nodes import (
+    _VECTOR_FUNCS,
     FUNCTION_ARITIES,
     FUNCTION_HELP,
     UNARY_OPS,
@@ -107,10 +108,10 @@ def _language_section() -> str:
 _PARAM_NAMES = ("x", "y", "z", "w", "v", "u")
 
 
-def _signature(name: str, lo: int, hi: int | None) -> str:
-    # Render a function's call shape from its arity range. A variadic tail (hi is
-    # None) shows the required params then "…" (one or more); a fixed arity shows
-    # exactly its params; a bounded range marks the optional tail in [brackets].
+def _call_shape(name: str, lo: int, hi: int | None) -> str:
+    # The arity-derived call shape. A variadic tail (hi is None) shows the required
+    # params then "…" (one or more); a fixed arity shows exactly its params; a bounded
+    # range marks the optional tail in [brackets].
     if hi is None:
         return f"{name}({', '.join((*_PARAM_NAMES[:lo], '…'))})"
     if lo == hi:
@@ -120,6 +121,24 @@ def _signature(name: str, lo: int, hi: int | None) -> str:
     return f"{name}({required}[, {optional}])"
 
 
+def _signature_forms(name: str, lo: int, hi: int | None) -> list[str]:
+    # The call forms a function is listed under. A scalar-only function has just its
+    # arity-derived shape. A vector-accepting one (in _VECTOR_FUNCS) is listed under
+    # explicit forms, since arity alone cannot express the vector overload:
+    #   data-tail reducer (hi is None): the run form PLUS a `name(…, vector)` form that
+    #     passes the same data as one vector — avg(x, …) / avg(vector), and for a leading
+    #     scalar like quantile's fraction, quantile(x, y, …) / quantile(x, vector).
+    #   fixed-arity vector func (covariance/correlation): every operand IS a vector and
+    #     there is no scalar run, so only the `name(vector, …)` form is shown.
+    base = _call_shape(name, lo, hi)
+    if name not in _VECTOR_FUNCS:
+        return [base]
+    if hi is None:
+        lead = _PARAM_NAMES[: max(lo - 1, 0)]
+        return [base, f"{name}({', '.join((*lead, 'vector'))})"]
+    return [f"{name}({', '.join(['vector'] * lo)})"]
+
+
 def _functions_section() -> str:
     # Built from FUNCTION_ARITIES, the same live registry the parser validates
     # against, so the list cannot drift from what the engine actually accepts. No
@@ -127,13 +146,18 @@ def _functions_section() -> str:
     # shape plus its one-line semantics from FUNCTION_HELP (the parallel registry);
     # the descriptions are aligned in a column for legibility.
     names = sorted(FUNCTION_ARITIES)
-    signatures = {name: _signature(name, *FUNCTION_ARITIES[name]) for name in names}
-    width = max(len(sig) for sig in signatures.values())
-    rows = [f"  {signatures[name]:<{width}}  — {FUNCTION_HELP[name]}" for name in names]
+    forms = {name: _signature_forms(name, *FUNCTION_ARITIES[name]) for name in names}
+    width = max(len(form) for fs in forms.values() for form in fs)
+    rows: list[str] = []
+    for name in names:
+        *leading, last = forms[name]
+        rows.extend(f"  {form}" for form in leading)  # extra call forms, no description
+        rows.append(f"  {last:<{width}}  — {FUNCTION_HELP[name]}")
     return "\n".join(
         [
             "functions (called as name(arg, ...); each argument evaluates in the active",
-            'type, like an operator; "…" means one or more):',
+            'type, like an operator; "…" means one or more. A function with a vector',
+            "overload is listed under each call form (e.g. avg(x, …) and avg(vector)):",
             *rows,
         ]
     )
@@ -148,11 +172,12 @@ def _matching_functions(needle: str | None) -> list[str]:
     if not needle:
         return names
     n = needle.lower()
-    return [
-        name
-        for name in names
-        if n in f"{_signature(name, *FUNCTION_ARITIES[name])}  — {FUNCTION_HELP[name]}".lower()
-    ]
+    matches = []
+    for name in names:
+        forms = " ".join(_signature_forms(name, *FUNCTION_ARITIES[name]))
+        if n in f"{forms} — {FUNCTION_HELP[name]}".lower():
+            matches.append(name)
+    return matches
 
 
 def _function_details(needle: str | None) -> str | None:
@@ -166,10 +191,12 @@ def _function_details(needle: str | None) -> str | None:
     cards = []
     for name in names:
         lo, hi = FUNCTION_ARITIES[name]
+        *leading, last = _signature_forms(name, lo, hi)
+        header = "\n".join([*leading, f"{last} — {_describe_arity(lo, hi)}"])
         prose = "\n".join(
             f"    {line}" if line else "" for line in FUNCTION_DETAILS[name].splitlines()
         )
-        cards.append(f"{_signature(name, lo, hi)} — {_describe_arity(lo, hi)}\n{prose}")
+        cards.append(f"{header}\n{prose}")
     return "\n\n".join(cards)
 
 

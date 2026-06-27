@@ -86,6 +86,41 @@ def test_functions_section_marks_variadic_functions():
             assert f"{name}(" in text and "…" in text
 
 
+def test_signature_forms_carry_a_vector_form_iff_vector_accepting():
+    # A "vector" call form must appear iff the function is in the live _VECTOR_FUNCS
+    # set — so the rendered forms cannot drift from what the evaluator accepts.
+    from mcp_abacus.expr.nodes import _VECTOR_FUNCS
+    from mcp_abacus.expr.reference import _signature_forms
+
+    for name, (lo, hi) in FUNCTION_ARITIES.items():
+        forms = _signature_forms(name, lo, hi)
+        has_vector = any("vector" in form for form in forms)
+        assert has_vector == (name in _VECTOR_FUNCS), name
+
+
+def test_signature_forms_render_each_vector_shape():
+    # The three vector shapes render distinctly: a run-or-vector reducer, a leading
+    # scalar plus a data vector, and a two-vector-only function.
+    from mcp_abacus.expr.reference import _signature_forms
+
+    assert _signature_forms("sqrt", 1, 1) == ["sqrt(x)"]  # scalar-only, single form
+    assert _signature_forms("avg", 1, None) == ["avg(x, …)", "avg(vector)"]
+    assert _signature_forms("quantile", 2, None) == ["quantile(x, y, …)", "quantile(x, vector)"]
+    assert _signature_forms("covariance", 2, 2) == ["covariance(vector, vector)"]
+
+
+def test_functions_section_lists_each_vector_form():
+    text = reference.render("functions")
+    lines = [ln.strip() for ln in text.splitlines()]
+    assert "avg(x, …)" in lines  # the run form, on its own line
+    assert any(ln.startswith("avg(vector)") for ln in lines)  # the vector form + description
+    assert any(ln.startswith("covariance(vector, vector)") for ln in lines)
+    assert "avg(x, …) and avg(vector)" in text  # the legend's worked example
+    # the description sits on the vector (last) form, not the bare run form
+    run_row = next(ln for ln in text.splitlines() if ln.strip() == "avg(x, …)")
+    assert "—" not in run_row
+
+
 def test_functions_section_gives_every_function_a_one_liner():
     # The drift guard: each registered function (incl. nullaries and the ln alias)
     # must have a FUNCTION_HELP entry, and that text must reach the rendered section.
@@ -147,9 +182,10 @@ def test_search_filter_that_matches_nothing_reports_instead_of_emptiness():
     assert "match" in text
 
 
-# A detail card's header is the only line at column 0; the prose under it is indented.
-def _detail_headers(text):
-    return [ln for ln in text.splitlines() if ln and not ln[0].isspace()]
+# A card's last call form carries the arity; it is the only unindented line with " — ".
+# (Earlier call forms are unindented too but dashless; the prose is indented.)
+def _arity_lines(text):
+    return [ln for ln in text.splitlines() if ln and not ln[0].isspace() and " — " in ln]
 
 
 def test_details_renders_a_card_with_signature_arity_and_description():
@@ -157,18 +193,25 @@ def test_details_renders_a_card_with_signature_arity_and_description():
     from mcp_abacus.expr.nodes import _describe_arity
 
     out = reference.render("functions", "atan2", details=True)
-    header = next(h for h in _detail_headers(out) if h.startswith("atan2("))
-    assert _describe_arity(*FUNCTION_ARITIES["atan2"]) in header  # arity on the header
+    arity_line = next(a for a in _arity_lines(out) if a.startswith("atan2("))
+    assert _describe_arity(*FUNCTION_ARITIES["atan2"]) in arity_line  # arity on the form line
     # the long-form prose (not the one-liner) is what the card carries
     assert FUNCTION_DETAILS["atan2"].split("\n\n")[0] in out
     assert FUNCTION_HELP["atan2"] not in out  # the terse one-liner is NOT the detail
 
 
+def test_details_card_stacks_the_vector_overload_forms():
+    out = reference.render("functions", "avg", details=True)
+    assert "avg(x, …)" in out.splitlines()  # the run form, on its own header line
+    arity_line = next(a for a in _arity_lines(out) if a.startswith("avg("))
+    assert arity_line.startswith("avg(vector) —")  # the vector form carries the arity
+
+
 def test_details_selects_the_same_functions_as_the_plain_filter():
     # The detail set must mirror the row filter exactly — same substring, same names.
     detailed = {
-        h.split("(", 1)[0]
-        for h in _detail_headers(reference.render("functions", "sin", details=True))
+        a.split("(", 1)[0]
+        for a in _arity_lines(reference.render("functions", "sin", details=True))
     }
     plain = {
         ln.split("(", 1)[0].strip() for ln in reference.render("functions", "sin").splitlines()
@@ -178,8 +221,8 @@ def test_details_selects_the_same_functions_as_the_plain_filter():
 
 
 def test_details_with_no_filter_cards_every_function():
-    headers = _detail_headers(reference.render("functions", details=True))
-    assert len(headers) == len(FUNCTION_ARITIES)
+    cards = _arity_lines(reference.render("functions", details=True))
+    assert len(cards) == len(FUNCTION_ARITIES)
 
 
 def test_function_details_covers_exactly_the_registry():
