@@ -210,8 +210,7 @@ def test_details_card_stacks_the_vector_overload_forms():
 def test_details_selects_the_same_functions_as_the_plain_filter():
     # The detail set must mirror the row filter exactly — same substring, same names.
     detailed = {
-        a.split("(", 1)[0]
-        for a in _arity_lines(reference.render("functions", "sin", details=True))
+        a.split("(", 1)[0] for a in _arity_lines(reference.render("functions", "sin", details=True))
     }
     plain = {
         ln.split("(", 1)[0].strip() for ln in reference.render("functions", "sin").splitlines()
