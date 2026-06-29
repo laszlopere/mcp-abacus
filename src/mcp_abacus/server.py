@@ -1155,6 +1155,12 @@ def curve_fit(
 ) -> dict:
     """Fit curve(s) to paired (x, y) data and report each fitted equation with its error.
 
+    Reach for `curve_fit` when you have observations and want an EQUATION that describes
+    them; use `calculate` to evaluate an equation you already have, or `solver` to find the
+    input that drives a known equation to a target. For example, `x=[1, 1.5, 2]`,
+    `y=[2, 5.8, 8.9]` comes back with the line `6.9*x - 4.78…` ranked first by its residual
+    error, so you can paste that equation straight into `calculate` to predict new points.
+
     `curve_fit` takes the observations as two equal-length lists — `x` and `y` — and estimates,
     for every curve form it knows, the parameter values that best match the data in the
     least-squares sense, reporting each form's fitted equation and the residual error
