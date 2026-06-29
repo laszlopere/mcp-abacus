@@ -1156,9 +1156,13 @@ def curve_fit(
     `curve_fit` takes the observations as two equal-length lists — `x` and `y` — and estimates,
     for every curve form it knows, the parameter values that best match the data in the
     least-squares sense, reporting each form's fitted equation and the residual error
-    (the sum of squared residuals). Today the curve library holds a single form, the
-    straight line `a*x + b` (44.2.1), fitted by the exact closed-form normal equations;
-    more forms (quadratic, power, exponential, …) and the best-of ranking arrive later.
+    (the sum of squared residuals). The curve library holds the straight line `a*x + b`,
+    the quadratic `a*x**2 + b*x + c`, the cubic `a*x**3 + b*x**2 + c*x + d`, and the power
+    law `a*x**b` (44.2.1-44.2.4), each fitted in closed form — the polynomials by the exact
+    normal equations, the power law by the log-linearisation `ln y = ln a + b·ln x`. A form
+    that cannot fit the data (the power law needs `x > 0`, `y > 0`, and rational mode cannot
+    represent its irrational logs; a polynomial needs enough distinct `x`) is dropped, not
+    fatal. More forms (exponential, …) and the best-of ranking arrive later.
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the whole fit runs
     in that numeric type, so the parameters and error are exact in `rational`, rounded at

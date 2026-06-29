@@ -13,6 +13,8 @@ is used (no subprocess); test_e2e.py covers the tools over real stdio.
 import asyncio
 import json
 
+import pytest
+
 from mcp_abacus.server import mcp
 
 
@@ -32,19 +34,42 @@ def _fit(x, y, *, mode=None, floor=None):
     return json.loads(blocks[0].text)
 
 
+def _by_form(payload):
+    """Index the reply's fits by form name (the reply lists every form that fit)."""
+    return {fit["form"]: fit for fit in payload["fits"]}
+
+
 def test_linear_fit_reply_shape():
+    # y = 2x + 1 exactly: in rational mode the linear / quadratic / cubic forms all fit it
+    # exactly (the power form is dropped — its logs are irrational). Each fitted form is one
+    # entry in the reply; this checks the linear entry's shape and exact-verdict fields.
     payload = _fit([1, 2, 3, 4], [3, 5, 7, 9], mode="rational")
     assert payload["error"] is None
     assert payload["mode"] == "rational"
-    assert len(payload["fits"]) == 1
-    fit = payload["fits"][0]
-    assert fit["form"] == "linear"
+    by_form = _by_form(payload)
+    assert "power" not in by_form  # rational refuses the power form's logs
+    fit = by_form["linear"]
     assert fit["equation"] == "2*x + 1"
     assert [p["name"] for p in fit["parameters"]] == ["a", "b"]
     assert fit["parameters"][0]["value"] == "2 (exact)"
     assert fit["parameters"][1]["value"] == "1 (exact)"
     assert fit["fit_error"] == "0 (exact)"
     assert fit["exact"] is True
+    # The polynomial forms recover the same line exactly (leading coefficients zero).
+    assert by_form["quadratic"]["fit_error"] == "0 (exact)"
+    assert by_form["cubic"]["fit_error"] == "0 (exact)"
+
+
+def test_nonlinear_data_is_fit_by_the_matching_form():
+    # y = 2x**1.5 over the wire in floating-point: the power form recovers a≈2, b≈1.5
+    # with a near-zero error, alongside the polynomial approximations.
+    ys = [2 * x**1.5 for x in (1, 2, 3, 4, 5)]
+    payload = _fit([1, 2, 3, 4, 5], ys, mode="floating-point")
+    power = _by_form(payload)["power"]
+    a, b = power["parameters"]
+    assert float(a["value"].split()[0]) == pytest.approx(2.0, rel=1e-6)
+    assert float(b["value"].split()[0]) == pytest.approx(1.5, rel=1e-6)
+    assert power["exact"] is False
 
 
 def test_default_mode_is_fixed_point_with_a_sub_unit_floor():
@@ -52,7 +77,7 @@ def test_default_mode_is_fixed_point_with_a_sub_unit_floor():
     # nine fractional digits rather than rounding to whole numbers.
     payload = _fit([1, 1.5, 2.0], [2, 5.8, 8.9])
     assert payload["mode"] == "fixed-point"
-    fit = payload["fits"][0]
+    fit = _by_form(payload)["linear"]  # not fits[0] — fits are ranked by error now
     # slope 6.9, intercept -4.78333... at scale 9.
     assert fit["parameters"][0]["value"].startswith("6.900000000")
     assert fit["parameters"][1]["value"].startswith("-4.783333333")

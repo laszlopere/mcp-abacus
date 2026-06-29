@@ -1486,7 +1486,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [ ] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.
         [ ] 44.2.8.  reciprocal — a/x + b; domain x!=0.
         [ ] 44.2.9.  sinusoidal — a*sin(b*x + c) + d.
-    [ ] 44.3.  Fit each form independently — estimate its parameters by minimising
+    [x] 44.3.  Fit each form independently — estimate its parameters by minimising
                the residual error over the data, driving the existing solver
                optimise engine (least-squares objective Σ(model(xᵢ)-yᵢ)²). Forms are
                fitted in parallel; a form that can't fit the data (domain miss,
