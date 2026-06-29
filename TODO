@@ -1514,7 +1514,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                mode). In-process + over-the-wire.
     [x] 44.8.  DOCS — tool docstring, a `fit` help section (reference.py), and a
                README bullet.
-    [ ] 44.9.  Generalise `_polynomial_fitter` into a linear-least-squares fitter over an
+    [x] 44.9.  Generalise `_polynomial_fitter` into a linear-least-squares fitter over an
                arbitrary basis {f1(x)..fk(x)}, so the linear-in-parameters forms share one
                fitter instead of each hand-rolling its normal equations: logarithmic
                {1, ln x} (44.2.6), square-root {1, sqrt x} (44.2.7), reciprocal {1, 1/x}

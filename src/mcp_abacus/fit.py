@@ -16,10 +16,16 @@ fitter that estimates its parameters. Every form wired today is fitted in CLOSED
 exact least-squares solution:
 
   - linear / quadratic / cubic are LINEAR IN THEIR PARAMETERS, so their least-squares fit
-    is the solution of the normal equations ``(Vᵀ·V)·c = Vᵀ·y`` (V the Vandermonde matrix
-    of the data) — solved by Gauss-Jordan elimination in mode-faithful Value arithmetic,
-    so the coefficients are EXACT in rational mode, mode-rounded in fixed-point, and a
-    native double in floating-point (``_fit_linear`` / ``_fit_polynomial``).
+    is the solution of the normal equations ``(Bᵀ·B)·c = Bᵀ·y`` (B the design matrix
+    ``Bᵢⱼ = fⱼ(xᵢ)`` over the form's basis functions) — solved by Gauss-Jordan elimination
+    in mode-faithful Value arithmetic, so the coefficients are EXACT in rational mode,
+    mode-rounded in fixed-point, and a native double in floating-point. The quadratic and
+    cubic share one general basis fitter (``_linear_basis_fitter``, 44.9) over the power
+    basis ``{x**degree, …, x, 1}``; any future linear-in-parameters form (logarithmic
+    ``{1, ln x}``, square-root ``{1, sqrt x}``, reciprocal ``{1, 1/x}``, …) wires its own
+    basis into that same fitter rather than re-deriving the normal equations. The linear
+    form keeps the line's direct two-coefficient formula (``_fit_linear`` / ``_line_coeffs``),
+    which the power fit reuses on logged data.
   - power ``a·x**b`` is intrinsically non-linear but LINEARISES under logs —
     ``ln y = ln a + b·ln x`` is a straight line in ``(ln x, ln y)`` — so it is the same
     line fit on the logged data, with ``b`` the slope and ``a = exp(intercept)``
@@ -260,54 +266,103 @@ def _solve_linear_system(
     return [aug[i][n].div(aug[i][i]) for i in range(n)]
 
 
+def _linear_basis_fitter(
+    name: str,
+    parameters: tuple[str, ...],
+    basis: "tuple[Callable[[Value, Mode, int], Value], ...]",
+    render: "Callable[[list[Value]], str]",
+) -> "Callable[[list[Value], list[Value], Mode, int], FitResult]":
+    """Build the least-squares fitter for a model LINEAR IN ITS PARAMETERS over ``basis``.
+
+    A form is linear in its parameters when it is a weighted sum of fixed basis functions of
+    ``x`` — ``model(x) = Σⱼ cⱼ·fⱼ(x)`` — even when each ``fⱼ`` is itself curved (``x**2``,
+    ``ln x``, ``1/x``, …). Every such form shares ONE closed-form fit (44.9): its
+    least-squares coefficients are the solution of the normal equations ``(Bᵀ·B)·c = Bᵀ·y``,
+    where ``B`` is the design matrix ``Bᵢⱼ = fⱼ(xᵢ)``. This generalises the polynomial's
+    Vandermonde fit — the polynomial is just the basis ``{x**degree, …, x, 1}`` — so the
+    quadratic and cubic (44.2.2 / 44.2.3) and any future linear-in-parameters combo
+    (logarithmic ``{1, ln x}``, square-root ``{1, sqrt x}``, reciprocal ``{1, 1/x}``, …) wire
+    a basis here instead of hand-rolling their own normal equations.
+
+    ``basis`` lists the functions ``fⱼ(x, mode, scale)`` in the SAME order as ``parameters``
+    names their coefficients, so the solved ``c`` lines up with the names and with whatever
+    ``render`` produces (the polynomial passes its basis highest-degree first so ``a`` is the
+    leading coefficient). Each ``fⱼ`` takes the mode and working scale too, so a basis term
+    can mint a mode-faithful constant (the ``1`` term) or a transcendental (``ln x``). The
+    matrix ``Bᵀ·B``, the right-hand side ``Bᵀ·y``, the Gauss-Jordan solve and the rebuilt
+    model are all accumulated in mode-faithful Value arithmetic, so the whole fit stays exact
+    in rational and mode-rounded otherwise. ``render`` turns the solved coefficients into the
+    fitted equation string over ``x``.
+
+    The returned fitter has the CurveForm.fit signature. It raises FitError when the data
+    underdetermines the basis (a singular ``Bᵀ·B`` — fewer independent points than basis
+    functions) via :func:`_solve_linear_system`, and converts a NotRepresentableError from
+    evaluating a basis function (a domain miss or an irrational it cannot represent — e.g.
+    ``ln x`` in rational mode) into a FitError so the form is dropped, not fatal (44.3).
+    """
+
+    def fit(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+        try:
+            # Design matrix once: row i holds [f₀(xᵢ), …, f_{k-1}(xᵢ)], reused for both the
+            # normal equations and the rebuilt model after the solve.
+            design = [[f(x, mode, scale) for f in basis] for x in xs]
+        except NotRepresentableError as exc:
+            raise FitError(
+                f"Cannot fit {name}: the data leaves its basis undefined or unrepresentable "
+                f"in {mode.value} mode. {exc}"
+            ) from exc
+        k = len(basis)
+        matrix = [
+            [_sum([row[j].mul(row[m]) for row in design], mode, scale) for m in range(k)]
+            for j in range(k)
+        ]
+        rhs = [
+            _sum([row[j].mul(y) for row, y in zip(design, ys, strict=True)], mode, scale)
+            for j in range(k)
+        ]
+        coeffs = _solve_linear_system(matrix, rhs, name, mode, scale)  # in basis order
+        model = [
+            _sum([c.mul(row[j]) for j, c in enumerate(coeffs)], mode, scale) for row in design
+        ]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+        equation = render(coeffs)
+        return FitResult(name, equation, tuple(zip(parameters, coeffs, strict=True)), error)
+
+    return fit
+
+
+def _power_term(power: int) -> "Callable[[Value, Mode, int], Value]":
+    """The basis function ``x**power`` for the polynomial fit, built by repeated ``mul``.
+
+    ``power`` 0 is the constant ``1`` term — minted as a mode-faithful Value from the passed
+    mode and scale (``x`` may be zero, so it cannot be recovered from ``x`` itself). Higher
+    powers multiply ``x`` in, keeping the mode's own rounding at each step.
+    """
+
+    def f(x: Value, mode: Mode, scale: int) -> Value:
+        result = Value.from_real(1, mode, scale)
+        for _ in range(power):
+            result = result.mul(x)
+        return result
+
+    return f
+
+
 def _polynomial_fitter(
     name: str, degree: int, parameters: tuple[str, ...]
 ) -> "Callable[[list[Value], list[Value], Mode, int], FitResult]":
     """Build the fitter for the degree-``degree`` polynomial form (44.2.2 / 44.2.3).
 
-    A polynomial is linear in its coefficients, so its least-squares fit is the solution of
-    the normal equations ``(Vᵀ·V)·c = Vᵀ·y``: the matrix is the symmetric Hankel of power
-    sums ``S[j+k] = Σ xᵢ**(j+k)`` and the right-hand side is ``T[j] = Σ xᵢ**j·yᵢ``, both
-    accumulated in mode-faithful Value arithmetic so the whole solve stays exact in rational
-    and mode-rounded otherwise. ``parameters`` names the coefficients highest-degree first
-    (``a`` the leading coefficient), matching the rendered equation. The returned fitter has
-    the CurveForm.fit signature and raises FitError when the data is degenerate (fewer than
+    A polynomial is linear in its coefficients, so it is just the linear-basis fit (44.9)
+    over the power basis ``{x**degree, x**(degree-1), …, x, 1}`` — highest degree first, so
+    the solved coefficients land highest-degree first, ``a`` the leading coefficient,
+    matching ``parameters`` and the equation :func:`_polynomial_equation` renders. The shared
+    :func:`_linear_basis_fitter` builds the normal equations ``(Bᵀ·B)·c = Bᵀ·y`` (here ``B``
+    the Vandermonde matrix) and raises FitError when the data is degenerate (fewer than
     ``degree + 1`` distinct ``x`` — a singular matrix).
     """
-
-    def fit(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
-        # One pass over the data: per point build xᵢ**0 … xᵢ**(2·degree) by repeated
-        # multiplication (keeping the mode's own rounding), retaining the low half
-        # (xᵢ**0 … xᵢ**degree) to rebuild the model after the solve. From these come the
-        # power sums S[0..2·degree] and the right-hand side T[0..degree] of the normal eqs.
-        one = Value.from_real(1, mode, scale)
-        point_powers: list[list[Value]] = []
-        s_terms: list[list[Value]] = [[] for _ in range(2 * degree + 1)]
-        t_terms: list[list[Value]] = [[] for _ in range(degree + 1)]
-        for x, y in zip(xs, ys, strict=True):
-            powers = [one]
-            for _ in range(2 * degree):
-                powers.append(powers[-1].mul(x))
-            point_powers.append(powers[: degree + 1])
-            for m in range(2 * degree + 1):
-                s_terms[m].append(powers[m])
-            for j in range(degree + 1):
-                t_terms[j].append(powers[j].mul(y))
-        power_sums = [_sum(terms, mode, scale) for terms in s_terms]
-        rhs = [_sum(terms, mode, scale) for terms in t_terms]
-        matrix = [[power_sums[j + k] for k in range(degree + 1)] for j in range(degree + 1)]
-        # Solve for c[0..degree] (constant-first), then read it highest-degree-first.
-        low_to_high = _solve_linear_system(matrix, rhs, name, mode, scale)
-        coeffs = list(reversed(low_to_high))  # a (leading) … constant
-        model = [
-            _sum([low_to_high[k].mul(p) for k, p in enumerate(powers)], mode, scale)
-            for powers in point_powers
-        ]
-        error = _sum_squared_residuals(model, ys, mode, scale)
-        equation = _polynomial_equation(coeffs)
-        return FitResult(name, equation, tuple(zip(parameters, coeffs, strict=True)), error)
-
-    return fit
+    basis = tuple(_power_term(degree - j) for j in range(degree + 1))  # highest degree first
+    return _linear_basis_fitter(name, parameters, basis, _polynomial_equation)
 
 
 def _fit_power(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:

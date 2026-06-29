@@ -12,8 +12,14 @@ the curve registry, and the drop-and-continue on data a form cannot fit.
 
 import pytest
 
-from mcp_abacus.expr.value import Mode
-from mcp_abacus.fit import CURVE_FORMS, FitError, FitResult, fit_all
+from mcp_abacus.expr.value import Mode, Value
+from mcp_abacus.fit import (
+    CURVE_FORMS,
+    FitError,
+    FitResult,
+    _linear_basis_fitter,
+    fit_all,
+)
 
 
 def _pick(results: list[FitResult], form: str) -> FitResult:
@@ -192,3 +198,22 @@ def test_curve_library_declares_every_form_with_its_metadata():
 def test_every_form_is_now_wired_to_a_fitter():
     # 44.3: all four declared forms carry a live closed-form fitter.
     assert all(form.fit is not None for form in CURVE_FORMS)
+
+
+def test_linear_basis_fitter_fits_a_non_polynomial_basis_exactly():
+    # 44.9: the shared fitter is over an ARBITRARY basis, not just powers of x. Over the
+    # reciprocal basis {1, 1/x} the model is c0 + c1/x — linear in its parameters though 1/x
+    # is curved — so y = 3 + 2/x is recovered exactly in rational mode (error 0, on the nose).
+    one = lambda x, mode, scale: Value.from_real(1, mode, scale)  # noqa: E731
+    recip = lambda x, mode, scale: Value.from_real(1, mode, scale).div(x)  # noqa: E731
+    render = lambda coeffs: f"{coeffs[0].to_string()} + {coeffs[1].to_string()}/x"  # noqa: E731
+    fit = _linear_basis_fitter("reciprocal", ("c0", "c1"), (one, recip), render)
+    xs = [Value.from_real(v, Mode.RATIONAL, 12) for v in (1, 2, 4)]
+    ys = [Value.from_real(v, Mode.RATIONAL, 12) for v in (5, 4, 3.5)]  # 3 + 2/x
+    result = fit(xs, ys, Mode.RATIONAL, 12)
+    params = dict(result.parameters)
+    assert params["c0"].to_string() == "3"
+    assert params["c1"].to_string() == "2"
+    assert result.equation == "3 + 2/x"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
