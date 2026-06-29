@@ -65,6 +65,8 @@ def _human_readable_trace(request, monkeypatch):
     calls it directly with a parsed node). `calculate` is framed the same Code /
     Result way for the calculate-driven e2e modules (test_functions_e2e at the
     in-process seam, test_vectors_e2e over the wire), each gated by module name.
+    The `curve_fit` tool is framed too: its Code block shows the (x, y) data and its
+    Result block the fitted equation(s) with error (test_fit_e2e).
     For the engine seam the source text is recovered by tracing parse() and keying
     on id(node), since search() is handed the AST, not the program string. At teardown
     each run prints the abacus program under a "Code" rule and the outcome under a
@@ -110,6 +112,24 @@ def _human_readable_trace(request, monkeypatch):
         lines = [f"{entry['source']} = {entry['value']}" for entry in (payload.get("values") or [])]
         _append(expression, "\n".join(lines))
 
+    def _record_fit(arguments, payload) -> None:
+        # `curve_fit` takes (x, y) data, not an `expression`: the Code block shows the data
+        # (and the mode, when set), the Result block lists each fitted form as
+        # "<form>: y = <equation>  (error <fit_error>)" — or the plain error when refused.
+        args = arguments or {}
+        code_lines = [f"x = {args.get('x')}", f"y = {args.get('y')}"]
+        if args.get("mode") is not None:
+            code_lines.append(f"mode = {args['mode']}")
+        code = "\n".join(code_lines)
+        if payload.get("error") is not None:
+            _append(code, payload["error"])
+            return
+        lines = [
+            f"{fit['form']}: y = {fit['equation']}  (error {fit['fit_error']})"
+            for fit in (payload.get("fits") or [])
+        ]
+        _append(code, "\n".join(lines))
+
     original_mcp_call = mcp.call_tool
 
     @functools.wraps(original_mcp_call)
@@ -122,6 +142,9 @@ def _human_readable_trace(request, monkeypatch):
         if name == "solver":
             blocks = result[0] if isinstance(result, tuple) else result
             _record(arguments, json.loads(blocks[0].text))
+        elif name == "curve_fit":
+            blocks = result[0] if isinstance(result, tuple) else result
+            _record_fit(arguments, json.loads(blocks[0].text))
         elif name == "calculate" and request.module.__name__ == "test_functions_e2e":
             # The grouped function tests frame each `calculate` program the same way:
             # gated to that module so other calculate-driven tests stay unaffected.
@@ -512,6 +535,45 @@ def _compact_functions_e2e_trace(request, monkeypatch):
             print("\n")  # blank line(s) between cases
 
 
+def _compact_fit_e2e_trace(request, monkeypatch):
+    """For test_fit_e2e.py under -v: print each fit call as REQUEST / REPLY.
+
+    The tests drive the in-process `curve_fit` tool (mcp.call_tool), so each call is
+    recorded at that seam and, at teardown, printed as the request arguments and the full
+    reply payload — the actual JSON the tool sends back, `fits` array and all — each as a
+    2-space-indented block, a blank line separating the cases. Mirrors
+    _compact_solver_e2e_trace / _compact_functions_e2e_trace, for `curve_fit`.
+    """
+    from mcp_abacus.server import mcp
+
+    rows: list[tuple[dict, dict]] = []  # (request args, reply payload)
+    original_call_tool = mcp.call_tool
+
+    @functools.wraps(original_call_tool)
+    async def traced_call_tool(name, arguments=None, *args, **kwargs):
+        result = await original_call_tool(name, arguments, *args, **kwargs)
+        if name == "curve_fit":
+            blocks = result[0] if isinstance(result, tuple) else result
+            rows.append((arguments or {}, json.loads(blocks[0].text)))
+        return result
+
+    monkeypatch.setattr(mcp, "call_tool", traced_call_tool)
+    yield
+
+    if rows:
+
+        def _indent(text: str) -> str:
+            return "\n".join("  " + line for line in text.splitlines())
+
+        print()  # step off pytest's "test-id" progress line
+        for request_args, reply in rows:
+            print("\nREQUEST:")
+            print(_indent(json.dumps(request_args, indent=2)))
+            print("\nREPLY:")
+            print(_indent(json.dumps(reply, indent=2)))
+            print("\n")  # blank line(s) between cases
+
+
 def _compact_functions_trace(request, monkeypatch):
     """For test_functions.py under -v: print each call as "expression [mode] = value".
 
@@ -676,6 +738,13 @@ def _verbose_trace(request, monkeypatch):
         # process `calculate` tool seam so the pair is the real request and the real
         # multi-line reply (the `values` breakdown) the tool sends back, like solver_e2e.
         yield from _compact_functions_e2e_trace(request, monkeypatch)
+        return
+
+    if request.module.__name__ == "test_fit_e2e":
+        # test_fit_e2e.py gets the REQUEST / REPLY JSON view, recorded at the in-process
+        # `curve_fit` tool seam so the pair is the real request and the real reply (the `fits`
+        # breakdown) the tool sends back, like solver_e2e / functions_e2e.
+        yield from _compact_fit_e2e_trace(request, monkeypatch)
         return
 
     if request.module.__name__ == "test_variables_e2e":
