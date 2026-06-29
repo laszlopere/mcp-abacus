@@ -1464,3 +1464,44 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                while the default mode stays fixed-point, consistent with
                calculate. An explicit null still hits the 39 refusal.
 
+
+[ ] 44.  CURVE FITTING TOOL  (a new MCP tool, solver-adjacent like diff/integral
+         40.17-40.19: the caller passes paired x/y data, the tool tries every
+         curve form it knows, and returns the best-fitting few with their fitted
+         equation and error. Reuses the parser/evaluator and the solver's
+         optimise engine to estimate each form's parameters.)
+    [ ] 44.1.  New MCP tool `fit(x, y, mode="fixed-point", ...)`. `x` and `y` are
+               equal-length numeric arrays (the observations); reuse calculate's
+               mode / min_fixed_point_precision front-end (the 31.3 shared helper).
+    [ ] 44.2.  Curve library — a registry of candidate model forms, each a named
+               template with free parameters. Extensible the way _FUNCS is; each
+               entry knows its parameter names, its objective, and any domain limits
+               (power/log need x>0, etc.). The variants:
+        [ ] 44.2.1.  linear — a*x + b.
+        [ ] 44.2.2.  quadratic — a*x**2 + b*x + c.
+        [ ] 44.2.3.  cubic — a*x**3 + b*x**2 + c*x + d.
+        [ ] 44.2.4.  power — a*x**b; domain x>0.
+        [ ] 44.2.5.  exponential — a*exp(b*x).
+        [ ] 44.2.6.  logarithmic — a + b*ln(x); domain x>0.
+        [ ] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.
+        [ ] 44.2.8.  reciprocal — a/x + b; domain x!=0.
+        [ ] 44.2.9.  sinusoidal — a*sin(b*x + c) + d.
+    [ ] 44.3.  Fit each form independently — estimate its parameters by minimising
+               the residual error over the data, driving the existing solver
+               optimise engine (least-squares objective Σ(model(xᵢ)-yᵢ)²). Forms are
+               fitted in parallel; a form that can't fit the data (domain miss,
+               non-convergence) is dropped, not fatal.
+    [ ] 44.4.  Error metric — one comparable goodness number per fitted form (sum of
+               squared residuals, or RMSE), computed in the active mode so the
+               verdict carries the usual exact/inexact honesty.
+    [ ] 44.5.  Rank by error and return the best 3: each result gives the curve's
+               fitted equation (parameters substituted, rendered in the mode's
+               normal string form) and its error. Fewer than 3 if fewer forms fit.
+    [ ] 44.6.  Reply shape — the ranked list plus `mode`, `exact`, `precision`, and
+               an `error` path, annotated like solver (31.8 / 32).
+    [ ] 44.7.  TESTS — a clean linear set, a set best fit by a non-linear form, and
+               the error cases (mismatched x/y lengths, too few points, unknown
+               mode). In-process + over-the-wire.
+    [ ] 44.8.  DOCS — tool docstring, a `fit` help section (reference.py), and a
+               README bullet.
+
