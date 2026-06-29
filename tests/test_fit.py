@@ -93,9 +93,7 @@ def test_quadratic_recovers_exact_parabola_in_rational():
 def test_cubic_recovers_exact_cubic_in_rational():
     # y = x**3 - 2x**2 + 1 exactly — recovered with error 0 in rational mode. The leading
     # coefficient is 1 and the x term vanishes, so the equation shows the honest "0*x".
-    result = _pick(
-        fit_all([0, 1, 2, 3, 4, 5], [1, 0, 1, 10, 33, 76], Mode.RATIONAL, 0), "cubic"
-    )
+    result = _pick(fit_all([0, 1, 2, 3, 4, 5], [1, 0, 1, 10, 33, 76], Mode.RATIONAL, 0), "cubic")
     params = dict(result.parameters)
     assert params["a"].to_string() == "1"
     assert params["b"].to_string() == "-2"
@@ -264,6 +262,94 @@ def test_sinusoidal_is_dropped_when_too_few_distinct_x():
     assert "quadratic" in forms  # a lower-order form still fits the three points
 
 
+def test_gaussian_recovers_peak_centre_and_width_in_floating_point():
+    # 44.2.10: y = 2*exp(-(x-3)**2/(2*1**2)) over well-spaced x around the peak — Caruana's
+    # method logs the data to a quadratic and recovers the peak a≈2, centre b≈3 and width
+    # c≈1 with a near-zero residual.
+    xs = [i * 0.5 for i in range(13)]  # 0, 0.5, …, 6 — well-spaced around the peak at 3
+    ys = [2 * math.exp(-((x - 3) ** 2) / (2 * 1**2)) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "gaussian")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert params["c"].to_float() == pytest.approx(1.0, rel=1e-6)
+    assert params["c"].to_float() > 0  # the positive width
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)  # a near-perfect fit
+    assert "*exp(-(x - " in result.equation  # the pasteable bell, clean positive-centre sign
+
+
+def test_gaussian_is_dropped_in_rational_mode():
+    # The Caruana fit needs ln/exp/sqrt, which are irrational — rational mode refuses them
+    # (exact-or-refuse), so the gaussian is dropped while the polynomials remain.
+    xs = [i * 0.5 for i in range(13)]
+    ys = [2 * math.exp(-((x - 3) ** 2) / (2 * 1**2)) for x in xs]
+    forms = [r.form for r in fit_all(xs, ys, Mode.RATIONAL, 0)]
+    assert "gaussian" not in forms
+    assert "quadratic" in forms
+
+
+def test_gaussian_is_dropped_when_data_is_not_a_downward_parabola():
+    # ln y = x**2 is an UPWARD parabola in the logs (leading coefficient p2 ≈ 1 ≥ 0), so the
+    # bell cannot be recovered (a downward parabola is required) — the gaussian drops cleanly
+    # while the polynomial forms still fit the data.
+    xs = [-2, -1, 0, 1, 2, 3]
+    ys = [math.exp(x**2) for x in xs]  # log-quadratic opens upward, p2 > 0
+    forms = [r.form for r in fit_all(xs, ys, Mode.FLOATING_POINT, 0)]
+    assert "gaussian" not in forms
+    assert "quadratic" in forms
+
+
+def test_gaussian_is_dropped_when_some_y_is_not_positive():
+    # A non-positive y has no real log, so the Caruana linearisation is undefined and the
+    # gaussian drops cleanly — the polynomial forms, which need no log, still fit.
+    xs = [0, 1, 2, 3, 4]
+    ys = [1.0, 2.0, 0.0, 2.0, 1.0]  # a zero y kills the log
+    forms = [r.form for r in fit_all(xs, ys, Mode.FLOATING_POINT, 0)]
+    assert "gaussian" not in forms
+    assert "linear" in forms  # the log-free polynomial/affine forms still fit
+
+
+def test_saturation_recovers_exactly_in_rational():
+    # 44.2.11: y = x/(x + 2) (so a=1, b=2) — the double-reciprocal line 1/y = a + b*(1/x) is
+    # exact in rational mode (reciprocals of rationals are rational), so a and b are recovered
+    # on the nose with error 0. The intercept is a, the slope is b.
+    result = _pick(fit_all([2, 0.5, 8], [0.5, 0.2, 0.8], Mode.RATIONAL, 0), "saturation")
+    params = dict(result.parameters)
+    assert params["a"].to_string() == "1"
+    assert params["b"].to_string() == "2"
+    assert result.equation == "x/(1*x + 2)"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
+
+
+def test_saturation_is_dropped_when_some_x_is_zero():
+    # 1/x at x = 0 raises ZeroDivisionError; the fitter catches it as a clean DROP (no crash),
+    # while the log-free / x=0-tolerant forms still fit and come back.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [1, 2, 3, 4], Mode.RATIONAL, 0)]
+    assert "saturation" not in forms
+    assert "linear" in forms and "quadratic" in forms
+
+
+def test_hyperbolic_recovers_exactly_in_rational():
+    # 44.2.12: y = 1/(x + 1) (so a=1, b=1) — the line 1/y = a*x + b is exact in rational mode,
+    # so a and b are recovered on the nose with error 0. The slope is a, the intercept is b.
+    result = _pick(fit_all([1, 3, 4, 9], [0.5, 0.25, 0.2, 0.1], Mode.RATIONAL, 0), "hyperbolic")
+    params = dict(result.parameters)
+    assert params["a"].to_string() == "1"
+    assert params["b"].to_string() == "1"
+    assert result.equation == "1/(1*x + 1)"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
+
+
+def test_hyperbolic_is_dropped_when_some_y_is_zero():
+    # 1/y at y = 0 raises ZeroDivisionError; the fitter catches it as a clean DROP (no crash),
+    # while the forms that need no 1/y still fit and come back.
+    forms = [r.form for r in fit_all([1, 2, 3, 4], [1, 0, 3, 4], Mode.RATIONAL, 0)]
+    assert "hyperbolic" not in forms
+    assert "linear" in forms and "quadratic" in forms
+
+
 def test_fits_are_ranked_by_error_best_first():
     # Curved data: the higher-order / matching forms fit better, so the results come back
     # ordered by ascending fit error (44.5) — the least-error fit leads. The power form,
@@ -286,11 +372,12 @@ def test_only_the_best_three_forms_are_returned():
 
 
 def test_fewer_than_three_forms_when_fewer_fit():
-    # 44.5: three points with a zero x in rational mode drops almost everything — the cubic
-    # is underdetermined, the reciprocal hits 1/0, and the power/log/sqrt forms need x > 0
-    # or refuse their irrational basis — so only the linear and quadratic forms fit and
-    # fewer than three come back, not padded.
-    results = fit_all([0, 1, 2], [2, 5, 10], Mode.RATIONAL, 0)
+    # 44.5: three points with a zero x AND a zero y in rational mode drops almost everything —
+    # the cubic is underdetermined, the reciprocal and saturation hit 1/0 at x = 0, the
+    # hyperbolic and saturation hit 1/0 at y = 0, and the power/log/sqrt forms need x > 0 or
+    # refuse their irrational basis — so only the linear and quadratic forms fit and fewer than
+    # three come back, not padded.
+    results = fit_all([0, 1, 2], [2, 5, 0], Mode.RATIONAL, 0)
     assert [r.form for r in results] == ["quadratic", "linear"]
 
 
@@ -310,13 +397,24 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.9: the registry declares linear plus the quadratic/cubic/power, the
-    # exponential/logarithmic/square-root/reciprocal forms, and the sinusoid — in TODO
-    # numeric order — each with its parameter names, model template and domain limit.
+    # 44.2.1-44.2.12: the registry declares linear plus the quadratic/cubic/power, the
+    # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, and
+    # the saturation/hyperbolic reciprocal-line forms — in TODO numeric order — each with its
+    # parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
-        "linear", "quadratic", "cubic", "power",
-        "exponential", "logarithmic", "square-root", "reciprocal", "sinusoidal",
+        "linear",
+        "quadratic",
+        "cubic",
+        "power",
+        "exponential",
+        "logarithmic",
+        "square-root",
+        "reciprocal",
+        "sinusoidal",
+        "gaussian",
+        "saturation",
+        "hyperbolic",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -341,6 +439,19 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["sinusoidal"].parameters == ("a", "b", "c", "d")
     assert by_name["sinusoidal"].template == "a*sin(b*x + c) + d"
     assert by_name["sinusoidal"].domain is None
+    # The gaussian: three parameters (peak/centre/width), and domain y > 0 (its logs need
+    # positive y), fitted in closed form via Caruana's method.
+    assert by_name["gaussian"].parameters == ("a", "b", "c")
+    assert by_name["gaussian"].template == "a*exp(-(x-b)**2/(2*c**2))"
+    assert by_name["gaussian"].domain == "y > 0"
+    # The final two forms: the saturation (Michaelis-Menten) and hyperbolic curves, each
+    # two-parameter, fitted in closed form via a reciprocal-line transform.
+    assert by_name["saturation"].parameters == ("a", "b")
+    assert by_name["saturation"].template == "x/(a*x + b)"
+    assert by_name["saturation"].domain == "x != 0, y != 0"
+    assert by_name["hyperbolic"].parameters == ("a", "b")
+    assert by_name["hyperbolic"].template == "1/(a*x + b)"
+    assert by_name["hyperbolic"].domain == "y != 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

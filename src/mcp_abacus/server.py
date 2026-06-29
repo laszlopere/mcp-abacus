@@ -1167,21 +1167,31 @@ def curve_fit(
     (the sum of squared residuals). The curve library holds the straight line `a*x + b`,
     the quadratic `a*x**2 + b*x + c`, the cubic `a*x**3 + b*x**2 + c*x + d`, the power law
     `a*x**b`, the exponential `a*exp(b*x)`, the logarithm `a + b*ln(x)`, the square root
-    `a*sqrt(x) + b`, the reciprocal `a/x + b` and the sinusoid `a*sin(b*x + c) + d`
-    (44.2.1-44.2.9). Every form but the sinusoid is fitted in CLOSED FORM — the polynomials
+    `a*sqrt(x) + b`, the reciprocal `a/x + b`, the sinusoid `a*sin(b*x + c) + d`, the
+    gaussian `a*exp(-(x-b)**2/(2*c**2))`, the saturation `x/(a*x + b)` (Michaelis-Menten) and
+    the hyperbolic `1/(a*x + b)` (44.2.1-44.2.12, the complete library). Every form but the
+    sinusoid is fitted in CLOSED FORM — the polynomials
     and the affine logarithm/square-root/reciprocal forms by the exact normal equations, the
     power and exponential laws by a log-linearisation (`ln y = ln a + b·ln x` for the power,
-    `ln y = ln a + b·x` for the exponential). The sinusoid alone has no closed-form solution,
-    so it is fitted by an ITERATIVE frequency search: it is non-linear only in the frequency
-    `b`, so for each candidate `b` the best amplitude/phase/offset is a linear sub-fit, and a
-    coarse scan over a data-derived frequency range (then a golden-section refinement) picks
-    the `b` minimising the residual. A form that cannot fit the data is dropped, not fatal:
-    the power and logarithm need `x > 0`, the square root `x >= 0`, the reciprocal `x != 0`,
-    the exponential and power `y > 0`; the power, exponential, logarithm, square-root and
-    sinusoid forms also drop in rational mode, which cannot represent their irrational
-    logs/roots/sines; and a polynomial needs enough distinct `x` (the sinusoid four). The
-    forms that fit are ranked by their residual error — least error first — and only the best
-    three are returned (fewer when fewer forms fit). A few more forms arrive later.
+    `ln y = ln a + b·x` for the exponential), the gaussian by Caruana's method (logs to
+    the quadratic `ln y = p2·x**2 + p1·x + p0`, fitted by the normal equations, then the
+    peak/centre/width are recovered from its coefficients), and the saturation and hyperbolic
+    by a reciprocal-line transform (the double-reciprocal Lineweaver-Burk line
+    `1/y = a + b·(1/x)` for the saturation, the line `1/y = a·x + b` for the hyperbolic). The
+    sinusoid alone has no
+    closed-form solution, so it is fitted by an ITERATIVE frequency search: it is non-linear
+    only in the frequency `b`, so for each candidate `b` the best amplitude/phase/offset is a
+    linear sub-fit, and a coarse scan over a data-derived frequency range (then a
+    golden-section refinement) picks the `b` minimising the residual. A form that cannot fit
+    the data is dropped, not fatal: the power and logarithm need `x > 0`, the square root
+    `x >= 0`, the reciprocal `x != 0`, the exponential, power and gaussian `y > 0` (and the
+    gaussian needs bell-shaped, downward-parabola data), the saturation `x != 0` and `y != 0`,
+    the hyperbolic `y != 0`; the power, exponential, logarithm,
+    square-root, sinusoid and gaussian forms also drop in rational mode, which cannot represent
+    their irrational logs/roots/sines/exp (the saturation and hyperbolic, being pure
+    reciprocals, stay exact in rational); and a polynomial needs enough distinct `x` (the
+    sinusoid four). The forms that fit are ranked by their residual error — least error first —
+    and only the best three are returned (fewer when fewer forms fit).
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the whole fit runs
     in that numeric type, so the parameters and error are exact in `rational`, rounded at

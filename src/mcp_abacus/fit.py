@@ -37,6 +37,24 @@ solution:
     and ``a = exp(intercept)``. The logs make them inexact wherever the mode rounds them; in
     rational mode the logs are irrational and the type refuses them, so both forms are simply
     dropped there (their honest exact-or-refuse outcome).
+  - the gaussian ``a·exp(−(x−b)²/(2c²))`` (44.2.10) also linearises under logs, but to a
+    QUADRATIC rather than a line — Caruana's method: ``ln y = p₂·x² + p₁·x + p₀``, so the fit
+    least-squares-fits that quadratic over the power basis ``{x², x, 1}`` (the same normal
+    equations) and RECOVERS the peak/centre/width from the coefficients (``c = √(−1/2p₂)``,
+    ``b = −p₁/2p₂``, ``a = exp(p₀ − p₂·b²)``), needing a downward parabola (``p₂ < 0``);
+    non-positive ``y`` has no log and rational refuses the irrational logs/exp/√, so it drops
+    there too (``_fit_gaussian``).
+  - the saturation ``x/(a·x + b)`` (44.2.11, Michaelis-Menten) and hyperbolic ``1/(a·x + b)``
+    (44.2.12) — the last two forms — linearise under RECIPROCALS rather than logs. The
+    saturation's double reciprocal is the Lineweaver-Burk line ``1/y = a + b·(1/x)``, affine
+    in ``1/x``, so the fit lines ``(1/x, 1/y)`` and reads the INTERCEPT as ``a`` and the SLOPE
+    as ``b`` (``_fit_saturation``); the hyperbolic's reciprocal of ``y`` alone is the line
+    ``1/y = a·x + b``, so the fit lines ``(x, 1/y)`` and reads the SLOPE as ``a`` and the
+    INTERCEPT as ``b`` (``_fit_hyperbolic``, distinct from the additive reciprocal ``a/x + b``
+    of 44.2.8). Both measure the error on the ORIGINAL model in data space, and both are EXACT
+    in rational (a reciprocal of a rational is rational — no logs/roots), so unlike the
+    power/log forms they do NOT drop in rational; only a zero reciprocal (a domain miss — an
+    ``x = 0`` / ``y = 0`` datum, or a model denominator ``a·x + b = 0``) drops them.
 
 The genuinely non-linearisable sinusoid ``a*sin(b*x + c) + d`` (44.2.9) is the one form
 that keeps an iterative optimise engine: it is non-linear ONLY in the frequency ``b``, so
@@ -194,9 +212,7 @@ def _polynomial_equation(coeffs: list[Value]) -> str:
     return " ".join(parts)
 
 
-def _affine_equation(
-    coeffs: list[Value], terms: "tuple[Callable[[Value], str], ...]"
-) -> str:
+def _affine_equation(coeffs: list[Value], terms: "tuple[Callable[[Value], str], ...]") -> str:
     """Render an affine model ``c₀·f₀(x) + c₁·f₁(x) + …`` over ``x`` with clean signs.
 
     The shared renderer for the affine non-polynomial forms (logarithmic ``a + b*ln(x)``,
@@ -255,9 +271,7 @@ def _line_coeffs(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> tu
     return slope, intercept
 
 
-def _sum_squared_residuals(
-    model: list[Value], ys: list[Value], mode: Mode, scale: int
-) -> Value:
+def _sum_squared_residuals(model: list[Value], ys: list[Value], mode: Mode, scale: int) -> Value:
     """The fit error ``Σ (modelᵢ − yᵢ)²`` in the active mode — the goodness number (44.4)."""
     residuals = [m.sub(y) for m, y in zip(model, ys, strict=True)]
     return _sum([r.mul(r) for r in residuals], mode, scale)
@@ -379,9 +393,7 @@ def _linear_basis_fitter(
             for j in range(k)
         ]
         coeffs = _solve_linear_system(matrix, rhs, name, mode, scale)  # in basis order
-        model = [
-            _sum([c.mul(row[j]) for j, c in enumerate(coeffs)], mode, scale) for row in design
-        ]
+        model = [_sum([c.mul(row[j]) for j, c in enumerate(coeffs)], mode, scale) for row in design]
         error = _sum_squared_residuals(model, ys, mode, scale)
         equation = render(coeffs)
         return FitResult(name, equation, tuple(zip(parameters, coeffs, strict=True)), error)
@@ -517,23 +529,17 @@ def _recip_x(x: Value, mode: Mode, scale: int) -> Value:
 
 def _logarithmic_equation(coeffs: list[Value]) -> str:
     """Render ``a + b*ln(x)`` over ``x`` with clean signs (basis ``{1, ln x}``)."""
-    return _affine_equation(
-        coeffs, (lambda m: m.to_string(), lambda m: f"{m.to_string()}*ln(x)")
-    )
+    return _affine_equation(coeffs, (lambda m: m.to_string(), lambda m: f"{m.to_string()}*ln(x)"))
 
 
 def _square_root_equation(coeffs: list[Value]) -> str:
     """Render ``a*sqrt(x) + b`` over ``x`` with clean signs (basis ``{sqrt x, 1}``)."""
-    return _affine_equation(
-        coeffs, (lambda m: f"{m.to_string()}*sqrt(x)", lambda m: m.to_string())
-    )
+    return _affine_equation(coeffs, (lambda m: f"{m.to_string()}*sqrt(x)", lambda m: m.to_string()))
 
 
 def _reciprocal_equation(coeffs: list[Value]) -> str:
     """Render ``a/x + b`` over ``x`` with clean signs (basis ``{1/x, 1}``)."""
-    return _affine_equation(
-        coeffs, (lambda m: f"{m.to_string()}/x", lambda m: m.to_string())
-    )
+    return _affine_equation(coeffs, (lambda m: f"{m.to_string()}/x", lambda m: m.to_string()))
 
 
 # --- Sinusoidal fit (44.2.9) --------------------------------------------------
@@ -713,9 +719,7 @@ def _fit_sinusoidal(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
         big_a, big_b, d = _solve_linear_system(matrix, rhs, "sinusoidal", mode, scale)
         a = big_a.hypot(big_b)  # canonical positive amplitude sqrt(A**2 + B**2)
         c = big_b.atan2(big_a)  # phase atan2(B, A), in (-pi, pi]
-        model = [
-            big_a.mul(sins[i]).add(big_b.mul(coss[i])).add(d) for i in range(len(xs))
-        ]
+        model = [big_a.mul(sins[i]).add(big_b.mul(coss[i])).add(d) for i in range(len(xs))]
         error = _sum_squared_residuals(model, ys, mode, scale)
     except NotRepresentableError as exc:
         raise FitError(
@@ -723,9 +727,189 @@ def _fit_sinusoidal(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
             f"{mode.value} mode (the sines / amplitude / phase are irrational there). {exc}"
         ) from exc
     equation = _sinusoidal_equation(a, b, c, d)
-    return FitResult(
-        "sinusoidal", equation, (("a", a), ("b", b), ("c", c), ("d", d)), error
-    )
+    return FitResult("sinusoidal", equation, (("a", a), ("b", b), ("c", c), ("d", d)), error)
+
+
+def _gaussian_equation(a: Value, b: Value, c: Value) -> str:
+    """Render ``a*exp(-(x - b)**2/(2*c**2))`` over ``x`` with a clean sign on the centre ``b``.
+
+    The peak ``a`` and width ``c`` are always positive (``a = exp(…)``, ``c = sqrt(positive)``),
+    so each leads with its own magnitude; only the centre ``b`` carries a sign, and it is split
+    INSIDE the ``(x - b)`` group so a negative centre reads ``(x + |b|)`` rather than the ugly
+    ``(x - -2)`` — the same sign-splitting convention as :func:`_sinusoidal_equation` /
+    :func:`_affine_equation`. The result is valid calculate source over ``x`` (44.5), so it
+    pastes straight back in.
+    """
+    b_neg = b.to_float() < 0
+    b_mag = (b.neg() if b_neg else b).to_string()
+    inner = f"x {'+' if b_neg else '-'} {b_mag}"
+    return f"{a.to_string()}*exp(-({inner})**2/(2*{c.to_string()}**2))"
+
+
+def _fit_gaussian(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the gaussian ``a*exp(-(x-b)**2/(2*c**2))`` (44.2.10); domain ``y > 0``.
+
+    Fitted in CLOSED FORM by Caruana's method: taking logs turns the bell into a QUADRATIC in
+    ``x`` — ``ln y = ln a − (x−b)²/(2c²) = p₂·x² + p₁·x + p₀`` with ``p₂ = −1/(2c²)``,
+    ``p₁ = b/c²``, ``p₀ = ln a − b²/(2c²)``. So the fit logs the ``y`` values, least-squares
+    fits the quadratic ``{x², x, 1}`` to ``(x, ln y)`` (the normal equations over the power
+    basis, solved by :func:`_solve_linear_system` in mode-faithful Value arithmetic), and
+    RECOVERS the gaussian parameters from the coefficients ``(p₂, p₁, p₀)``:
+
+      - ``c = sqrt(−1/(2·p₂))`` — the positive width (``−1/(2·p₂) > 0`` because ``p₂ < 0``);
+      - ``b = −p₁/(2·p₂)`` — the centre;
+      - ``a = exp(p₀ − p₂·b²)`` — the positive peak (since ``b²/(2c²) = −p₂·b²``).
+
+    The recovery needs a DOWNWARD parabola (``p₂ < 0``), checked BEFORE the ``sqrt`` of
+    ``−1/(2p₂))``: data whose log-quadratic opens upward (or is flat, ``p₂ ≥ 0``) is not
+    bell-shaped, so the form is dropped (a FitError). The error is the sum of squared
+    residuals ``Σ (a·exp(−(xᵢ−b)²/(2c²)) − yᵢ)²`` of the model in DATA space (where the data
+    lives, not in log space — like the power/exponential fits), in the active mode.
+
+    Raises FitError (so the form is DROPPED, 44.3) when the logs are undefined or
+    unrepresentable: any ``yᵢ ≤ 0`` has no real log, and in rational mode the logs / ``exp`` /
+    ``sqrt`` are irrational — the type refuses them — so the gaussian simply does not fit
+    there (like the power form). NotRepresentableError from any of those is converted here.
+    """
+    try:
+        log_y = [y.ln() for y in ys]
+        # Least-squares quadratic over the power basis {x**2, x, 1}, fitted to (xs, log_y):
+        # the same normal-equations construction as the sinusoid's linear sub-fit (44.9).
+        basis = (_power_term(2), _power_term(1), _power_term(0))
+        design = [[f(x, mode, scale) for f in basis] for x in xs]
+        matrix = [
+            [_sum([row[j].mul(row[m]) for row in design], mode, scale) for m in range(3)]
+            for j in range(3)
+        ]
+        rhs = [
+            _sum([row[j].mul(ly) for row, ly in zip(design, log_y, strict=True)], mode, scale)
+            for j in range(3)
+        ]
+        p2, p1, p0 = _solve_linear_system(matrix, rhs, "gaussian", mode, scale)
+        if p2.to_float() >= 0:  # not a downward parabola -> not bell-shaped, drop the form
+            raise FitError(
+                "Cannot fit a*exp(-(x-b)**2/(2*c**2)): the logged data is not a downward "
+                "parabola (its quadratic's leading coefficient is not negative), so the data "
+                "is not bell-shaped."
+            )
+        two = Value.from_real(2, mode, scale)
+        one = Value.from_real(1, mode, scale)
+        c = one.neg().div(two.mul(p2)).sqrt()  # sqrt(-1/(2*p2)), positive (p2 < 0)
+        b = p1.neg().div(two.mul(p2))  # -p1/(2*p2)
+        a = p0.sub(p2.mul(b.mul(b))).exp()  # exp(p0 - p2*b**2), positive
+        two_c2 = two.mul(c.mul(c))  # 2*c**2, the model's denominator
+        model = [
+            a.mul(x.sub(b).mul(x.sub(b)).neg().div(two_c2).exp()) for x in xs
+        ]  # a*exp(-(x-b)**2/(2*c**2)), measured in data space
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, OverflowError) as exc:
+        # NotRepresentableError: a non-positive y has no log, or rational refuses the
+        # irrational logs/exp/sqrt. OverflowError: near-linear log-data gives a near-flat
+        # parabola (p2 -> 0⁻), so the recovered width/peak blow up — an infinitely wide,
+        # degenerate bell, dropped like any other unfittable form (44.3).
+        raise FitError(
+            "Cannot fit a*exp(-(x-b)**2/(2*c**2)): it needs y > 0 and bell-shaped data, and "
+            "a mode that can represent the logarithms / exp / sqrt of the fit (rational "
+            f"refuses the irrationals). {exc}"
+        ) from exc
+    equation = _gaussian_equation(a, b, c)
+    return FitResult("gaussian", equation, (("a", a), ("b", b), ("c", c)), error)
+
+
+def _saturation_equation(a: Value, b: Value) -> str:
+    """Render ``x/(a*x + b)`` over ``x`` with clean signs in the denominator.
+
+    The numerator is the bare ``x``; the denominator ``a*x + b`` is the same affine
+    ``c₀·x + c₁`` the line renders, so it reuses :func:`_affine_equation` (the leading
+    ``a*x`` keeps its own sign, the constant ``b`` reads ``+ |b|`` or ``- |b|``, e.g.
+    ``2*x - 3``). The result is valid calculate source over ``x`` (44.5), so it pastes
+    straight back in.
+    """
+    denom = _affine_equation([a, b], (lambda m: f"{m.to_string()}*x", lambda m: m.to_string()))
+    return f"x/({denom})"
+
+
+def _hyperbolic_equation(a: Value, b: Value) -> str:
+    """Render ``1/(a*x + b)`` over ``x`` with clean signs in the denominator.
+
+    The numerator is the bare ``1``; the denominator ``a*x + b`` is the same affine line
+    the saturation form renders, so it reuses :func:`_affine_equation` (``2*x - 3`` rather
+    than ``2*x + -3``). The result is valid calculate source over ``x`` (44.5), so it pastes
+    straight back in.
+    """
+    denom = _affine_equation([a, b], (lambda m: f"{m.to_string()}*x", lambda m: m.to_string()))
+    return f"1/({denom})"
+
+
+def _fit_saturation(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the saturation curve ``x/(a*x + b)`` (44.2.11); domain ``x != 0, y != 0``.
+
+    The Michaelis-Menten saturation rises to a plateau ``y -> 1/a``. It linearises under the
+    DOUBLE reciprocal (Lineweaver-Burk): ``1/y = a + b·(1/x)`` is a straight line in
+    ``(1/x, 1/y)``, AFFINE in ``1/x``. So the fit transforms ``X = 1/x`` and ``Y = 1/y``,
+    runs :func:`_line_coeffs` on the transformed data, and reads the parameters off the line:
+    the INTERCEPT is ``a`` and the SLOPE is ``b`` (``1/y = a + b·X``). The error is the sum of
+    squared residuals ``Σ (xᵢ/(a·xᵢ + b) − yᵢ)²`` of the ORIGINAL model in the active mode, so
+    it measures the fit where the data lives, not in reciprocal space (like the power fit).
+
+    This form is EXACT in rational mode — every reciprocal of a rational is rational, no logs
+    or roots — so unlike the power/log/sqrt forms it does NOT drop there; only a genuine domain
+    miss drops it. Raises FitError (so the form is DROPPED, 44.3) when a reciprocal hits zero:
+    any ``xᵢ = 0`` (no ``1/x``), any ``yᵢ = 0`` (no ``1/y``), or a model denominator
+    ``a·xᵢ + b = 0`` raises ZeroDivisionError; NotRepresentableError / OverflowError are caught
+    too so a stray domain miss drops cleanly rather than crashing the other forms (44.3).
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        inv_x = [one.div(x) for x in xs]
+        inv_y = [one.div(y) for y in ys]
+        slope, intercept = _line_coeffs(inv_x, inv_y, mode, scale)
+        a = intercept  # 1/y = a + b·(1/x): the intercept is a
+        b = slope  # and the slope is b
+        model = [x.div(a.mul(x).add(b)) for x in xs]  # x/(a*x + b) in data space
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit x/(a*x + b): it needs x != 0 and y != 0 for the double reciprocal, "
+            f"and a non-zero denominator a*x + b in the model. {exc}"
+        ) from exc
+    equation = _saturation_equation(a, b)
+    return FitResult("saturation", equation, (("a", a), ("b", b)), error)
+
+
+def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the hyperbolic curve ``1/(a*x + b)`` (44.2.12); domain ``y != 0``.
+
+    A smooth ``1/x``-style falloff. It linearises under the reciprocal of ``y`` alone:
+    ``1/y = a·x + b`` is a straight line in ``(x, 1/y)``. So the fit transforms ``Y = 1/y``,
+    runs :func:`_line_coeffs` on ``(xs, Y)``, and reads the parameters off the line: the SLOPE
+    is ``a`` and the INTERCEPT is ``b`` (``1/y = a·x + b``). This is DISTINCT from the
+    reciprocal form ``a/x + b`` (44.2.8), which is additive in ``1/x``; here the reciprocal is
+    of the whole affine ``a·x + b``. The error is the sum of squared residuals
+    ``Σ (1/(a·xᵢ + b) − yᵢ)²`` of the ORIGINAL model in the active mode (like the power fit).
+
+    This form is EXACT in rational mode — reciprocals of rationals are rational, no logs or
+    roots — so it does NOT drop there; only a genuine domain miss drops it. Raises FitError (so
+    the form is DROPPED, 44.3) when a reciprocal hits zero: any ``yᵢ = 0`` (no ``1/y``) or a
+    model denominator ``a·xᵢ + b = 0`` raises ZeroDivisionError; NotRepresentableError /
+    OverflowError are caught too so a stray domain miss drops cleanly rather than crashing the
+    other forms (44.3).
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        inv_y = [one.div(y) for y in ys]
+        slope, intercept = _line_coeffs(xs, inv_y, mode, scale)  # raw xs, reciprocal ys
+        a = slope  # 1/y = a·x + b: the slope is a
+        b = intercept  # and the intercept is b
+        model = [one.div(a.mul(x).add(b)) for x in xs]  # 1/(a*x + b) in data space
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit 1/(a*x + b): it needs y != 0 for the reciprocal, and a non-zero "
+            f"denominator a*x + b in the model. {exc}"
+        ) from exc
+    equation = _hyperbolic_equation(a, b)
+    return FitResult("hyperbolic", equation, (("a", a), ("b", b)), error)
 
 
 # The curve library (44.2): one entry per model form, iterated by the fit tool. Each entry
@@ -734,39 +918,101 @@ def _fit_sinusoidal(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # quadratic and cubic share the polynomial normal-equations solver (linear via the line's
 # direct formula); the logarithmic, square-root and reciprocal forms wire their own affine
 # basis into that same solver (44.9); the power and exponential forms linearise under logs.
-# The sinusoid (44.2.9) and the rest (44.2.10+) slot in the same way as they land.
+# The gaussian (44.2.10) is also closed form, linearising under logs to a quadratic in x
+# (Caruana's method) whose coefficients recover the peak/centre/width. The sinusoid (44.2.9)
+# alone keeps the iterative frequency search. The final two forms — the saturation
+# x/(a*x + b) (44.2.11) and hyperbolic 1/(a*x + b) (44.2.12) curves — are closed form via a
+# reciprocal-line transform (the double-reciprocal Lineweaver-Burk line 1/y = a + b·(1/x) for
+# the saturation, the line 1/y = a·x + b for the hyperbolic), and complete the library.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
-    "quadratic", ("a", "b", "c"), "a*x**2 + b*x + c", None,
+    "quadratic",
+    ("a", "b", "c"),
+    "a*x**2 + b*x + c",
+    None,
     _polynomial_fitter("quadratic", 2, ("a", "b", "c")),
 )
 CUBIC = CurveForm(
-    "cubic", ("a", "b", "c", "d"), "a*x**3 + b*x**2 + c*x + d", None,
+    "cubic",
+    ("a", "b", "c", "d"),
+    "a*x**3 + b*x**2 + c*x + d",
+    None,
     _polynomial_fitter("cubic", 3, ("a", "b", "c", "d")),
 )
 POWER = CurveForm("power", ("a", "b"), "a*x**b", "x > 0", _fit_power)
 EXPONENTIAL = CurveForm("exponential", ("a", "b"), "a*exp(b*x)", "y > 0", _fit_exponential)
 LOGARITHMIC = CurveForm(
-    "logarithmic", ("a", "b"), "a + b*ln(x)", "x > 0",
+    "logarithmic",
+    ("a", "b"),
+    "a + b*ln(x)",
+    "x > 0",
     _linear_basis_fitter("logarithmic", ("a", "b"), (_one, _ln_x), _logarithmic_equation),
 )
 SQUARE_ROOT = CurveForm(
-    "square-root", ("a", "b"), "a*sqrt(x) + b", "x >= 0",
+    "square-root",
+    ("a", "b"),
+    "a*sqrt(x) + b",
+    "x >= 0",
     _linear_basis_fitter("square-root", ("a", "b"), (_sqrt_x, _one), _square_root_equation),
 )
 RECIPROCAL = CurveForm(
-    "reciprocal", ("a", "b"), "a/x + b", "x != 0",
+    "reciprocal",
+    ("a", "b"),
+    "a/x + b",
+    "x != 0",
     _linear_basis_fitter("reciprocal", ("a", "b"), (_recip_x, _one), _reciprocal_equation),
 )
 # The sinusoid (44.2.9) is the lone non-closed-form entry: domain None (no x restriction —
 # the rational limitation is a mode drop, not a domain), fitted by the iterative frequency
 # search above rather than by the normal equations.
 SINUSOIDAL = CurveForm(
-    "sinusoidal", ("a", "b", "c", "d"), "a*sin(b*x + c) + d", None, _fit_sinusoidal,
+    "sinusoidal",
+    ("a", "b", "c", "d"),
+    "a*sin(b*x + c) + d",
+    None,
+    _fit_sinusoidal,
+)
+# The gaussian (44.2.10): closed form via Caruana's method (logs to a quadratic in x), back
+# to closed form after the sinusoid. Domain y > 0 (its logs need positive y); rational refuses
+# the irrational logs/exp/sqrt, so it drops there too.
+GAUSSIAN = CurveForm(
+    "gaussian",
+    ("a", "b", "c"),
+    "a*exp(-(x-b)**2/(2*c**2))",
+    "y > 0",
+    _fit_gaussian,
+)
+# The final two forms (44.2.11 / 44.2.12), closed form via a reciprocal-line transform. The
+# saturation needs both x != 0 and y != 0 (its double reciprocal), the hyperbolic only y != 0;
+# both are exact in rational (reciprocals of rationals are rational), so neither drops there —
+# only a zero reciprocal (a domain miss) drops them.
+SATURATION = CurveForm(
+    "saturation",
+    ("a", "b"),
+    "x/(a*x + b)",
+    "x != 0, y != 0",
+    _fit_saturation,
+)
+HYPERBOLIC = CurveForm(
+    "hyperbolic",
+    ("a", "b"),
+    "1/(a*x + b)",
+    "y != 0",
+    _fit_hyperbolic,
 )
 CURVE_FORMS: tuple[CurveForm, ...] = (
-    LINEAR, QUADRATIC, CUBIC, POWER, EXPONENTIAL, LOGARITHMIC, SQUARE_ROOT, RECIPROCAL,
+    LINEAR,
+    QUADRATIC,
+    CUBIC,
+    POWER,
+    EXPONENTIAL,
+    LOGARITHMIC,
+    SQUARE_ROOT,
+    RECIPROCAL,
     SINUSOIDAL,
+    GAUSSIAN,
+    SATURATION,
+    HYPERBOLIC,
 )
 
 

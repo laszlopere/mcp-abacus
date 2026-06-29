@@ -275,8 +275,7 @@ def _fit_section() -> str:
     from mcp_abacus.fit import CURVE_FORMS
 
     forms = [
-        f"  {form.name:<10} {form.template}"
-        + (f"   (needs {form.domain})" if form.domain else "")
+        f"  {form.name:<10} {form.template}" + (f"   (needs {form.domain})" if form.domain else "")
         for form in CURVE_FORMS
     ]
     return "\n".join(
@@ -297,17 +296,23 @@ def _fit_section() -> str:
             "curve forms (all fitted in closed form EXCEPT the sinusoid — polynomials and",
             "the affine log/sqrt/reciprocal forms by the normal equations, the power and",
             "exponential laws by a log-linearisation, ln y = ln a + b*ln x and ln y = ln a +",
-            "b*x; the sinusoid alone has no closed form, so it is fitted by an ITERATIVE",
-            "frequency search — a coarse scan over a data-derived frequency range then a",
-            "golden-section refinement, with a linear amplitude/phase/offset sub-fit at each",
-            "frequency):",
+            "b*x, the gaussian by Caruana's method (logs to a quadratic ln y = p2*x**2 + p1*x +",
+            "p0, fitted by the normal equations, then peak/centre/width recovered from it), the",
+            "saturation x/(a*x + b) and hyperbolic 1/(a*x + b) by a reciprocal-line transform",
+            "(the double-reciprocal line 1/y = a + b*(1/x) and the line 1/y = a*x + b); the",
+            "sinusoid alone has no closed form, so it is fitted by an ITERATIVE frequency",
+            "search — a coarse scan over a data-derived frequency range then a golden-section",
+            "refinement, with a linear amplitude/phase/offset sub-fit at each frequency):",
             *forms,
             "",
             "A form that cannot fit the data is DROPPED, not fatal: each form's domain limit",
-            "is shown above (the power/exponential need y > 0, the log/sqrt/reciprocal a",
-            "valid x); rational mode also refuses the irrational logs/roots/sines of the",
-            "power, exponential, logarithmic, square-root and sinusoid forms; and a polynomial",
-            "needs enough distinct x to determine its coefficients (the sinusoid four).",
+            "is shown above (the power/exponential/gaussian need y > 0, the log/sqrt/reciprocal",
+            "a valid x, the saturation x != 0 and y != 0, the hyperbolic y != 0); the gaussian",
+            "also needs bell-shaped, downward-parabola data; rational",
+            "mode also refuses the irrational logs/roots/sines/exp of the power, exponential,",
+            "logarithmic, square-root, sinusoid and gaussian forms (the saturation and",
+            "hyperbolic, being pure reciprocals, stay exact in rational); and a polynomial needs",
+            "enough distinct x to determine its coefficients (the sinusoid four).",
             "",
             "error metric: the residual error is the sum of squared residuals",
             "Σ (model(xᵢ) − yᵢ)², computed in the active mode so it carries the usual",

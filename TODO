@@ -1486,14 +1486,14 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.
         [x] 44.2.8.  reciprocal — a/x + b; domain x!=0.
         [x] 44.2.9.  sinusoidal — a*sin(b*x + c) + d.
-        [ ] 44.2.10. gaussian — a*exp(-(x-b)**2/(2*c**2)) (peak a at centre b, width c);
+        [x] 44.2.10. gaussian — a*exp(-(x-b)**2/(2*c**2)) (peak a at centre b, width c);
                      domain y>0. Closed form via Caruana's method: ln y is quadratic in x,
                      so fit the quadratic and recover a, b, c from its coefficients (needs
                      a downward parabola, c**2 = -1/(2*c2)).
-        [ ] 44.2.11. saturation (Michaelis-Menten) — x/(a*x + b); rise to a plateau y->1/a;
+        [x] 44.2.11. saturation (Michaelis-Menten) — x/(a*x + b); rise to a plateau y->1/a;
                      domain x!=0, y!=0. Closed form via the double-reciprocal line
                      1/y = a + b*(1/x) (Lineweaver-Burk).
-        [ ] 44.2.12. hyperbolic — 1/(a*x + b); smooth 1/x-style falloff; domain y!=0.
+        [x] 44.2.12. hyperbolic — 1/(a*x + b); smooth 1/x-style falloff; domain y!=0.
                      Closed form via the line 1/y = a*x + b (distinct from 44.2.8's
                      additive a/x + b).
     [x] 44.3.  Fit each form independently — estimate its parameters by minimising

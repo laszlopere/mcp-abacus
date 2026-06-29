@@ -153,6 +153,48 @@ def test_sinusoidal_form_fits_over_the_wire():
     assert float(fit["fit_error"].split()[0]) == pytest.approx(0.0, abs=1e-9)
 
 
+def test_gaussian_form_fits_over_the_wire():
+    # 44.2.10: y = 2*exp(-(x-3)**2/(2*1**2)) in floating-point — Caruana's closed-form fit
+    # recovers the peak a≈2, centre b≈3 and width c≈1 with a small error, rendered as a
+    # pasteable a*exp(-(x-b)**2/(2*c**2)).
+    xs = [i * 0.5 for i in range(13)]
+    ys = [2 * math.exp(-((x - 3) ** 2) / (2 * 1**2)) for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    fit = _by_form(payload)["gaussian"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(2.0, rel=1e-6)
+    assert params["b"] == pytest.approx(3.0, rel=1e-6)
+    assert params["c"] == pytest.approx(1.0, rel=1e-6)
+    assert "exp(-(" in fit["equation"]
+    assert float(fit["fit_error"].split()[0]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_saturation_form_fits_exactly_over_the_wire():
+    # 44.2.11: y = x/(x + 2) in rational mode — the saturation form recovers a=1, b=2 exactly
+    # via the double-reciprocal line, rendered as a pasteable "x/(1*x + 2)" with an exact error.
+    payload = _fit([2, 0.5, 8], [0.5, 0.2, 0.8], mode="rational")
+    assert payload["error"] is None
+    fit = _by_form(payload)["saturation"]
+    assert fit["equation"] == "x/(1*x + 2)"
+    assert fit["parameters"][0]["value"] == "1 (exact)"
+    assert fit["parameters"][1]["value"] == "2 (exact)"
+    assert fit["fit_error"] == "0 (exact)"
+    assert fit["exact"] is True
+
+
+def test_hyperbolic_form_fits_exactly_over_the_wire():
+    # 44.2.12: y = 1/(x + 1) in rational mode — the hyperbolic form recovers a=1, b=1 exactly
+    # via the line 1/y = a*x + b, rendered as a pasteable "1/(1*x + 1)" with an exact error.
+    payload = _fit([1, 3, 4, 9], [0.5, 0.25, 0.2, 0.1], mode="rational")
+    assert payload["error"] is None
+    fit = _by_form(payload)["hyperbolic"]
+    assert fit["equation"] == "1/(1*x + 1)"
+    assert fit["parameters"][0]["value"] == "1 (exact)"
+    assert fit["parameters"][1]["value"] == "1 (exact)"
+    assert fit["fit_error"] == "0 (exact)"
+    assert fit["exact"] is True
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None
