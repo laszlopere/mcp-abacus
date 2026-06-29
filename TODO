@@ -1478,9 +1478,9 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                entry knows its parameter names, its objective, and any domain limits
                (power/log need x>0, etc.). The variants:
         [x] 44.2.1.  linear — a*x + b.
-        [ ] 44.2.2.  quadratic — a*x**2 + b*x + c.
-        [ ] 44.2.3.  cubic — a*x**3 + b*x**2 + c*x + d.
-        [ ] 44.2.4.  power — a*x**b; domain x>0.
+        [x] 44.2.2.  quadratic — a*x**2 + b*x + c.
+        [x] 44.2.3.  cubic — a*x**3 + b*x**2 + c*x + d.
+        [x] 44.2.4.  power — a*x**b; domain x>0.
         [ ] 44.2.5.  exponential — a*exp(b*x).
         [ ] 44.2.6.  logarithmic — a + b*ln(x); domain x>0.
         [ ] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.

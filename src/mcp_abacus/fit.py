@@ -9,13 +9,18 @@ solver it is type-faithful: every datum is materialised as a mode-faithful ``Val
 the whole fit is computed in the active mode — exact in rational, mode-rounded in
 fixed-point / floating-point — so the precision verdict carries through to the answer.
 
-Each form lives in ``CURVE_FORMS`` (44.2), the registry the tool iterates; a form knows
-its parameter names and how to fit itself. Only the LINEAR form ``a*x + b`` exists today
+Each form lives in ``CURVE_FORMS`` (44.2), the registry the tool iterates; a form
+declares its name, model template, parameter names and any domain limit independently of
+whether it can be fitted yet. The LINEAR form ``a*x + b`` is the one fitted today
 (44.2.1): a straight line has a closed-form least-squares solution (the normal
 equations), so it is fitted directly here rather than through the solver's iterative
 optimise engine — that general machinery (44.3), which the non-linear forms will need,
-is a separate item. The cross-form parameter search, error ranking, and best-3 selection
-(44.3-44.5) are likewise still to come; for now ``fit_all`` returns the one linear fit.
+is a separate item. The quadratic, cubic and power forms (44.2.2-44.2.4) are *declared*
+in the registry but carry no fitter yet (``fit=None``); their parameter estimation waits
+on the 44.3 engine, and ``fit_all`` simply skips a form whose fitter is ``None``. The
+cross-form error ranking and best-3 selection (44.4-44.5) are likewise still to come;
+``fit_all`` drops a form that cannot fit the data (44.3) and otherwise returns every
+fitted form unranked — today just the one linear fit.
 """
 
 from collections.abc import Callable, Sequence
@@ -62,16 +67,25 @@ class FitResult:
 class CurveForm:
     """A candidate model form in the curve library (44.2).
 
-    ``name`` is the form's name, ``parameters`` its free-parameter names in equation
-    order, and ``fit`` the fitter: it takes the data as mode-faithful Values plus the
-    mode and working scale, and returns a FitResult (or raises FitError when the data
-    cannot support this form, e.g. a vertical line for the linear fit). The registry
-    ``CURVE_FORMS`` holds one entry per form; the tool iterates it.
+    ``name`` is the form's name and ``parameters`` its free-parameter names in equation
+    order. ``template`` is the model written over the variable ``x`` with those parameters
+    (e.g. ``"a*x**2 + b*x + c"``) — the named template 44.2 calls for, which a fitter
+    substitutes fitted values into and the 44.3 optimiser will evaluate. ``domain`` records
+    any restriction the form places on ``x`` (e.g. ``"x > 0"`` for the power form), or
+    ``None`` when ``x`` is unrestricted. ``fit`` is the fitter: it takes the data as
+    mode-faithful Values plus the mode and working scale and returns a FitResult (or raises
+    FitError when the data cannot support this form, e.g. a vertical line for the linear
+    fit). It is ``None`` for a form that is declared but not yet wired to a fitter — the
+    quadratic, cubic and power forms (44.2.2-44.2.4) are declared today but estimated only
+    once the solver-driven fit (44.3) lands, and ``fit_all`` skips a form whose ``fit`` is
+    ``None``. The registry ``CURVE_FORMS`` holds one entry per form; the tool iterates it.
     """
 
     name: str
     parameters: tuple[str, ...]
-    fit: "Callable[[list[Value], list[Value], Mode, int], FitResult]"
+    template: str
+    domain: "str | None"
+    fit: "Callable[[list[Value], list[Value], Mode, int], FitResult] | None"
 
 
 def _fit_scale(mode: Mode, floor: int) -> int:
@@ -148,23 +162,47 @@ def _fit_linear(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> Fit
     return FitResult("linear", equation, (("a", a), ("b", b)), error)
 
 
-# The curve library (44.2): one entry per model form, iterated by the fit tool. Only the
-# linear form is wired today (44.2.1); the quadratic, power, exponential, … forms (44.2.2+)
-# slot in here as they land, each a CurveForm with its own fitter.
-LINEAR = CurveForm("linear", ("a", "b"), _fit_linear)
-CURVE_FORMS: tuple[CurveForm, ...] = (LINEAR,)
+# The curve library (44.2): one entry per model form, iterated by the fit tool. Each entry
+# DECLARES the form — its name, model template over x, free-parameter names and any domain
+# limit — independently of whether it can be fitted yet. The linear form is fitted in closed
+# form today (44.2.1); the quadratic, cubic and power forms (44.2.2-44.2.4) are declared with
+# fit=None and estimated only when the solver-driven fit engine lands (44.3), at which point
+# fit_all stops skipping them. The exponential, logarithmic, … forms (44.2.5+) slot in the
+# same way as they land.
+LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
+QUADRATIC = CurveForm("quadratic", ("a", "b", "c"), "a*x**2 + b*x + c", None, None)
+CUBIC = CurveForm("cubic", ("a", "b", "c", "d"), "a*x**3 + b*x**2 + c*x + d", None, None)
+POWER = CurveForm("power", ("a", "b"), "a*x**b", "x > 0", None)
+CURVE_FORMS: tuple[CurveForm, ...] = (LINEAR, QUADRATIC, CUBIC, POWER)
 
 
 def fit_all(xs: Sequence[float], ys: Sequence[float], mode: Mode, floor: int) -> list[FitResult]:
     """Fit every curve form in the library to the data, returning each form's FitResult (44.1).
 
     The data are materialised once as mode-faithful Values at the working scale, then each
-    form in ``CURVE_FORMS`` is fitted against them. With only the linear form wired today
-    (44.2.1) this returns a single result; the cross-form ranking and best-3 selection
-    (44.5) arrive with the rest of the library. A form that cannot fit the data raises
-    FitError, which propagates (the drop-and-continue behaviour is part of 44.3).
+    form in ``CURVE_FORMS`` is fitted against them. A form declared without a fitter yet
+    (``fit is None`` — the quadratic, cubic and power forms await the 44.3 engine) is
+    skipped, and a live form that cannot fit *this* data (domain miss, degenerate
+    configuration) is dropped rather than fatal (44.3 drop-and-continue). With only the
+    linear form wired today this returns a single result; the cross-form ranking and best-3
+    selection (44.4-44.5) arrive with the rest of the library.
+
+    If no form fits at all, the dropping would otherwise swallow the reason, so the last
+    FitError is re-raised — this is what surfaces the linear form's vertical-line refusal
+    while it is the only live fitter.
     """
     scale = _fit_scale(mode, floor)
     x_values = [Value.from_real(x, mode, scale) for x in xs]
     y_values = [Value.from_real(y, mode, scale) for y in ys]
-    return [form.fit(x_values, y_values, mode, scale) for form in CURVE_FORMS]
+    results: list[FitResult] = []
+    last_error: FitError | None = None
+    for form in CURVE_FORMS:
+        if form.fit is None:
+            continue  # declared but not yet fittable (44.2.2-44.2.4 await the 44.3 engine)
+        try:
+            results.append(form.fit(x_values, y_values, mode, scale))
+        except FitError as exc:
+            last_error = exc  # this form cannot fit the data; drop it, try the next
+    if not results and last_error is not None:
+        raise last_error  # nothing fit — surface why (e.g. every x equal, no line)
+    return results

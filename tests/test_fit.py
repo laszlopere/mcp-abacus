@@ -69,8 +69,23 @@ def test_vertical_line_is_refused():
     assert "every x value is equal" in excinfo.value.message.lower()
 
 
-def test_curve_library_holds_the_linear_form():
-    # 44.2.1: the registry carries the one wired form today.
-    names = [form.name for form in CURVE_FORMS]
-    assert names == ["linear"]
-    assert dict.fromkeys(CURVE_FORMS[0].parameters) == {"a": None, "b": None}
+def test_curve_library_declares_every_form_with_its_metadata():
+    # 44.2.1-44.2.4: the registry declares linear plus the quadratic/cubic/power forms,
+    # each with its parameter names, model template and domain limit.
+    by_name = {form.name: form for form in CURVE_FORMS}
+    assert list(by_name) == ["linear", "quadratic", "cubic", "power"]
+    assert by_name["linear"].parameters == ("a", "b")
+    assert by_name["quadratic"].parameters == ("a", "b", "c")
+    assert by_name["quadratic"].template == "a*x**2 + b*x + c"
+    assert by_name["cubic"].parameters == ("a", "b", "c", "d")
+    assert by_name["cubic"].template == "a*x**3 + b*x**2 + c*x + d"
+    # Only the power form restricts x; the polynomial forms accept any x.
+    assert by_name["power"].domain == "x > 0"
+    assert by_name["linear"].domain is None
+
+
+def test_only_the_linear_form_is_fittable_today():
+    # 44.2.2-44.2.4 are declared but not yet wired to a fitter (that is 44.3), so only the
+    # linear form carries a live `fit`; fit_all skips the rest until the engine lands.
+    fittable = [form.name for form in CURVE_FORMS if form.fit is not None]
+    assert fittable == ["linear"]
