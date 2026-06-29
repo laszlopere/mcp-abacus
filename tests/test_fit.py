@@ -10,6 +10,8 @@ equations, the log-linearised power law) and their type-faithful behaviour acros
 the curve registry, and the drop-and-continue on data a form cannot fit.
 """
 
+import math
+
 import pytest
 
 from mcp_abacus.expr.value import Mode, Value
@@ -137,6 +139,131 @@ def test_power_is_dropped_when_x_is_not_positive():
     assert "quadratic" in forms
 
 
+def test_exponential_fit_in_floating_point():
+    # 44.2.5: y = 3*exp(0.5*x) — the exponential linearises under logs of y alone (x raw),
+    # so it recovers a≈3, b≈0.5 in floating-point.
+    xs = [0, 1, 2, 3, 4]
+    ys = [3 * math.exp(0.5 * x) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "exponential")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(0.5, rel=1e-6)
+    assert "*exp(" in result.equation and "*x)" in result.equation
+    assert not result.error.exact
+
+
+def test_exponential_is_dropped_in_rational_mode():
+    # The exponential needs ln/exp, which are irrational — rational mode refuses them, so
+    # the form is dropped while the polynomials remain (like the power form).
+    ys = [3 * math.exp(0.5 * x) for x in (0, 1, 2, 3, 4)]
+    forms = [r.form for r in fit_all([0, 1, 2, 3, 4], ys, Mode.RATIONAL, 0)]
+    assert "exponential" not in forms
+    assert "linear" in forms
+
+
+def test_logarithmic_fit_in_floating_point():
+    # 44.2.6: y = 2 + 3*ln(x) — affine in {1, ln x}, recovered via the shared basis fitter.
+    xs = [1, 2, 3, 4, 5]
+    ys = [2 + 3 * math.log(x) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "logarithmic")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert "*ln(x)" in result.equation
+    assert not result.error.exact
+
+
+def test_logarithmic_is_dropped_in_rational_mode():
+    # ln x is irrational, so rational mode refuses the basis and drops the logarithmic form.
+    ys = [2 + 3 * math.log(x) for x in (1, 2, 3, 4, 5)]
+    forms = [r.form for r in fit_all([1, 2, 3, 4, 5], ys, Mode.RATIONAL, 0)]
+    assert "logarithmic" not in forms
+    assert "quadratic" in forms  # the polynomial forms have no such restriction and remain
+
+
+def test_square_root_fit_in_floating_point():
+    # 44.2.7: y = 2*sqrt(x) + 1 — affine in {sqrt x, 1}; on perfect-square x the data is
+    # integral (y = [3, 5, 7, 9]) and the fit recovers a≈2, b≈1.
+    xs = [1, 4, 9, 16]
+    ys = [2 * math.sqrt(x) + 1 for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "square-root")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(1.0, rel=1e-6)
+    assert "*sqrt(x)" in result.equation
+    assert not result.error.exact
+
+
+def test_square_root_is_dropped_in_rational_mode():
+    # sqrt x is irrational for non-square x, so rational mode refuses it and drops the form.
+    ys = [2 * math.sqrt(x) + 1 for x in (1, 2, 3, 5)]
+    forms = [r.form for r in fit_all([1, 2, 3, 5], ys, Mode.RATIONAL, 0)]
+    assert "square-root" not in forms
+    assert "linear" in forms
+
+
+def test_reciprocal_recovers_exactly_in_rational():
+    # 44.2.8: y = 3 + 2/x — the reciprocal basis {1/x, 1} is exact in rational mode (1/x of
+    # a rational is rational), so a=2, b=3 are recovered on the nose with error 0.
+    result = _pick(fit_all([1, 2, 4], [5, 4, 3.5], Mode.RATIONAL, 0), "reciprocal")
+    params = dict(result.parameters)
+    assert params["a"].to_string() == "2"
+    assert params["b"].to_string() == "3"
+    assert result.equation == "2/x + 3"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
+
+
+def test_reciprocal_renders_a_clean_negative_constant():
+    # The affine renderer splits the sign: a negative constant reads "- |b|", not "+ -b".
+    result = _pick(fit_all([1, 2, 4], [-1, -2, -2.5], Mode.RATIONAL, 0), "reciprocal")
+    assert result.equation == "2/x - 3"  # y = 2/x - 3
+
+
+def test_reciprocal_is_dropped_when_some_x_is_zero():
+    # 1/x at x = 0 raises ZeroDivisionError (NOT NotRepresentableError); the basis fitter
+    # catches it as a clean DROP, not a crash — the other forms still fit and come back.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [1, 2, 3, 4], Mode.RATIONAL, 0)]
+    assert "reciprocal" not in forms
+    assert "linear" in forms and "quadratic" in forms
+
+
+def test_sinusoidal_recovers_frequency_amplitude_and_offset_in_floating_point():
+    # 44.2.9: y = 3*sin(2x + 0.5) + 1 over well-spaced x — the iterative frequency search
+    # recovers the frequency b≈2, the positive amplitude a≈3 and the offset d≈1 with a
+    # near-zero residual. The raw phase c is left unasserted (a→−a with c→c+π is the same
+    # curve, so it wraps); the canonical positive amplitude and the frequency/offset are the
+    # stable handles.
+    xs = [i * 0.25 for i in range(24)]  # 24 well-spaced points over [0, 6) pin the frequency
+    ys = [3 * math.sin(2 * x + 0.5) + 1 for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "sinusoidal")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert params["a"].to_float() > 0  # canonical positive amplitude (hypot)
+    assert params["b"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["d"].to_float() == pytest.approx(1.0, rel=1e-6)
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)  # a near-perfect fit
+    assert "*sin(" in result.equation and "*x" in result.equation
+
+
+def test_sinusoidal_is_dropped_in_rational_mode():
+    # sin of a non-zero rational is irrational, so rational mode refuses the form (its only
+    # mode drop — there is no x domain limit); the polynomial forms have no such limit and remain.
+    xs = [i * 0.25 for i in range(24)]
+    ys = [3 * math.sin(2 * x + 0.5) + 1 for x in xs]
+    forms = [r.form for r in fit_all(xs, ys, Mode.RATIONAL, 0)]
+    assert "sinusoidal" not in forms
+    assert "cubic" in forms  # the polynomial forms still fit
+
+
+def test_sinusoidal_is_dropped_when_too_few_distinct_x():
+    # The sinusoid's four parameters need at least four distinct x to be determined; three
+    # distinct points drop it cleanly (no crash) while the lower-order forms still fit.
+    forms = [r.form for r in fit_all([1, 2, 3], [2, 5, 10], Mode.FLOATING_POINT, 0)]
+    assert "sinusoidal" not in forms
+    assert "quadratic" in forms  # a lower-order form still fits the three points
+
+
 def test_fits_are_ranked_by_error_best_first():
     # Curved data: the higher-order / matching forms fit better, so the results come back
     # ordered by ascending fit error (44.5) — the least-error fit leads. The power form,
@@ -159,9 +286,11 @@ def test_only_the_best_three_forms_are_returned():
 
 
 def test_fewer_than_three_forms_when_fewer_fit():
-    # 44.5: with only three points a cubic is underdetermined and dropped, so only the
-    # linear and quadratic forms fit — fewer than three come back, not padded.
-    results = fit_all([1, 2, 3], [2, 5, 10], Mode.RATIONAL, 0)
+    # 44.5: three points with a zero x in rational mode drops almost everything — the cubic
+    # is underdetermined, the reciprocal hits 1/0, and the power/log/sqrt forms need x > 0
+    # or refuse their irrational basis — so only the linear and quadratic forms fit and
+    # fewer than three come back, not padded.
+    results = fit_all([0, 1, 2], [2, 5, 10], Mode.RATIONAL, 0)
     assert [r.form for r in results] == ["quadratic", "linear"]
 
 
@@ -181,10 +310,14 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.4: the registry declares linear plus the quadratic/cubic/power forms,
-    # each with its parameter names, model template and domain limit.
+    # 44.2.1-44.2.9: the registry declares linear plus the quadratic/cubic/power, the
+    # exponential/logarithmic/square-root/reciprocal forms, and the sinusoid — in TODO
+    # numeric order — each with its parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
-    assert list(by_name) == ["linear", "quadratic", "cubic", "power"]
+    assert list(by_name) == [
+        "linear", "quadratic", "cubic", "power",
+        "exponential", "logarithmic", "square-root", "reciprocal", "sinusoidal",
+    ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
     assert by_name["quadratic"].template == "a*x**2 + b*x + c"
@@ -193,6 +326,21 @@ def test_curve_library_declares_every_form_with_its_metadata():
     # Only the power form restricts x; the polynomial forms accept any x.
     assert by_name["power"].domain == "x > 0"
     assert by_name["linear"].domain is None
+    # The four new closed-form forms, each two-parameter, with their templates and domains.
+    assert by_name["exponential"].parameters == ("a", "b")
+    assert by_name["exponential"].template == "a*exp(b*x)"
+    assert by_name["exponential"].domain == "y > 0"  # restricts y, not x
+    assert by_name["logarithmic"].template == "a + b*ln(x)"
+    assert by_name["logarithmic"].domain == "x > 0"
+    assert by_name["square-root"].template == "a*sqrt(x) + b"
+    assert by_name["square-root"].domain == "x >= 0"
+    assert by_name["reciprocal"].template == "a/x + b"
+    assert by_name["reciprocal"].domain == "x != 0"
+    # The sinusoid: four parameters, and domain None — the rational limitation is a mode
+    # drop (irrational sin), not an x restriction.
+    assert by_name["sinusoidal"].parameters == ("a", "b", "c", "d")
+    assert by_name["sinusoidal"].template == "a*sin(b*x + c) + d"
+    assert by_name["sinusoidal"].domain is None
 
 
 def test_every_form_is_now_wired_to_a_fitter():

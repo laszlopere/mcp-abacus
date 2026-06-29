@@ -12,6 +12,7 @@ is used (no subprocess); test_e2e.py covers the tools over real stdio.
 
 import asyncio
 import json
+import math
 
 import pytest
 
@@ -73,15 +74,16 @@ def test_nonlinear_data_is_fit_by_the_matching_form():
 
 
 def test_default_mode_is_fixed_point_with_a_sub_unit_floor():
-    # Omitting mode/floor: fixed-point at the default floor 9, so the parameters keep
-    # nine fractional digits rather than rounding to whole numbers.
-    payload = _fit([1, 1.5, 2.0], [2, 5.8, 8.9])
+    # Omitting mode/floor: fixed-point at the default floor 9, so the parameters keep nine
+    # fractional digits rather than rounding to whole numbers. y = 1.5x + 0.25 is exactly
+    # linear, so the line is among the best fits and shows its sub-unit coefficients.
+    payload = _fit([1, 2, 3, 4], [1.75, 3.25, 4.75, 6.25])
     assert payload["mode"] == "fixed-point"
-    fit = _by_form(payload)["linear"]  # not fits[0] — fits are ranked by error now
-    # slope 6.9, intercept -4.78333... at scale 9.
-    assert fit["parameters"][0]["value"].startswith("6.900000000")
-    assert fit["parameters"][1]["value"].startswith("-4.783333333")
-    assert fit["equation"].startswith("6.900000000*x - 4.783333333")
+    fit = _by_form(payload)["linear"]
+    # slope 1.5, intercept 0.25 at scale 9 — nine fractional digits, not rounded to integers.
+    assert fit["parameters"][0]["value"].startswith("1.500000000")
+    assert fit["parameters"][1]["value"].startswith("0.250000000")
+    assert fit["equation"].startswith("1.500000000*x + 0.250000000")
 
 
 def test_reply_carries_a_top_level_precision_verdict_for_the_best_fit():
@@ -106,6 +108,49 @@ def test_only_the_best_three_forms_come_back():
     forms = [fit["form"] for fit in payload["fits"]]
     assert len(forms) == 3
     assert forms[0] == "power" and "linear" not in forms
+
+
+def test_reciprocal_form_fits_exactly_over_the_wire():
+    # 44.2.8: y = 3 + 2/x in rational mode — the reciprocal form recovers a=2, b=3 exactly,
+    # rendered as a pasteable "2/x + 3" with an exact error.
+    payload = _fit([1, 2, 4], [5, 4, 3.5], mode="rational")
+    assert payload["error"] is None
+    fit = _by_form(payload)["reciprocal"]
+    assert fit["equation"] == "2/x + 3"
+    assert fit["parameters"][0]["value"] == "2 (exact)"
+    assert fit["parameters"][1]["value"] == "3 (exact)"
+    assert fit["fit_error"] == "0 (exact)"
+    assert fit["exact"] is True
+
+
+def test_exponential_form_fits_over_the_wire():
+    # 44.2.5: y = 3*exp(0.5*x) in floating-point — the exponential form recovers a≈3, b≈0.5
+    # and renders an exp(...) equation pasteable into calculate.
+    xs = [0, 1, 2, 3, 4]
+    ys = [3 * math.exp(0.5 * x) for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    fit = _by_form(payload)["exponential"]
+    a, b = fit["parameters"]
+    assert float(a["value"].split()[0]) == pytest.approx(3.0, rel=1e-6)
+    assert float(b["value"].split()[0]) == pytest.approx(0.5, rel=1e-6)
+    assert "exp(" in fit["equation"]
+    assert fit["exact"] is False
+
+
+def test_sinusoidal_form_fits_over_the_wire():
+    # 44.2.9: y = 3*sin(2x + 0.5) + 1 in floating-point — the iterative frequency search
+    # recovers the frequency b≈2, the positive amplitude a≈3 and offset d≈1 with a small
+    # error, rendered as a pasteable a*sin(b*x + c) + d.
+    xs = [i * 0.25 for i in range(24)]
+    ys = [3 * math.sin(2 * x + 0.5) + 1 for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    fit = _by_form(payload)["sinusoidal"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(3.0, rel=1e-6) and params["a"] > 0
+    assert params["b"] == pytest.approx(2.0, rel=1e-6)
+    assert params["d"] == pytest.approx(1.0, rel=1e-6)
+    assert "sin(" in fit["equation"]
+    assert float(fit["fit_error"].split()[0]) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_length_mismatch_is_an_error():

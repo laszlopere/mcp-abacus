@@ -67,11 +67,15 @@ type; it calculates *using* that type.
   with `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report
   each fitted equation with its error. Hand over the data and it estimates, for the
-  straight line, quadratic, cubic and power law `a*x**b`, the parameters that best match
-  in the least-squares sense — polynomials in closed form via the normal equations, the
-  power law by the log-linearisation — then ranks them by residual error and returns the
-  best three (e.g. `x=[1,1.5,2], y=[2,5.8,8.9]` → `6.9*x - 4.78…`). The whole fit runs in
-  the chosen numeric type, so the parameters and error carry the usual precision verdict
+  straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`, logarithm
+  `a + b*ln(x)`, square root `a*sqrt(x) + b`, reciprocal `a/x + b` and sinusoid
+  `a*sin(b*x + c) + d`, the parameters that best match in the least-squares sense —
+  polynomials and the affine forms in closed form via the normal equations, the power and
+  exponential laws by a log-linearisation, and the sinusoid (the lone form with no closed
+  form) by an iterative frequency search — then
+  ranks them by residual error and returns the best three (e.g. `x=[1,1.5,2],
+  y=[2,5.8,8.9]` → `6.9*x - 4.78…`). The whole fit runs in the chosen numeric type, so the
+  parameters and error carry the usual precision verdict
 - **`help`** — the grammar and type reference, on tap for the model
 - **`info`** — server version and environment
 

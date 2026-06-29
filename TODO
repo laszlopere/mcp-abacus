@@ -1481,11 +1481,11 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.2.  quadratic — a*x**2 + b*x + c.
         [x] 44.2.3.  cubic — a*x**3 + b*x**2 + c*x + d.
         [x] 44.2.4.  power — a*x**b; domain x>0.
-        [ ] 44.2.5.  exponential — a*exp(b*x).
-        [ ] 44.2.6.  logarithmic — a + b*ln(x); domain x>0.
-        [ ] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.
-        [ ] 44.2.8.  reciprocal — a/x + b; domain x!=0.
-        [ ] 44.2.9.  sinusoidal — a*sin(b*x + c) + d.
+        [x] 44.2.5.  exponential — a*exp(b*x).
+        [x] 44.2.6.  logarithmic — a + b*ln(x); domain x>0.
+        [x] 44.2.7.  square-root — a*sqrt(x) + b; domain x>=0.
+        [x] 44.2.8.  reciprocal — a/x + b; domain x!=0.
+        [x] 44.2.9.  sinusoidal — a*sin(b*x + c) + d.
         [ ] 44.2.10. gaussian — a*exp(-(x-b)**2/(2*c**2)) (peak a at centre b, width c);
                      domain y>0. Closed form via Caruana's method: ln y is quadratic in x,
                      so fit the quadratic and recover a, b, c from its coefficients (needs

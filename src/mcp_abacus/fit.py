@@ -11,9 +11,10 @@ fixed-point / floating-point — so the precision verdict carries through to the
 
 Each form lives in ``CURVE_FORMS`` (44.2), the registry the tool iterates; a form
 declares its name, model template, parameter names and any domain limit, and carries the
-fitter that estimates its parameters. Every form wired today is fitted in CLOSED FORM
-(44.3) rather than through the solver's iterative optimise engine, because each has an
-exact least-squares solution:
+fitter that estimates its parameters. Every form is fitted in CLOSED FORM (44.3) EXCEPT
+the sinusoid (44.2.9), which has no closed-form least-squares solution and is fitted by an
+iterative frequency search instead. The closed-form forms each have an exact least-squares
+solution:
 
   - linear / quadratic / cubic are LINEAR IN THEIR PARAMETERS, so their least-squares fit
     is the solution of the normal equations ``(Bᵀ·B)·c = Bᵀ·y`` (B the design matrix
@@ -21,20 +22,32 @@ exact least-squares solution:
     in mode-faithful Value arithmetic, so the coefficients are EXACT in rational mode,
     mode-rounded in fixed-point, and a native double in floating-point. The quadratic and
     cubic share one general basis fitter (``_linear_basis_fitter``, 44.9) over the power
-    basis ``{x**degree, …, x, 1}``; any future linear-in-parameters form (logarithmic
-    ``{1, ln x}``, square-root ``{1, sqrt x}``, reciprocal ``{1, 1/x}``, …) wires its own
-    basis into that same fitter rather than re-deriving the normal equations. The linear
+    basis ``{x**degree, …, x, 1}``; the logarithmic ``a + b·ln x`` (basis ``{1, ln x}``),
+    square-root ``a·√x + b`` (basis ``{√x, 1}``) and reciprocal ``a/x + b`` (basis
+    ``{1/x, 1}``) forms are affine in their own curved basis, so each just wires its basis
+    into that same fitter rather than re-deriving the normal equations. The reciprocal is
+    exact in every mode (``1/x`` of a rational is rational); the logarithmic and square-root
+    are irrational in rational mode (like the power form), so they drop there. The linear
     form keeps the line's direct two-coefficient formula (``_fit_linear`` / ``_line_coeffs``),
-    which the power fit reuses on logged data.
-  - power ``a·x**b`` is intrinsically non-linear but LINEARISES under logs —
-    ``ln y = ln a + b·ln x`` is a straight line in ``(ln x, ln y)`` — so it is the same
-    line fit on the logged data, with ``b`` the slope and ``a = exp(intercept)``
-    (``_fit_power``). The logs make it inexact wherever the mode rounds them; in rational
-    mode they are irrational and the type refuses them, so the power form is simply
-    dropped there (its honest exact-or-refuse outcome).
+    which the power and exponential fits reuse on logged data.
+  - power ``a·x**b`` and exponential ``a·exp(b·x)`` are intrinsically non-linear but
+    LINEARISE under logs. Power logs both axes — ``ln y = ln a + b·ln x`` is a straight line
+    in ``(ln x, ln y)`` (``_fit_power``); exponential logs only ``y`` — ``ln y = ln a + b·x``
+    is a line in ``(x, ln y)`` (``_fit_exponential``) — and both recover ``b`` from the slope
+    and ``a = exp(intercept)``. The logs make them inexact wherever the mode rounds them; in
+    rational mode the logs are irrational and the type refuses them, so both forms are simply
+    dropped there (their honest exact-or-refuse outcome).
 
-The genuinely non-linearisable forms still to come (the sinusoid, 44.2.9) are what will
-need the solver's optimise engine; this module does not reach for it yet. ``fit_all``
+The genuinely non-linearisable sinusoid ``a*sin(b*x + c) + d`` (44.2.9) is the one form
+that keeps an iterative optimise engine: it is non-linear ONLY in the frequency ``b``, so
+for any fixed ``b`` its best ``(A, B, d)`` is a linear sub-fit over ``{sin(b·x), cos(b·x),
+1}`` — which turns the whole fit into a 1-D minimisation of ``SSR(b)`` over the frequency.
+Because that objective is multimodal (local minima at harmonics / aliases of the true
+frequency), the frequency is found by a coarse grid scan over a data-derived range followed
+by a golden-section refinement (``_fit_sinusoidal`` / ``_search_frequency``), and the final
+sub-fit at the refined ``b`` is computed in mode-faithful Value arithmetic so the reported
+parameters and error still carry the precision verdict. ``sin`` of a non-zero rational is
+irrational, so the sinusoid simply drops in rational mode (like power/log/sqrt). ``fit_all``
 fits every form, DROPPING any that cannot fit the data (a domain miss, a degenerate
 configuration, or a mode that cannot represent the fit) rather than failing the whole
 request (44.3). The survivors are scored by one comparable goodness number — the sum of
@@ -43,6 +56,7 @@ exact/inexact verdict — then RANKED best (least error) first and truncated to 
 (44.5), the closest fits the caller actually wants.
 """
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -50,6 +64,14 @@ from mcp_abacus.expr.value import Mode, NotRepresentableError, Value
 
 _RATIONAL_FIT_DECIMALS = 12  # rational has no scale of its own; materialise data at this one
 _BEST_N = 3  # the fit tool reports the best this-many forms by error (44.5); fewer if fewer fit
+
+# Sinusoidal fit (44.2.9): the lone non-linearisable form, fitted by an iterative frequency
+# search rather than in closed form. SSR(b) is multimodal in the frequency b, so a coarse
+# grid scan picks the best b before a golden-section refinement polishes it.
+_SINUSOID_SCAN_POINTS = 400  # frequencies the multimodal SSR(b) is coarse-scanned over
+_SINUSOID_REFINE_ITERATIONS = 100  # golden-section steps polishing the best coarse frequency
+_INV_PHI = (5**0.5 - 1) / 2  # 0.618…, 1/golden-ratio — the refinement's interval shrink factor
+_SINUSOID_MIN_DISTINCT_X = 4  # a*sin(b*x+c)+d has four parameters; fewer distinct x cannot pin it
 
 
 class FitError(Exception):
@@ -92,8 +114,9 @@ class CurveForm:
     order. ``template`` is the model written over the variable ``x`` with those parameters
     (e.g. ``"a*x**2 + b*x + c"``) — the named template 44.2 calls for, which a fitter
     substitutes fitted values into and the 44.3 optimiser will evaluate. ``domain`` records
-    any restriction the form places on ``x`` (e.g. ``"x > 0"`` for the power form), or
-    ``None`` when ``x`` is unrestricted. ``fit`` is the fitter: it takes the data as
+    any restriction the form places on the data (usually on ``x`` — ``"x > 0"`` for the power
+    form — but on ``y`` for the exponential, ``"y > 0"``), or ``None`` when the data is
+    unrestricted. ``fit`` is the fitter: it takes the data as
     mode-faithful Values plus the mode and working scale and returns a FitResult (or raises
     FitError when the data cannot support this form, e.g. a vertical line for the linear
     fit). It is ``None`` for a form that is declared but not yet wired to a fitter — the
@@ -168,6 +191,27 @@ def _polynomial_equation(coeffs: list[Value]) -> str:
         negative = coeff.to_float() < 0
         magnitude = coeff.neg() if negative else coeff
         parts.append(f"{'-' if negative else '+'} {_term_body(magnitude, degree - i)}")
+    return " ".join(parts)
+
+
+def _affine_equation(
+    coeffs: list[Value], terms: "tuple[Callable[[Value], str], ...]"
+) -> str:
+    """Render an affine model ``c₀·f₀(x) + c₁·f₁(x) + …`` over ``x`` with clean signs.
+
+    The shared renderer for the affine non-polynomial forms (logarithmic ``a + b*ln(x)``,
+    square-root ``a*sqrt(x) + b``, reciprocal ``a/x + b``): each ``terms[j]`` renders the
+    unsigned body of its term from a magnitude Value (e.g. ``m -> f"{m}*ln(x)"``), and this
+    splits the sign off exactly as :func:`_polynomial_equation` does — the leading term
+    keeps its own sign, each later term reads ``+ body`` or ``- |body|`` so the equation
+    flows naturally (``a*sqrt(x) - 1`` rather than ``a*sqrt(x) + -1``). The result is valid
+    calculate source over ``x`` (44.5), so it pastes straight back in.
+    """
+    parts = [terms[0](coeffs[0])]  # leading term carries its own sign
+    for coeff, term in zip(coeffs[1:], terms[1:], strict=True):
+        negative = coeff.to_float() < 0
+        magnitude = coeff.neg() if negative else coeff
+        parts.append(f"{'-' if negative else '+'} {term(magnitude)}")
     return " ".join(parts)
 
 
@@ -296,20 +340,34 @@ def _linear_basis_fitter(
 
     The returned fitter has the CurveForm.fit signature. It raises FitError when the data
     underdetermines the basis (a singular ``Bᵀ·B`` — fewer independent points than basis
-    functions) via :func:`_solve_linear_system`, and converts a NotRepresentableError from
-    evaluating a basis function (a domain miss or an irrational it cannot represent — e.g.
-    ``ln x`` in rational mode) into a FitError so the form is dropped, not fatal (44.3).
+    functions) via :func:`_solve_linear_system`, and converts a basis function's domain miss
+    into a FitError so the form is dropped, not fatal (44.3): a NotRepresentableError (a
+    domain miss or an irrational it cannot represent — e.g. ``ln x`` in rational mode, or
+    ``√x`` of a negative ``x``) OR a ZeroDivisionError (a ``1/x`` basis at ``x = 0``, which
+    is the reciprocal form's domain miss).
     """
 
     def fit(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+        # Every x equal collapses each design row to the same vector — the basis is
+        # underdetermined (rank 1 for ≥2 functions). Detected DIRECTLY here, as in
+        # _line_coeffs, rather than via the singular-pivot test below: in fixed-point the
+        # normal-equations determinant can round to a tiny NON-zero for identical inputs
+        # (the rounded transcendental basis values, ln x / √x, do not cancel exactly), which
+        # would otherwise slip a degenerate fit through. The caller guarantees ≥2 points.
+        if all(x.to_string() == xs[0].to_string() for x in xs):
+            raise FitError(
+                f"Cannot fit {name}: every x value is equal, so its basis is degenerate. "
+                "Provide data with at least two distinct x values."
+            )
         try:
             # Design matrix once: row i holds [f₀(xᵢ), …, f_{k-1}(xᵢ)], reused for both the
             # normal equations and the rebuilt model after the solve.
             design = [[f(x, mode, scale) for f in basis] for x in xs]
-        except NotRepresentableError as exc:
+        except (NotRepresentableError, ZeroDivisionError) as exc:
             raise FitError(
                 f"Cannot fit {name}: the data leaves its basis undefined or unrepresentable "
-                f"in {mode.value} mode. {exc}"
+                f"in {mode.value} mode (a domain miss — e.g. a non-positive log or √, or a "
+                f"1/x at x = 0). {exc}"
             ) from exc
         k = len(basis)
         matrix = [
@@ -403,12 +461,280 @@ def _fit_power(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitR
     return FitResult("power", equation, (("a", a), ("b", b)), error)
 
 
+def _fit_exponential(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Least-squares fit of the exponential ``a*exp(b*x)`` to the data (44.2.5); domain ``y > 0``.
+
+    The exponential linearises under logs of ``y`` ALONE (``x`` stays raw): ``ln y = ln a +
+    b·x`` is a straight line in ``(x, ln y)`` — so the fit is :func:`_line_coeffs` on ``(xs,
+    ln ys)``, with ``b`` the slope and ``a = exp(intercept)``, every step in mode-faithful
+    Value arithmetic. The error is the sum of squared residuals ``Σ (a·exp(b·xᵢ) − yᵢ)²`` of
+    the ORIGINAL model in the active mode, so it measures the fit where the data lives, not
+    in log space.
+
+    Raises FitError (so the form is dropped, 44.3) when the logs are undefined or
+    unrepresentable: any ``yᵢ ≤ 0`` has no real log, and in rational mode the logs and
+    ``exp`` are irrational — the type refuses them — so the exponential form simply does not
+    fit there (like the power form). NotRepresentableError from any of those is converted to
+    FitError.
+    """
+    try:
+        log_y = [y.ln() for y in ys]
+        slope, intercept = _line_coeffs(xs, log_y, mode, scale)  # raw xs, logged ys
+        b = slope
+        a = intercept.exp()
+        model = [a.mul(b.mul(x).exp()) for x in xs]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except NotRepresentableError as exc:
+        raise FitError(
+            "Cannot fit a*exp(b*x): it needs y > 0, and a mode that can represent the "
+            f"logarithms (rational refuses the irrational logs). {exc}"
+        ) from exc
+    b_str = f"({b.to_string()})" if b.to_float() < 0 else b.to_string()
+    equation = f"{a.to_string()}*exp({b_str}*x)"
+    return FitResult("exponential", equation, (("a", a), ("b", b)), error)
+
+
+# The affine non-polynomial basis functions (44.2.6-44.2.8): each is fⱼ(x, mode, scale) ->
+# Value, wired into _linear_basis_fitter. The constant `1` term mints a mode-faithful Value
+# (x may be zero, so it cannot be recovered from x); the others apply the mode's own ln/
+# sqrt/reciprocal — a domain miss (non-positive ln/sqrt, 1/x at x=0) or an irrational the
+# mode refuses raises, and the fitter catches it to drop the form (44.3).
+def _one(x: Value, mode: Mode, scale: int) -> Value:
+    return Value.from_real(1, mode, scale)
+
+
+def _ln_x(x: Value, mode: Mode, scale: int) -> Value:
+    return x.ln()
+
+
+def _sqrt_x(x: Value, mode: Mode, scale: int) -> Value:
+    return x.sqrt()
+
+
+def _recip_x(x: Value, mode: Mode, scale: int) -> Value:
+    return Value.from_real(1, mode, scale).div(x)
+
+
+def _logarithmic_equation(coeffs: list[Value]) -> str:
+    """Render ``a + b*ln(x)`` over ``x`` with clean signs (basis ``{1, ln x}``)."""
+    return _affine_equation(
+        coeffs, (lambda m: m.to_string(), lambda m: f"{m.to_string()}*ln(x)")
+    )
+
+
+def _square_root_equation(coeffs: list[Value]) -> str:
+    """Render ``a*sqrt(x) + b`` over ``x`` with clean signs (basis ``{sqrt x, 1}``)."""
+    return _affine_equation(
+        coeffs, (lambda m: f"{m.to_string()}*sqrt(x)", lambda m: m.to_string())
+    )
+
+
+def _reciprocal_equation(coeffs: list[Value]) -> str:
+    """Render ``a/x + b`` over ``x`` with clean signs (basis ``{1/x, 1}``)."""
+    return _affine_equation(
+        coeffs, (lambda m: f"{m.to_string()}/x", lambda m: m.to_string())
+    )
+
+
+# --- Sinusoidal fit (44.2.9) --------------------------------------------------
+# The lone non-linearisable form: ``a*sin(b*x + c) + d`` has no closed-form least-squares
+# solution. The trick is that it is non-linear ONLY in the frequency ``b`` — expanded as
+# ``A*sin(b*x) + B*cos(b*x) + d`` (with ``A = a*cos c``, ``B = a*sin c``) it is LINEAR in
+# ``(A, B, d)`` for any fixed ``b``, an ordinary least-squares fit over the basis
+# ``{sin(b*x), cos(b*x), 1}``. So the 4-parameter fit reduces to a 1-D search over ``b``:
+# for each candidate frequency the best ``(A, B, d)`` is the linear sub-fit, and its residual
+# is the objective ``SSR(b)`` to minimise. ``SSR(b)`` is MULTIMODAL (local minima at
+# harmonics / aliases of the true frequency), so a single golden-section run would get
+# trapped — instead a coarse grid scan across a data-derived frequency range picks the best
+# ``b``, then a golden-section refinement polishes it. The scan and refinement run on the
+# FLOAT shadow (exactly as the solver's loop drives its search), and only the FINAL sub-fit
+# at the refined ``b`` is computed in mode-faithful Value arithmetic, so the reported
+# parameters and error carry the active mode's precision verdict (44.9 keeps the closed-form
+# forms; this one alone keeps the iterative optimise engine).
+
+
+def _solve_float(matrix: list[list[float]], rhs: list[float]) -> "list[float] | None":
+    """Solve the small square float system ``matrix·c = rhs`` by Gauss-Jordan with pivoting.
+
+    The float-shadow counterpart to :func:`_solve_linear_system`, used inside the frequency
+    scan's ``SSR(b)`` objective where speed matters and the active mode does not (the search
+    drives on floats, like the solver's loop). Returns ``None`` when the matrix is singular —
+    the basis is underdetermined at this frequency — so the caller can penalise that ``b``.
+    """
+    n = len(rhs)
+    aug = [list(matrix[i]) + [rhs[i]] for i in range(n)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        if aug[pivot][col] == 0.0:
+            return None
+        aug[col], aug[pivot] = aug[pivot], aug[col]
+        pivot_val = aug[col][col]
+        for r in range(n):
+            if r == col:
+                continue
+            factor = aug[r][col] / pivot_val
+            aug[r] = [aug[r][c] - factor * aug[col][c] for c in range(n + 1)]
+    return [aug[i][n] / aug[i][i] for i in range(n)]
+
+
+def _sinusoidal_ssr_float(xs: list[float], ys: list[float], b: float) -> float:
+    """The frequency search's objective: the least-squares ``SSR`` at a fixed frequency ``b``.
+
+    Builds the linear sub-fit over ``{sin(b*x), cos(b*x), 1}`` on the float shadow — the
+    best ``(A, B, d)`` for this ``b`` by the normal equations — and returns the residual sum
+    of squares ``Σ (A·sin(b·xᵢ) + B·cos(b·xᵢ) + d − yᵢ)²``. A singular sub-fit (an
+    underdetermined basis at this ``b``) is penalised with ``+inf`` so the search steers away.
+    """
+    n = len(xs)
+    sins = [math.sin(b * x) for x in xs]
+    coss = [math.cos(b * x) for x in xs]
+    cols = (sins, coss, [1.0] * n)
+    matrix = [[sum(cols[j][i] * cols[m][i] for i in range(n)) for m in range(3)] for j in range(3)]
+    rhs = [sum(cols[j][i] * ys[i] for i in range(n)) for j in range(3)]
+    sol = _solve_float(matrix, rhs)
+    if sol is None:
+        return math.inf
+    a_c, b_c, d_c = sol
+    return sum((a_c * sins[i] + b_c * coss[i] + d_c - ys[i]) ** 2 for i in range(n))
+
+
+def _search_frequency(xs: list[float], ys: list[float]) -> float:
+    """Find the frequency ``b`` minimising ``SSR(b)`` — coarse scan, then golden-section refine.
+
+    The frequency range is derived from the DATA: ``b`` runs from roughly one slow half-cycle
+    over the whole x-span (``b_lo = π/L``, ``L = max x − min x``) up to the sampling's
+    Nyquist-ish limit (``b_hi = π/dx``, ``dx`` the smallest gap between distinct sorted x).
+    ``SSR(b)`` is scanned on a bounded grid of ``_SINUSOID_SCAN_POINTS`` frequencies — coarse
+    enough to be fast and deterministic, fine enough to land in the true minimum's basin —
+    and the best grid point's neighbourhood is then polished by a golden-section minimisation
+    (the same derivative-free shrink the solver uses), giving the refined frequency.
+    """
+    distinct = sorted(set(xs))
+    span = distinct[-1] - distinct[0]
+    smallest_gap = min(hi - lo for lo, hi in zip(distinct, distinct[1:], strict=False))
+    b_lo = math.pi / span  # one slow half-cycle over the whole span
+    b_hi = math.pi / smallest_gap  # the sampling's Nyquist angular limit
+    step = (b_hi - b_lo) / _SINUSOID_SCAN_POINTS
+    best_b = b_lo
+    best_ssr = math.inf
+    for k in range(_SINUSOID_SCAN_POINTS + 1):
+        b = b_lo + k * step
+        ssr = _sinusoidal_ssr_float(xs, ys, b)
+        if ssr < best_ssr:
+            best_ssr, best_b = ssr, b
+    # Golden-section refine within the grid cell straddling the best coarse frequency.
+    lo = max(best_b - step, b_lo)
+    hi = min(best_b + step, b_hi)
+    c = hi - _INV_PHI * (hi - lo)
+    d = lo + _INV_PHI * (hi - lo)
+    fc = _sinusoidal_ssr_float(xs, ys, c)
+    fd = _sinusoidal_ssr_float(xs, ys, d)
+    for _ in range(_SINUSOID_REFINE_ITERATIONS):
+        if hi - lo <= 1e-12:
+            break
+        if fc <= fd:
+            hi, d, fd = d, c, fc
+            c = hi - _INV_PHI * (hi - lo)
+            fc = _sinusoidal_ssr_float(xs, ys, c)
+        else:
+            lo, c, fc = c, d, fd
+            d = lo + _INV_PHI * (hi - lo)
+            fd = _sinusoidal_ssr_float(xs, ys, d)
+    return (lo + hi) / 2
+
+
+def _sinusoidal_equation(a: Value, b: Value, c: Value, d: Value) -> str:
+    """Render ``a*sin(b*x + c) + d`` over ``x`` with clean signs on ``c`` and ``d``.
+
+    ``a`` is the canonical positive amplitude (``hypot``) and ``b`` the positive frequency,
+    so both lead with their own (non-negative) magnitude; the phase ``c`` inside the sine and
+    the offset ``d`` read ``+ |·|`` or ``- |·|`` (``3*sin(2*x - 0.5) - 1``, never ``+ -1``),
+    the same sign-splitting convention as :func:`_affine_equation`. The result is valid
+    calculate source over ``x`` (44.5), so it pastes straight back in.
+    """
+    c_neg = c.to_float() < 0
+    c_mag = (c.neg() if c_neg else c).to_string()
+    inner = f"{b.to_string()}*x {'-' if c_neg else '+'} {c_mag}"
+    d_neg = d.to_float() < 0
+    d_mag = (d.neg() if d_neg else d).to_string()
+    return f"{a.to_string()}*sin({inner}) {'-' if d_neg else '+'} {d_mag}"
+
+
+def _fit_sinusoidal(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Least-squares fit of the sinusoid ``a*sin(b*x + c) + d`` to the data (44.2.9).
+
+    The only form with no closed-form least-squares solution, fitted by an iterative
+    frequency search instead. The model is non-linear ONLY in the frequency ``b``: expanded
+    as ``A*sin(b*x) + B*cos(b*x) + d`` it is linear in ``(A, B, d)`` for any fixed ``b``, so
+    the 4-parameter fit reduces to a 1-D minimisation of ``SSR(b)`` over the frequency
+    (:func:`_search_frequency` — a coarse grid scan to dodge the multimodal SSR's local
+    minima, then a golden-section refinement). At the refined ``b`` the linear sub-fit over
+    ``{sin(b*x), cos(b*x), 1}`` is solved ONCE in mode-faithful Value arithmetic (the normal
+    equations via :func:`_solve_linear_system`), and the canonical parameters are recovered:
+    ``a = hypot(A, B)`` (the positive amplitude), ``c = atan2(B, A)`` (the phase), ``d`` as
+    is. The error is the sum of squared residuals of that model in the active mode, so it
+    carries the usual exact/inexact verdict.
+
+    Raises FitError (so the form is DROPPED, 44.3) when it cannot fit: ``sin`` of a non-zero
+    rational is irrational, so rational mode refuses the whole form (a NotRepresentableError
+    converted here — the sinusoid simply does not fit in rational, like the power/log/sqrt
+    forms); and the four parameters need at least four distinct ``x`` to be determined, so
+    fewer drops it cleanly. It fits in fixed-point and floating-point.
+    """
+    try:
+        Value.from_real(1, mode, scale).sin()  # probe: rational refuses sin, drop early
+    except NotRepresentableError as exc:
+        raise FitError(
+            "Cannot fit a*sin(b*x + c) + d: it needs a mode that can represent sines, and "
+            f"sine of a non-zero rational is irrational (rational refuses it). {exc}"
+        ) from exc
+    xs_f = [x.to_float() for x in xs]
+    ys_f = [y.to_float() for y in ys]
+    if len(set(xs_f)) < _SINUSOID_MIN_DISTINCT_X:
+        raise FitError(
+            f"Cannot fit a*sin(b*x + c) + d: its four parameters need at least "
+            f"{_SINUSOID_MIN_DISTINCT_X} distinct x values to be determined."
+        )
+    frequency = _search_frequency(xs_f, ys_f)
+    try:
+        b = Value.from_real(frequency, mode, scale)
+        sins = [b.mul(x).sin() for x in xs]
+        coss = [b.mul(x).cos() for x in xs]
+        one = Value.from_real(1, mode, scale)
+        design = [[sins[i], coss[i], one] for i in range(len(xs))]
+        matrix = [
+            [_sum([row[j].mul(row[m]) for row in design], mode, scale) for m in range(3)]
+            for j in range(3)
+        ]
+        rhs = [
+            _sum([row[j].mul(y) for row, y in zip(design, ys, strict=True)], mode, scale)
+            for j in range(3)
+        ]
+        big_a, big_b, d = _solve_linear_system(matrix, rhs, "sinusoidal", mode, scale)
+        a = big_a.hypot(big_b)  # canonical positive amplitude sqrt(A**2 + B**2)
+        c = big_b.atan2(big_a)  # phase atan2(B, A), in (-pi, pi]
+        model = [
+            big_a.mul(sins[i]).add(big_b.mul(coss[i])).add(d) for i in range(len(xs))
+        ]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except NotRepresentableError as exc:
+        raise FitError(
+            "Cannot fit a*sin(b*x + c) + d: the data leaves it unrepresentable in "
+            f"{mode.value} mode (the sines / amplitude / phase are irrational there). {exc}"
+        ) from exc
+    equation = _sinusoidal_equation(a, b, c, d)
+    return FitResult(
+        "sinusoidal", equation, (("a", a), ("b", b), ("c", c), ("d", d)), error
+    )
+
+
 # The curve library (44.2): one entry per model form, iterated by the fit tool. Each entry
 # DECLARES the form — its name, model template over x, free-parameter names and any domain
 # limit — and carries the closed-form fitter that estimates its parameters (44.3). Linear,
 # quadratic and cubic share the polynomial normal-equations solver (linear via the line's
-# direct formula); the power form linearises under logs. The exponential, logarithmic, …
-# forms (44.2.5+) slot in the same way as they land, each with its own fitter.
+# direct formula); the logarithmic, square-root and reciprocal forms wire their own affine
+# basis into that same solver (44.9); the power and exponential forms linearise under logs.
+# The sinusoid (44.2.9) and the rest (44.2.10+) slot in the same way as they land.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic", ("a", "b", "c"), "a*x**2 + b*x + c", None,
@@ -419,7 +745,29 @@ CUBIC = CurveForm(
     _polynomial_fitter("cubic", 3, ("a", "b", "c", "d")),
 )
 POWER = CurveForm("power", ("a", "b"), "a*x**b", "x > 0", _fit_power)
-CURVE_FORMS: tuple[CurveForm, ...] = (LINEAR, QUADRATIC, CUBIC, POWER)
+EXPONENTIAL = CurveForm("exponential", ("a", "b"), "a*exp(b*x)", "y > 0", _fit_exponential)
+LOGARITHMIC = CurveForm(
+    "logarithmic", ("a", "b"), "a + b*ln(x)", "x > 0",
+    _linear_basis_fitter("logarithmic", ("a", "b"), (_one, _ln_x), _logarithmic_equation),
+)
+SQUARE_ROOT = CurveForm(
+    "square-root", ("a", "b"), "a*sqrt(x) + b", "x >= 0",
+    _linear_basis_fitter("square-root", ("a", "b"), (_sqrt_x, _one), _square_root_equation),
+)
+RECIPROCAL = CurveForm(
+    "reciprocal", ("a", "b"), "a/x + b", "x != 0",
+    _linear_basis_fitter("reciprocal", ("a", "b"), (_recip_x, _one), _reciprocal_equation),
+)
+# The sinusoid (44.2.9) is the lone non-closed-form entry: domain None (no x restriction —
+# the rational limitation is a mode drop, not a domain), fitted by the iterative frequency
+# search above rather than by the normal equations.
+SINUSOIDAL = CurveForm(
+    "sinusoidal", ("a", "b", "c", "d"), "a*sin(b*x + c) + d", None, _fit_sinusoidal,
+)
+CURVE_FORMS: tuple[CurveForm, ...] = (
+    LINEAR, QUADRATIC, CUBIC, POWER, EXPONENTIAL, LOGARITHMIC, SQUARE_ROOT, RECIPROCAL,
+    SINUSOIDAL,
+)
 
 
 def fit_all(xs: Sequence[float], ys: Sequence[float], mode: Mode, floor: int) -> list[FitResult]:

@@ -1165,14 +1165,23 @@ def curve_fit(
     for every curve form it knows, the parameter values that best match the data in the
     least-squares sense, reporting each form's fitted equation and the residual error
     (the sum of squared residuals). The curve library holds the straight line `a*x + b`,
-    the quadratic `a*x**2 + b*x + c`, the cubic `a*x**3 + b*x**2 + c*x + d`, and the power
-    law `a*x**b` (44.2.1-44.2.4), each fitted in closed form — the polynomials by the exact
-    normal equations, the power law by the log-linearisation `ln y = ln a + b·ln x`. A form
-    that cannot fit the data (the power law needs `x > 0`, `y > 0`, and rational mode cannot
-    represent its irrational logs; a polynomial needs enough distinct `x`) is dropped, not
-    fatal. The forms that fit are ranked by their residual error — least error first — and
-    only the best three are returned (fewer when fewer forms fit). More forms (exponential,
-    …) arrive later.
+    the quadratic `a*x**2 + b*x + c`, the cubic `a*x**3 + b*x**2 + c*x + d`, the power law
+    `a*x**b`, the exponential `a*exp(b*x)`, the logarithm `a + b*ln(x)`, the square root
+    `a*sqrt(x) + b`, the reciprocal `a/x + b` and the sinusoid `a*sin(b*x + c) + d`
+    (44.2.1-44.2.9). Every form but the sinusoid is fitted in CLOSED FORM — the polynomials
+    and the affine logarithm/square-root/reciprocal forms by the exact normal equations, the
+    power and exponential laws by a log-linearisation (`ln y = ln a + b·ln x` for the power,
+    `ln y = ln a + b·x` for the exponential). The sinusoid alone has no closed-form solution,
+    so it is fitted by an ITERATIVE frequency search: it is non-linear only in the frequency
+    `b`, so for each candidate `b` the best amplitude/phase/offset is a linear sub-fit, and a
+    coarse scan over a data-derived frequency range (then a golden-section refinement) picks
+    the `b` minimising the residual. A form that cannot fit the data is dropped, not fatal:
+    the power and logarithm need `x > 0`, the square root `x >= 0`, the reciprocal `x != 0`,
+    the exponential and power `y > 0`; the power, exponential, logarithm, square-root and
+    sinusoid forms also drop in rational mode, which cannot represent their irrational
+    logs/roots/sines; and a polynomial needs enough distinct `x` (the sinusoid four). The
+    forms that fit are ranked by their residual error — least error first — and only the best
+    three are returned (fewer when fewer forms fit). A few more forms arrive later.
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the whole fit runs
     in that numeric type, so the parameters and error are exact in `rational`, rounded at
