@@ -1491,17 +1491,17 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                optimise engine (least-squares objective Σ(model(xᵢ)-yᵢ)²). Forms are
                fitted in parallel; a form that can't fit the data (domain miss,
                non-convergence) is dropped, not fatal.
-    [ ] 44.4.  Error metric — one comparable goodness number per fitted form (sum of
+    [x] 44.4.  Error metric — one comparable goodness number per fitted form (sum of
                squared residuals, or RMSE), computed in the active mode so the
                verdict carries the usual exact/inexact honesty.
-    [ ] 44.5.  Rank by error and return the best 3: each result gives the curve's
+    [x] 44.5.  Rank by error and return the best 3: each result gives the curve's
                fitted equation (parameters substituted, rendered in the mode's
                normal string form) and its error. Fewer than 3 if fewer forms fit.
-    [ ] 44.6.  Reply shape — the ranked list plus `mode`, `exact`, `precision`, and
+    [x] 44.6.  Reply shape — the ranked list plus `mode`, `exact`, `precision`, and
                an `error` path, annotated like solver (31.8 / 32).
-    [ ] 44.7.  TESTS — a clean linear set, a set best fit by a non-linear form, and
+    [x] 44.7.  TESTS — a clean linear set, a set best fit by a non-linear form, and
                the error cases (mismatched x/y lengths, too few points, unknown
                mode). In-process + over-the-wire.
-    [ ] 44.8.  DOCS — tool docstring, a `fit` help section (reference.py), and a
+    [x] 44.8.  DOCS — tool docstring, a `fit` help section (reference.py), and a
                README bullet.
 

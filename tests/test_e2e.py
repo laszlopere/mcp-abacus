@@ -270,7 +270,7 @@ def test_reference_is_exposed_as_resources_over_the_wire():
     assert "abacus://reference/{section}" in [t.uriTemplate for t in templates.resourceTemplates]
     # The index lists every section; a section read returns that section's text.
     index_text = index.contents[0].text
-    for section in ("types", "language", "functions", "solver"):
+    for section in ("types", "language", "functions", "solver", "fit"):
         assert section in index_text
     assert "floating-point" in types.contents[0].text  # the 'types' section content
 
@@ -372,7 +372,7 @@ def test_help_section_is_advertised_as_an_enum_over_the_wire():
 
     tools = {t.name: t for t in asyncio.run(go()).tools}
     section = tools["help"].inputSchema["properties"]["section"]
-    assert sorted(section["enum"]) == ["functions", "language", "solver", "types"]
+    assert sorted(section["enum"]) == ["fit", "functions", "language", "solver", "types"]
 
 
 def test_calculate_defaults_to_fixed_point_over_stdio():
@@ -819,3 +819,46 @@ def test_solver_rejects_multiple_unknowns_for_golden_section():
     payload = _solve({"expression": "x + y", "variables": {"x": [0, 1], "y": [0, 1]}})
     assert payload["solution"] is None and payload["solutions"] is None
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+# --- curve_fit over the wire (44.7) ------------------------------------------
+
+
+def _fit(arguments):
+    """Invoke the `curve_fit` tool against a fresh server; return its structured dict."""
+    return _payload(_call("curve_fit", arguments))
+
+
+def test_curve_fit_linear_data_over_the_wire():
+    # y = 2x + 1 exactly in rational mode: the linear/quadratic/cubic forms all fit it on
+    # the nose (error 0), ranked best-first, and the whole reply — fits plus the top-level
+    # mode/exact/precision headline — travels intact across real stdio.
+    payload = _fit({"x": [1, 2, 3, 4], "y": [3, 5, 7, 9], "mode": "rational"})
+    assert payload["error"] is None
+    assert payload["mode"] == "rational"
+    assert payload["exact"] is True  # the best fit's error is exactly 0 in rational
+    by_form = {fit["form"]: fit for fit in payload["fits"]}
+    assert by_form["linear"]["equation"] == "2*x + 1"
+    assert by_form["linear"]["fit_error"] == "0 (exact)"
+    assert "power" not in by_form  # rational refuses the power form's irrational logs
+
+
+def test_curve_fit_returns_at_most_three_ranked_forms_over_the_wire():
+    # y = 2x**1.5 in floating-point: power/cubic/quadratic/linear all fit, but only the
+    # best three come back (linear, the worst, is dropped), ranked by ascending error.
+    ys = [2 * x**1.5 for x in (1, 2, 3, 4, 5)]
+    payload = _fit({"x": [1, 2, 3, 4, 5], "y": ys, "mode": "floating-point"})
+    assert payload["error"] is None
+    forms = [fit["form"] for fit in payload["fits"]]
+    assert len(forms) == 3
+    assert "power" in forms and "linear" not in forms
+    errors = [float(fit["fit_error"].split()[0]) for fit in payload["fits"]]
+    assert errors == sorted(errors)
+
+
+def test_curve_fit_error_case_over_the_wire():
+    # A bad request travels as the all-null shape with the message in `error`.
+    payload = _fit({"x": [1, 2, 3], "y": [1, 2]})
+    assert payload["fits"] is None and payload["mode"] is None
+    assert payload["exact"] is None and payload["precision"] is None
+    assert "same length" in payload["error"]

@@ -84,6 +84,30 @@ def test_default_mode_is_fixed_point_with_a_sub_unit_floor():
     assert fit["equation"].startswith("6.900000000*x - 4.783333333")
 
 
+def test_reply_carries_a_top_level_precision_verdict_for_the_best_fit():
+    # 44.6: like solver, the reply's top-level exact/precision describe the BEST (least-
+    # error) fit's error. y = 2x + 1 in rational fits exactly, so the headline is exact.
+    payload = _fit([1, 2, 3, 4], [3, 5, 7, 9], mode="rational")
+    assert payload["exact"] is True
+    # The headline mirrors the first (best-ranked) fit's own verdict.
+    assert payload["exact"] == payload["fits"][0]["exact"]
+    assert payload["precision"] == payload["fits"][0]["precision"]
+    # Floating-point conservatively flags every result inexact, headline included.
+    noisy = _fit([1, 1.5, 2.0], [2, 5.8, 8.9], mode="floating-point")
+    assert noisy["exact"] is False
+    assert noisy["exact"] == noisy["fits"][0]["exact"]
+
+
+def test_only_the_best_three_forms_come_back():
+    # 44.5: y = 2x**1.5 in floating-point fits all four forms, but the reply lists only
+    # the best three by error — the worst (linear) is dropped, the matching power leads.
+    ys = [2 * x**1.5 for x in (1, 2, 3, 4, 5)]
+    payload = _fit([1, 2, 3, 4, 5], ys, mode="floating-point")
+    forms = [fit["form"] for fit in payload["fits"]]
+    assert len(forms) == 3
+    assert forms[0] == "power" and "linear" not in forms
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

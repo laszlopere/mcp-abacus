@@ -155,6 +155,26 @@ def test_solver_section_states_the_bracket_and_unknown_rules():
     assert "must NOT" in text and "assigned" in text  # the unknown is free, not assigned
 
 
+def test_fit_section_lists_every_live_curve_form():
+    # Sourced from the curve library's own registry, so the help cannot drift from what
+    # the tool fits — every form name, its template and any domain limit must appear.
+    from mcp_abacus.fit import CURVE_FORMS
+
+    text = reference.render("fit")
+    for form in CURVE_FORMS:
+        assert form.name in text
+        assert form.template in text
+        if form.domain:
+            assert form.domain in text
+
+
+def test_fit_section_states_the_error_metric_and_ranking():
+    text = reference.render("fit")
+    assert "sum of squared residuals" in text
+    assert "best three" in text  # the best-3 ranking (44.5)
+    assert "dropped" in text.lower()  # the drop-and-continue contract
+
+
 def test_search_filter_keeps_only_matching_lines_case_insensitively():
     # The whole point: 'sin' over functions returns the sin family and nothing else.
     filtered = reference.render("functions", "SIN").splitlines()

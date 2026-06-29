@@ -133,12 +133,30 @@ def test_power_is_dropped_when_x_is_not_positive():
 
 def test_fits_are_ranked_by_error_best_first():
     # Curved data: the higher-order / matching forms fit better, so the results come back
-    # ordered by ascending fit error (44.5) — the least-error fit leads, linear trails.
+    # ordered by ascending fit error (44.5) — the least-error fit leads. The power form,
+    # which matches y = 2x**1.5, is the best fit; linear (the worst) is truncated away.
     ys = [2 * x**1.5 for x in (1, 2, 3, 4, 5)]
     results = fit_all([1, 2, 3, 4, 5], ys, Mode.FLOATING_POINT, 0)
     errors = [r.error.to_float() for r in results]
     assert errors == sorted(errors)
-    assert results[0].error.to_float() <= _pick(results, "linear").error.to_float()
+    assert results[0].form == "power"
+
+
+def test_only_the_best_three_forms_are_returned():
+    # 44.5: y = 2x**1.5 fits all four forms (power exactly, the polynomials approximately),
+    # but fit_all returns only the best three by error — the worst (linear) is truncated.
+    ys = [2 * x**1.5 for x in (1, 2, 3, 4, 5)]
+    results = fit_all([1, 2, 3, 4, 5], ys, Mode.FLOATING_POINT, 0)
+    assert len(results) == 3
+    forms = [r.form for r in results]
+    assert "power" in forms and "linear" not in forms  # the matching form leads, linear trails off
+
+
+def test_fewer_than_three_forms_when_fewer_fit():
+    # 44.5: with only three points a cubic is underdetermined and dropped, so only the
+    # linear and quadratic forms fit — fewer than three come back, not padded.
+    results = fit_all([1, 2, 3], [2, 5, 10], Mode.RATIONAL, 0)
+    assert [r.form for r in results] == ["quadratic", "linear"]
 
 
 def test_exact_fits_tie_break_to_the_simplest_form():

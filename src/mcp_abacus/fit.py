@@ -31,8 +31,10 @@ The genuinely non-linearisable forms still to come (the sinusoid, 44.2.9) are wh
 need the solver's optimise engine; this module does not reach for it yet. ``fit_all``
 fits every form, DROPPING any that cannot fit the data (a domain miss, a degenerate
 configuration, or a mode that cannot represent the fit) rather than failing the whole
-request (44.3); the cross-form error ranking and best-3 selection (44.4-44.5) are still to
-come, so it returns every fitted form unranked.
+request (44.3). The survivors are scored by one comparable goodness number — the sum of
+squared residuals computed in the active mode (44.4), so it carries the usual
+exact/inexact verdict — then RANKED best (least error) first and truncated to the best few
+(44.5), the closest fits the caller actually wants.
 """
 
 from collections.abc import Callable, Sequence
@@ -41,6 +43,7 @@ from dataclasses import dataclass
 from mcp_abacus.expr.value import Mode, NotRepresentableError, Value
 
 _RATIONAL_FIT_DECIMALS = 12  # rational has no scale of its own; materialise data at this one
+_BEST_N = 3  # the fit tool reports the best this-many forms by error (44.5); fewer if fewer fit
 
 
 class FitError(Exception):
@@ -205,7 +208,7 @@ def _line_coeffs(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> tu
 def _sum_squared_residuals(
     model: list[Value], ys: list[Value], mode: Mode, scale: int
 ) -> Value:
-    """The fit error ``Σ (modelᵢ − yᵢ)²`` in the active mode (44.4 preview)."""
+    """The fit error ``Σ (modelᵢ − yᵢ)²`` in the active mode — the goodness number (44.4)."""
     residuals = [m.sub(y) for m, y in zip(model, ys, strict=True)]
     return _sum([r.mul(r) for r in residuals], mode, scale)
 
@@ -380,6 +383,11 @@ def fit_all(xs: Sequence[float], ys: Sequence[float], mode: Mode, floor: int) ->
     registry order, which is ascending in complexity, so the simplest exact form leads. The
     best-N truncation is a later refinement; every fitted form is returned for now.
 
+    Only the best :data:`_BEST_N` survivors are returned (44.5): the data usually fits
+    several forms, and the caller wants the few that fit best, not every one. Fewer than
+    ``_BEST_N`` come back when fewer forms fit (a polynomial dropped for too few distinct
+    ``x``, the power form dropped in rational mode, …).
+
     If no form fits at all, the dropping would otherwise swallow the reason, so the FIRST
     form's FitError is re-raised — the linear form's, the most fundamental (e.g. its
     vertical-line refusal when every ``x`` is equal).
@@ -399,6 +407,7 @@ def fit_all(xs: Sequence[float], ys: Sequence[float], mode: Mode, floor: int) ->
                 first_error = exc  # remember the first reason; keep trying the rest
     if not results and first_error is not None:
         raise first_error  # nothing fit — surface the first (linear) reason
-    # Rank best (least error) first; a stable sort keeps registry order on ties (44.5).
+    # Rank best (least error) first; a stable sort keeps registry order on ties (44.5),
+    # then keep only the best few — the caller wants the closest fits, not every one.
     results.sort(key=lambda result: result.error.to_float())
-    return results
+    return results[:_BEST_N]

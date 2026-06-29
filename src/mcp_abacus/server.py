@@ -132,8 +132,8 @@ def reference_index() -> str:
     name="abacus-reference-section",
     title="abacus reference section",
     description=(
-        "The reference text for one section: 'types', 'language', 'functions', or "
-        "'solver' — the same content the `help` tool returns, exposed as a resource."
+        "The reference text for one section: 'types', 'language', 'functions', "
+        "'solver', or 'fit' — the same content the `help` tool returns, exposed as a resource."
     ),
     mime_type="text/markdown",
 )
@@ -145,7 +145,7 @@ def reference_section(section: str) -> str:
 # The valid `help` sections, advertised to clients as a schema enum. Kept in
 # lockstep with reference._SECTIONS by a test; reference.render() still handles an
 # unknown section gracefully for any direct caller that bypasses schema validation.
-HelpSection = Literal["types", "language", "functions", "solver"]
+HelpSection = Literal["types", "language", "functions", "solver", "fit"]
 
 
 @mcp.tool(name="help")
@@ -154,7 +154,8 @@ def help_(
         HelpSection,
         Field(
             description=(
-                "Which reference section to return: 'types', 'language', 'functions', or 'solver'."
+                "Which reference section to return: 'types', 'language', 'functions', "
+                "'solver', or 'fit'."
             )
         ),
     ],
@@ -184,10 +185,11 @@ def help_(
 
     Sections: 'types' (the numeric types this build supports), 'language' (the
     expression grammar — operators, precedence, literal forms), 'functions' (the
-    callable functions and their argument counts), and 'solver' (the solver tool —
-    solving / optimising one variable over a bracket). `section` is restricted to
-    these four names — advertised as a schema enum — so any other value is rejected
-    with the valid list.
+    callable functions and their argument counts), 'solver' (the solver tool —
+    solving / optimising one variable over a bracket), and 'fit' (the curve_fit tool
+    — fitting curve forms to paired (x, y) data). `section` is restricted to these
+    five names — advertised as a schema enum — so any other value is rejected with the
+    valid list.
 
     `search_filter`, when given, narrows the section to the lines that contain it as
     a case-insensitive substring; a filter that matches nothing says so. `details`
@@ -1162,7 +1164,9 @@ def curve_fit(
     normal equations, the power law by the log-linearisation `ln y = ln a + b·ln x`. A form
     that cannot fit the data (the power law needs `x > 0`, `y > 0`, and rational mode cannot
     represent its irrational logs; a polynomial needs enough distinct `x`) is dropped, not
-    fatal. More forms (exponential, …) and the best-of ranking arrive later.
+    fatal. The forms that fit are ranked by their residual error — least error first — and
+    only the best three are returned (fewer when fewer forms fit). More forms (exponential,
+    …) arrive later.
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the whole fit runs
     in that numeric type, so the parameters and error are exact in `rational`, rounded at
@@ -1172,17 +1176,18 @@ def curve_fit(
     resolution); pass an explicit value for more/fewer decimals. Complex mode is not
     supported (the fit is real-valued).
 
-    Returns a dict: `fits` is a list of fitted forms, each
-    `{form, equation, parameters, fit_error, fit_error_hex_dump, exact, precision}` —
+    Returns a dict: `fits` is the ranked list of fitted forms (best first, at most three),
+    each `{form, equation, parameters, fit_error, fit_error_hex_dump, exact, precision}` —
     `form` names the curve, `equation` is the model with its parameters substituted (over
     the variable `x`, so it can be pasted into `calculate`), `parameters` is a list of
     `{name, value, value_hex_dump}` for each fitted coefficient (each `value` annotated
     with its own precision verdict), and `fit_error` is the residual error annotated the
-    same way with its hex dump. `exact` and `precision` describe that error value as in
-    `calculate`. `mode` is the resolved numeric type. On any failure — a bad
+    same way with its hex dump; that fit's own `exact` and `precision` describe its error.
+    `mode` is the resolved numeric type, and the top-level `exact` / `precision` describe
+    the BEST fit's error (the headline number), as in `solver`. On any failure — a bad
     mode/precision, mismatched or too-short data, or data that cannot support the form
-    (every x equal, so a line has no slope) — `fits`/`mode` are null and `error` carries
-    the message; on success `error` is null.
+    (every x equal, so a line has no slope) — `fits`/`mode`/`exact`/`precision` are null and
+    `error` carries the message; on success `error` is null.
     """
     selected, mode_error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
     if mode_error is not None:
@@ -1208,9 +1213,12 @@ def curve_fit(
     except FitError as exc:
         return _fit_error(exc.message)
     reported_floor = floor if selected is Mode.FIXED_POINT else min_fixed_point_precision
+    best_error = results[0].error  # results are ranked best-first; the headline is the best fit's
     return {
         "fits": [_fit_entry(result, reported_floor) for result in results],
         "mode": selected.value,
+        "exact": best_error.exact,
+        "precision": best_error.precision(),
         "error": None,
     }
 
@@ -1254,9 +1262,9 @@ def _fit_error(message: str) -> dict:
     """A fit reply carrying only an error — every data field null (44.1).
 
     Mirrors `_solver_error` / `_error`: the same key set as the success reply so the shape
-    never varies, with `fits` and `mode` null and the message in `error`.
+    never varies, with `fits` / `mode` / `exact` / `precision` null and the message in `error`.
     """
-    return {"fits": None, "mode": None, "error": message}
+    return {"fits": None, "mode": None, "exact": None, "precision": None, "error": message}
 
 
 # FUTURE (SA.1): opt-in toolset gating goes here. When the feature toolsets

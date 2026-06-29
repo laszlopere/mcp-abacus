@@ -267,6 +267,57 @@ def _solver_section() -> str:
     )
 
 
+def _fit_section() -> str:
+    # Built from the curve library's live registry, so the listed forms cannot drift from
+    # what the tool fits. Imported LOCALLY for the same layering reason as the solver
+    # section: fit is a higher-level sibling that depends on this expr subpackage, so a
+    # module-level import here would invert the layering (and risk a load-time cycle).
+    from mcp_abacus.fit import CURVE_FORMS
+
+    forms = [
+        f"  {form.name:<10} {form.template}"
+        + (f"   (needs {form.domain})" if form.domain else "")
+        for form in CURVE_FORMS
+    ]
+    return "\n".join(
+        [
+            "curve_fit tool — fit known curve forms to paired (x, y) observations and",
+            "report each fitted equation with its error. You hand over the data; the tool",
+            "estimates every form's free parameters by least squares and returns the few",
+            "that fit best — it SEARCHES for the model, it does not evaluate one.",
+            "",
+            "arguments:",
+            "  x          the observations' x coordinates: a list of numbers, at least two.",
+            "  y          the y coordinates paired with x; same length as x.",
+            "  mode       numeric type the fit runs in (see types); default fixed-point.",
+            "  min_fixed_point_precision  fixed-point decimal floor, as in calculate; in",
+            "             fixed-point mode omit it for a default of 9 (0 would floor every",
+            "             fitted parameter to an integer and ruin a non-integer slope).",
+            "",
+            "curve forms (each fitted in closed form — polynomials by the normal equations,",
+            "the power law by the log-linearisation ln y = ln a + b*ln x):",
+            *forms,
+            "",
+            "A form that cannot fit the data is DROPPED, not fatal: the power law needs",
+            "x > 0 and y > 0 (and rational mode refuses its irrational logs), and a",
+            "polynomial needs enough distinct x to determine its coefficients.",
+            "",
+            "error metric: the residual error is the sum of squared residuals",
+            "Σ (model(xᵢ) − yᵢ)², computed in the active mode so it carries the usual",
+            "exact/inexact verdict. The forms are ranked by it (least error first) and only",
+            "the best three are returned (fewer when fewer forms fit).",
+            "",
+            "reply: fits (the ranked list, best first; each {form, equation, parameters,",
+            "fit_error, fit_error_hex_dump, exact, precision} — equation is the model with",
+            "its parameters substituted over x, pasteable into calculate; parameters is a",
+            "list of {name, value, value_hex_dump}, each value carrying its precision",
+            "verdict). mode, plus top-level exact / precision describing the BEST fit's error",
+            "(as in solver); error. On failure fits/mode/exact/precision are null and error",
+            "carries the message.",
+        ]
+    )
+
+
 # section name -> (one-line descriptor for the index, builder). Add a section by
 # adding a row; the call shape never changes.
 _SECTIONS: dict[str, tuple[str, Callable[[], str]]] = {
@@ -274,6 +325,7 @@ _SECTIONS: dict[str, tuple[str, Callable[[], str]]] = {
     "language": ("expression grammar: operators, precedence, literals", _language_section),
     "functions": ("the callable functions and their argument counts", _functions_section),
     "solver": ("the solver tool: find a root or extremum over a bracket", _solver_section),
+    "fit": ("the curve_fit tool: fit curve forms to paired (x, y) data", _fit_section),
 }
 
 
