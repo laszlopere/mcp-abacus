@@ -243,6 +243,7 @@ def test_initialize_handshake_identifies_the_server():
     assert sorted(t.name for t in tools.tools) == [
         "analyze",
         "calculate",
+        "curve_fit",
         "help",
         "info",
         "solver",
@@ -289,8 +290,8 @@ def test_initialize_carries_server_instructions_over_the_wire():
     for mode in ("fixed-point", "floating-point", "rational"):
         assert mode in instructions
     assert "precision verdict" in instructions
-    # ...and the five tools the server exposes.
-    for tool in ("calculate", "analyze", "solver", "help", "info"):
+    # ...and the six tools the server exposes.
+    for tool in ("calculate", "analyze", "solver", "curve_fit", "help", "info"):
         assert tool in instructions
 
 
@@ -316,8 +317,8 @@ def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
             return await session.list_tools()
 
     tools = {t.name: t for t in asyncio.run(go()).tools}
-    # `info` is nullary; the other four expose parameters that must all be described.
-    expected_param_counts = {"analyze": 3, "calculate": 4, "help": 3, "solver": 9}
+    # `info` is nullary; the other five expose parameters that must all be described.
+    expected_param_counts = {"analyze": 3, "calculate": 4, "help": 3, "solver": 9, "curve_fit": 4}
     for name, count in expected_param_counts.items():
         properties = tools[name].inputSchema["properties"]
         assert len(properties) == count, f"{name}: param count changed to {len(properties)}"

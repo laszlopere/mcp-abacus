@@ -24,9 +24,16 @@ def _calc(call_tool_result):
     return json.loads(_content_blocks(call_tool_result)[0].text)
 
 
-def test_exposed_tools_are_info_help_calculate_analyze_and_solver():
+def test_exposed_tools_are_info_help_calculate_analyze_solver_and_curve_fit():
     tools = asyncio.run(mcp.list_tools())
-    assert sorted(t.name for t in tools) == ["analyze", "calculate", "help", "info", "solver"]
+    assert sorted(t.name for t in tools) == [
+        "analyze",
+        "calculate",
+        "curve_fit",
+        "help",
+        "info",
+        "solver",
+    ]
 
 
 def test_tools_have_description_and_input_schema():

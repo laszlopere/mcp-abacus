@@ -29,6 +29,7 @@ from mcp_abacus.expr.value import (
     resolve_mode,
     selectable_modes,
 )
+from mcp_abacus.fit import FitError, FitResult, fit_all
 from mcp_abacus.solver import (
     Algorithm,
     SolverError,
@@ -85,8 +86,9 @@ mcp = _AbacusFastMCP(
         "`calculate` evaluates an expression; `analyze` returns the parse tree "
         "with each node's value, showing WHERE an answer rounded or overflowed; "
         "`solver` finds the variable value(s) driving an expression to a root or "
-        "extremum; `help` serves the grammar/type reference; `info` reports "
-        "version and environment. Offline and deterministic."
+        "extremum; `curve_fit` fits curve forms to paired (x, y) data and reports each "
+        "fitted equation with its error; `help` serves the grammar/type reference; "
+        "`info` reports version and environment. Offline and deterministic."
     ),
 )
 
@@ -1098,6 +1100,159 @@ def _error(message: str) -> dict:
         "values": None,
         "error": message,
     }
+
+
+# 44.1: the floor a fixed-point fit falls back to when the caller omits
+# min_fixed_point_precision. As in the solver (_DEFAULT_SOLVER_FLOOR), a fit at scale 0
+# would floor every fitted parameter to a whole number and ruin a non-integer slope or
+# intercept; defaulting to sub-unit resolution lets the bare fixed-point call just work.
+_DEFAULT_FIT_FLOOR = 9
+
+
+@mcp.tool()
+def curve_fit(
+    x: Annotated[
+        list[float],
+        Field(
+            description=(
+                "The x coordinates of the observations — a list of numbers, the same "
+                "length as `y` and at least two points long."
+            )
+        ),
+    ],
+    y: Annotated[
+        list[float],
+        Field(
+            description=(
+                "The y coordinates of the observations — a list of numbers paired with "
+                "`x` (same length, at least two points)."
+            )
+        ),
+    ],
+    mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric type the fit runs in: 'fixed-point' (default), "
+                "'floating-point', or 'rational' — as in `calculate`."
+            )
+        ),
+    ] = "fixed-point",
+    min_fixed_point_precision: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Floor on fixed-point fractional digits (non-negative integer). In "
+                "fixed-point mode, omit it for a default floor of 9 so the fitted "
+                "parameters keep sub-unit precision instead of rounding to whole "
+                "numbers; pass an explicit value for more/fewer decimals. Leave "
+                "null/omit in the other modes, which carry no decimal scale."
+            )
+        ),
+    ] = None,
+) -> dict:
+    """Fit curve(s) to paired (x, y) data and report each fitted equation with its error.
+
+    `curve_fit` takes the observations as two equal-length lists — `x` and `y` — and estimates,
+    for every curve form it knows, the parameter values that best match the data in the
+    least-squares sense, reporting each form's fitted equation and the residual error
+    (the sum of squared residuals). Today the curve library holds a single form, the
+    straight line `a*x + b` (44.2.1), fitted by the exact closed-form normal equations;
+    more forms (quadratic, power, exponential, …) and the best-of ranking arrive later.
+
+    `mode` and `min_fixed_point_precision` behave as in `calculate` — the whole fit runs
+    in that numeric type, so the parameters and error are exact in `rational`, rounded at
+    the scale in `fixed-point`, and native doubles in `floating-point`. As in the
+    `solver`, a fixed-point fit at scale 0 would round every fitted parameter to a whole
+    number, so when `min_fixed_point_precision` is omitted it DEFAULTS to 9 (sub-unit
+    resolution); pass an explicit value for more/fewer decimals. Complex mode is not
+    supported (the fit is real-valued).
+
+    Returns a dict: `fits` is a list of fitted forms, each
+    `{form, equation, parameters, fit_error, fit_error_hex_dump, exact, precision}` —
+    `form` names the curve, `equation` is the model with its parameters substituted (over
+    the variable `x`, so it can be pasted into `calculate`), `parameters` is a list of
+    `{name, value, value_hex_dump}` for each fitted coefficient (each `value` annotated
+    with its own precision verdict), and `fit_error` is the residual error annotated the
+    same way with its hex dump. `exact` and `precision` describe that error value as in
+    `calculate`. `mode` is the resolved numeric type. On any failure — a bad
+    mode/precision, mismatched or too-short data, or data that cannot support the form
+    (every x equal, so a line has no slope) — `fits`/`mode` are null and `error` carries
+    the message; on success `error` is null.
+    """
+    selected, mode_error = _resolve_mode_and_precision(mode, min_fixed_point_precision)
+    if mode_error is not None:
+        return _fit_error(mode_error)
+    assert selected is not None  # mode_error is None means a mode resolved
+    if selected is Mode.COMPLEX:
+        # A fit minimises a real residual; complex data has no ordering to minimise.
+        return _fit_error("the fit is real-valued; complex mode is not supported")
+    if len(x) != len(y):
+        return _fit_error(f"x and y must have the same length, got {len(x)} and {len(y)}.")
+    if len(x) < 2:
+        return _fit_error(f"Need at least two (x, y) points to fit a curve, got {len(x)}.")
+    # 44.1: a fixed-point fit at scale 0 floors every parameter to a whole number; default
+    # an omitted floor to _DEFAULT_FIT_FLOOR so the bare call resolves sub-unit values. None
+    # reaches here only in fixed-point mode (_resolve_mode_and_precision rejected a floor in
+    # the other modes), so they take floor 0 unused.
+    if selected is Mode.FIXED_POINT and min_fixed_point_precision is None:
+        floor = _DEFAULT_FIT_FLOOR
+    else:
+        floor = min_fixed_point_precision or 0
+    try:
+        results = fit_all(x, y, selected, floor)
+    except FitError as exc:
+        return _fit_error(exc.message)
+    reported_floor = floor if selected is Mode.FIXED_POINT else min_fixed_point_precision
+    return {
+        "fits": [_fit_entry(result, reported_floor) for result in results],
+        "mode": selected.value,
+        "error": None,
+    }
+
+
+def _fit_entry(result: FitResult, min_fixed_point_precision: int | None) -> dict:
+    """Render one FitResult into the fit reply's per-form object (44.1 / 44.5).
+
+    Each parameter and the error are annotated with their own precision verdict exactly as
+    `calculate` annotates a value, so a fitted coefficient is never mistaken for exact when
+    the mode rounded it. `exact` / `precision` describe the error value (the fit's headline
+    number).
+    """
+    error = result.error
+    return {
+        "form": result.form,
+        "equation": result.equation,
+        "parameters": [
+            {
+                "name": name,
+                "value": _annotate(
+                    value.to_string(),
+                    value.exact,
+                    value.precision(),
+                    None,
+                    min_fixed_point_precision,
+                ),
+                "value_hex_dump": value.hex_dump(),
+            }
+            for name, value in result.parameters
+        ],
+        "fit_error": _annotate(
+            error.to_string(), error.exact, error.precision(), None, min_fixed_point_precision
+        ),
+        "fit_error_hex_dump": error.hex_dump(),
+        "exact": error.exact,
+        "precision": error.precision(),
+    }
+
+
+def _fit_error(message: str) -> dict:
+    """A fit reply carrying only an error — every data field null (44.1).
+
+    Mirrors `_solver_error` / `_error`: the same key set as the success reply so the shape
+    never varies, with `fits` and `mode` null and the message in `error`.
+    """
+    return {"fits": None, "mode": None, "error": message}
 
 
 # FUTURE (SA.1): opt-in toolset gating goes here. When the feature toolsets
