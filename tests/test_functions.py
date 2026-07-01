@@ -363,6 +363,105 @@ def test_map_arity_is_a_parse_error():
     assert "takes 3 argument(s)" in payload["error"]
 
 
+# --- residual_sum_squares(expr, var, xs, ys): the least-squares cost special form (40.25) ---
+# A higher-order special form like map/sum: `var` is a bare NAME (the model's free variable)
+# and `expr` the unevaluated model, NOT values — but args 3/4 are two EQUAL-LENGTH data vectors
+# walked in LOCKSTEP. It folds Σ(ys_i - expr[var:=xs_i])**2 to a SCALAR: like sum it stamps no
+# verdict, so exactness is the subtract+square+add arithmetic's (exact in rational, may round in
+# fixed-point/float).
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "value"),
+    [
+        # A perfect fit leaves zero residual: model 2*x hits [2,4,6] exactly on x=[1,2,3].
+        ("residual_sum_squares(2*x, x, [1, 2, 3], [2, 4, 6])", None, None, "0 (exact)"),
+        # residuals [0, 0, 1] -> 0 + 0 + 1 = 1 (integer data stays exact in fixed-point).
+        ("residual_sum_squares(2*x, x, [1, 2, 3], [2, 4, 7])", None, None, "1 (exact)"),
+        # The model is any expression in the variable: x**2 vs [1, 4, 9] is a perfect fit.
+        ("residual_sum_squares(x**2, x, [1, 2, 3], [1, 4, 9])", None, None, "0 (exact)"),
+        # rational squares exactly: gaps 1/2, 1/2 -> 1/4 + 1/4 = 1/2.
+        ("residual_sum_squares(x, x, [1, 2], [3/2, 5/2])", "rational", None, "1/2 (exact)"),
+        # binary64 carries the inexact flag through: gaps 1, 2 -> 1 + 4 = 5.
+        (
+            "residual_sum_squares(x, x, [1.0, 2.0], [2.0, 4.0])",
+            "floating-point",
+            None,
+            "5.0 (inexact)",
+        ),
+    ],
+)
+def test_residual_sum_squares(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
+
+
+def test_residual_sum_squares_reads_outer_variables():
+    # The model re-evaluates in a child store seeded from the run's, so it reads an outer
+    # binding (a) while the variable (x) shadows the per-point value. With a=2 the model 2*x
+    # fits [2,4,6] perfectly, so the cost is 0.
+    assert _value("a = 2\nresidual_sum_squares(a*x, x, [1, 2, 3], [2, 4, 6])", "rational") == (
+        "0 (exact)"
+    )
+
+
+def test_residual_sum_squares_masks_its_variable_in_referenced_names():
+    # The model variable is BOUND (a dummy the fold rebinds per point), so it is not a free
+    # reference — only genuinely free names (the model's `a`/`b` and the data `xs`/`ys`) leak
+    # out, keeping the variable from being mistaken for a solver unknown. (The name is the
+    # SECOND arg, like integral/diff/map — _SPECIAL_FORM_BOUND_VAR tracks which.)
+    names = parse("residual_sum_squares(a*x + b, x, xs, ys)").referenced_names()
+    assert names == frozenset({"a", "b", "xs", "ys"})
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # The variable (2nd arg) must be a bare name: a literal or a constant nullary (pi/e) is
+        # not — the same stance the other special forms take on their variable argument.
+        (
+            "residual_sum_squares(2*x, 3, [1, 2], [1, 2])",
+            None,
+            "residual_sum_squares's variable (2nd argument) must be a name",
+        ),
+        # The data (3rd/4th args) must both be vectors — a scalar has no points to pair.
+        (
+            "residual_sum_squares(2*x, x, 5, [1, 2])",
+            None,
+            "residual_sum_squares's data (3rd and 4th arguments) must be two vectors",
+        ),
+        # Unequal-length data is unpaired and REFUSES, mirroring covariance.
+        (
+            "residual_sum_squares(2*x, x, [1, 2, 3], [1, 2])",
+            None,
+            "residual_sum_squares requires two equal-length data vectors",
+        ),
+        # Empty data is undefined (no points to fit) and REFUSES.
+        (
+            "residual_sum_squares(2*x, x, [], [])",
+            None,
+            "residual_sum_squares of empty data is undefined",
+        ),
+        # A transcendental model in rational mode refuses at the point, like sin everywhere —
+        # surfaced as the model's own line-tagged error (the point 1 is a non-zero rational).
+        (
+            "residual_sum_squares(sin(x), x, [1, 2], [1, 2])",
+            "rational",
+            "sine of a non-zero rational is irrational",
+        ),
+    ],
+)
+def test_residual_sum_squares_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_residual_sum_squares_arity_is_a_parse_error():
+    # Fixed arity 4, wired through FUNCTION_ARITIES like every call — wrong count is caught at
+    # parse, before evaluation, the same as a misused ordinary function.
+    payload = _calc("residual_sum_squares(2*x, x, [1, 2])")
+    assert payload["value"] is None
+    assert "takes 4 argument(s)" in payload["error"]
+
+
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [

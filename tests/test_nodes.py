@@ -212,6 +212,8 @@ def test_function_arities_match_the_registry():
         "sum": (4, 4),  # special form (40.19) — range Σ, sum(i, lo, hi, expr)
         "product": (4, 4),  # special form (40.19) — range Π, product(i, lo, hi, expr)
         "map": (3, 3),  # special form (40.24) — element-wise map(vector, name, body)
+        # special form (40.25) — residual_sum_squares(expr, var, xs, ys)
+        "residual_sum_squares": (4, 4),
     }
 
 

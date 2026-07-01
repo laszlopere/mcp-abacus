@@ -192,6 +192,8 @@ _SPECIAL_FORM_ARITIES: dict[str, tuple[int, int | None]] = {
     "sum": (4, 4),  # 40.19 — sum(i, lo, hi, expr); range summation Σ, EXACT finite fold
     "product": (4, 4),  # 40.19 — product(i, lo, hi, expr); range product Π, EXACT finite fold
     "map": (3, 3),  # 40.24 — map(vector, name, body); element-wise transform, vector -> vector
+    # 40.25 — residual_sum_squares(expr, var, xs, ys); Σ(ys_i - expr[var:=xs_i])**2, scalar
+    "residual_sum_squares": (4, 4),
 }
 _SPECIAL_FORM_NAMES: frozenset[str] = frozenset(_SPECIAL_FORM_ARITIES)
 
@@ -207,6 +209,7 @@ _SPECIAL_FORM_BOUND_VAR: dict[str, int] = {
     "sum": 0,
     "product": 0,
     "map": 1,
+    "residual_sum_squares": 1,  # 40.25 — residual_sum_squares(expr, var, xs, ys), var at index 1
 }
 
 
@@ -335,6 +338,11 @@ FUNCTION_HELP: dict[str, str] = {
     "2nd-arg NAME bound to it, collecting a same-length vector (map([1,2,3], x, x**2) = "
     "[1, 4, 9]); 1st arg a vector, 2nd a bare name, 3rd the unevaluated body — exactness is "
     "the body's, per element",
+    "residual_sum_squares": "least-squares cost Σ(ys_i - model(xs_i))**2 of a model against "
+    "paired data: for each point bind the 2nd-arg NAME to xs_i in the model, subtract from "
+    "ys_i, square, and sum (1st arg the unevaluated model, 2nd a bare name, 3rd/4th two "
+    "equal-length non-empty data vectors — NOT values); scalar result, exact in rational, "
+    "may round in fixed-point/float (the sum stance, no sqrt)",
 }
 
 

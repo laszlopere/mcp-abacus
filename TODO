@@ -1399,7 +1399,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                transform; (b) does the result nest — is map over a scalar an error or a
                1-elt vector; (c) whether a two-vector zip form (map two series in lockstep)
                is in scope here or a separate item — 40.25 needs the parallel walk.
-    [ ] 40.25. residual_sum_squares(expr, var, xs, ys) — least-squares cost of a MODEL
+    [x] 40.25. residual_sum_squares(expr, var, xs, ys) — least-squares cost of a MODEL
                against PAIRED DATA: sum over i of (ys_i - expr[var := xs_i])**2, the sum
                of squared residuals (RSS/SSE). Spelled out, NOT an acronym — the
                covariance/correlation/variance stance (a cryptic `rss`/`sse` would collide

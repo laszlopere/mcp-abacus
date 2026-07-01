@@ -16,6 +16,10 @@ rebind-the-body shape, but over INTEGER steps from ``lo`` to ``hi`` inclusive ra
 continuous interval. ``map(vector, name, body)`` (40.24) is the same rebind-the-body shape once
 more, but over the ELEMENTS of an already-built vector, and it RETURNS a vector rather than a
 scalar — the first form that both consumes and produces one (reusing factor's producer, 40.23).
+``residual_sum_squares(expr, var, xs, ys)`` (40.25) folds the same rebind-the-model shape over
+two PAIRED data vectors walked in lockstep, accumulating the squared gap
+``Σ(ys_i - model(xs_i))**2`` — a least-squares cost, the caller-supplied-model analogue of
+curve_fit's residual error.
 
 This is a SIBLING engine to solver.py: it imports expr.nodes (Node.evaluate, the AST) to
 re-run the integrand, an edge value.py cannot carry — which is why these live here and not
@@ -30,13 +34,16 @@ math is intrinsically floating-point). The integral result is flagged inexact in
 conversion. The same holds for ``diff`` (40.17): a finite-difference quotient only
 APPROXIMATES the true derivative, so it too is inexact in every mode.
 
-``sum``/``product`` (40.19) are the EXCEPTION: a finite fold over integer steps is EXACT —
-it adds and multiplies the body's own Values with no truncation of its own — so it keeps the
-per-mode exactness of the body. ``sum`` is repeated ``+`` (exact in every mode, like
-``sum_``); ``product`` is repeated ``*`` (may round to the covering fixed-point scale, exact
-in rational, rounds in float); either way the inexactness is the body's or the multiply's,
-never the form's. A finite range can still be huge, so the term count is capped (a DoS guard,
-mirroring factorial's cap).
+``sum``/``product`` (40.19) and ``residual_sum_squares`` (40.25) are the EXCEPTION: a finite
+fold is EXACT — it adds and multiplies the body's own Values with no truncation of its own — so
+it keeps the per-mode exactness of the body. ``sum`` is repeated ``+`` (exact in every mode,
+like ``sum_``); ``product`` is repeated ``*`` (may round to the covering fixed-point scale,
+exact in rational, rounds in float); ``residual_sum_squares`` is subtract + square + add, so it
+follows the same stance as ``product`` (the square may round in fixed-point/float, stays exact
+in rational). Either way the inexactness is the body's or the arithmetic's, never the form's. A
+finite range can still be huge, so ``sum``/``product``'s term count is capped (a DoS guard,
+mirroring factorial's cap); ``residual_sum_squares`` folds over the caller's data, already
+bounded by the vector length.
 """
 
 from collections.abc import Callable
@@ -75,6 +82,8 @@ def dispatch_special_form(name: str, ctx: EvalContext, args: tuple[Node, ...]) -
         return _range_fold(ctx, args, "product", Value.mul, 1)
     if name == "map":
         return _map(ctx, args)
+    if name == "residual_sum_squares":
+        return _residual_sum_squares(ctx, args)
     raise EvalError(f"unknown special form: {name!r}", line=0)
 
 
@@ -346,6 +355,83 @@ def _map(ctx: EvalContext, args: tuple[Node, ...]) -> Value:
     # Pack straight into a VECTOR in the run's element mode, exactly as factor does (40.23);
     # a body that produced a vector makes this refuse (no nesting, per Value.vector).
     return Value.vector(results, ctx.mode)
+
+
+def _residual_sum_squares(ctx: EvalContext, args: tuple[Node, ...]) -> Value:
+    """Least-squares cost ``residual_sum_squares(expr, var, xs, ys)`` of a model (40.25).
+
+    ``Σ_i (ys_i - expr[var := xs_i])**2`` — the sum of squared residuals (RSS/SSE) of a
+    caller-supplied model against PAIRED observed data. ``expr`` is the unevaluated model,
+    ``var`` a bare NAME (its free variable), ``xs``/``ys`` two EQUAL-LENGTH, NON-EMPTY data
+    vectors (ordinary expressions, evaluated up front). The two series walk in LOCKSTEP: for
+    each pair the model is re-evaluated with ``var`` bound to ``xs_i``, subtracted from
+    ``ys_i``, squared, and folded into the running sum. This is the caller-supplied-model
+    analogue of curve_fit's residual error (which only ranks its built-in forms).
+
+    RETURNS a SCALAR. Like ``sum`` (40.19) the fold adds no truncation of its own and stamps
+    no verdict — the per-mode story is the underlying arithmetic's (subtract + square + add):
+    EXACT in rational, MAY ROUND in fixed-point/float where the square leaves the grid (the
+    avg/sum stance, NOT sqrt's — there is no root). A transcendental model in rational mode
+    refuses at the point, the same stance the other forms take. DOMAIN: ``xs``/``ys`` must be
+    two equal-length, non-empty vectors — unequal lengths (unpaired data) and empty data both
+    REFUSE, mirroring covariance (40.13).
+    """
+    expr, var_node, xs_node, ys_node = args
+
+    # The model variable must be a bare NAME — same stance as integral/diff/map (a constant
+    # like pi/e parses to a nullary FuncCall, a literal to a Number; neither names a point).
+    if not isinstance(var_node, Var):
+        raise EvalError(
+            "residual_sum_squares's variable (2nd argument) must be a name", line=var_node.line
+        )
+    name = var_node.name
+    # A dummy the fold rebinds cannot also be a name the model assigns (mirrors the other
+    # forms). Unreachable through the parser today — an argument is an expression, never an
+    # assignment — but guards a directly built tree.
+    if name in expr.assigned_names():
+        raise EvalError(
+            f"model variable {name!r} is assigned by the model expression", line=var_node.line
+        )
+
+    xs_value = xs_node._walk(ctx)
+    ys_value = ys_node._walk(ctx)
+    if xs_value.mode is not Mode.VECTOR or ys_value.mode is not Mode.VECTOR:
+        raise EvalError(
+            "residual_sum_squares's data (3rd and 4th arguments) must be two vectors",
+            line=xs_node.line,
+        )
+    xs = xs_value.payload.elements  # type: ignore[union-attr]
+    ys = ys_value.payload.elements  # type: ignore[union-attr]
+    if len(xs) != len(ys):
+        raise EvalError(
+            "residual_sum_squares requires two equal-length data vectors", line=xs_node.line
+        )
+    if not xs:
+        raise EvalError("residual_sum_squares of empty data is undefined", line=xs_node.line)
+
+    def squared_residual(x: Value, y: Value) -> Value:
+        # Re-evaluate the model with ``name`` bound to the point ``x`` (40.25) — same child-store
+        # / CONTINUE_AND_REPORT handling as sum/product/map: the model still reads outer bindings,
+        # ``name`` shadows any outer binding of the same name, and a point's inexactness never
+        # aborts mid-fold (the abort, if requested, fires once on the scalar result at the outer
+        # FuncCall node). The observed ``y`` and the model share the run mode, so ``sub`` is
+        # same-mode; the square is a plain ``mul`` (may round in fixed-point/float, exact rational).
+        store = ctx.variables.copy()
+        store.set(name, x)
+        predicted = expr.evaluate(
+            ctx.mode,
+            ctx.min_fixed_point_precision,
+            now_ns=ctx.now_ns,
+            variables=store,
+            inexact_handling=InexactHandling.CONTINUE_AND_REPORT,
+        )
+        gap = y.sub(predicted)
+        return gap.mul(gap)
+
+    total = squared_residual(xs[0], ys[0])
+    for x, y in zip(xs[1:], ys[1:], strict=True):
+        total = total.add(squared_residual(x, y))
+    return total
 
 
 def _step(ctx: EvalContext, x: Value) -> Value:

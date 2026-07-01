@@ -337,6 +337,40 @@ def test_map_transforms_a_vector_element_wise():
             assert payload["value"] is None, f"{expr!r} unexpectedly succeeded"
 
 
+def test_residual_sum_squares_scores_a_model_against_paired_data():
+    # residual_sum_squares (40.25) CONSUMES two data vectors and returns a SCALAR: the
+    # least-squares cost Σ(ys_i - model(xs_i))**2 of a caller-supplied model. It reads outer
+    # bindings; unequal-length or empty data, or a non-vector data argument, refuse over the
+    # real stdio path. Rational mode so a perfect fit and an exact fractional cost both show.
+    cases = [
+        ("residual_sum_squares(2*x, x, [1, 2, 3], [2, 4, 6])", "0", None),  # perfect fit
+        ("residual_sum_squares(2*x, x, [1, 2, 3], [2, 4, 7])", "1", None),  # one unit off
+        ("a = 2\nresidual_sum_squares(a*x, x, [1, 2], [2, 4])", "0", None),  # reads outer a
+        (
+            "residual_sum_squares(2*x, x, [1, 2, 3], [1, 2])",
+            None,
+            "residual_sum_squares requires two equal-length data vectors",
+        ),
+        (
+            "residual_sum_squares(2*x, x, [], [])",
+            None,
+            "residual_sum_squares of empty data is undefined",
+        ),
+        (
+            "residual_sum_squares(2*x, x, 5, [1, 2])",
+            None,
+            "residual_sum_squares's data (3rd and 4th arguments) must be two vectors",
+        ),
+    ]
+    payloads = _run_calc([(e, "rational") for e, _v, _m in cases])
+    for (expr, value, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        if message is None:
+            assert _bare(payload) == value, f"{expr!r} -> {payload['value']!r}"
+        else:
+            assert payload["value"] is None, f"{expr!r} unexpectedly succeeded"
+
+
 def test_nested_vectors_are_rejected():
     # Strictly one-dimensional (19.1.10): an element that is itself a vector is refused.
     (payload,) = _run_calc([("[[1,2],[3,4]]", "fixed-point")])
