@@ -345,8 +345,11 @@ def test_map_masks_its_element_name_in_referenced_names():
         # surfaced as the body's own line-tagged error (the element 1 is a non-zero rational).
         ("map([1, 2], x, sin(x))", "rational", "sine of a non-zero rational is irrational"),
         # A body that itself produces a vector would nest — refused by the 1-D vector rule.
-        ("map([1, 2], x, [x, x])", None, "vectors must be one-dimensional; a vector cannot "
-         "hold a vector"),
+        (
+            "map([1, 2], x, [x, x])",
+            None,
+            "vectors must be one-dimensional; a vector cannot hold a vector",
+        ),
     ],
 )
 def test_map_refuses_with_a_line_tagged_error(expression, mode, error):
@@ -1016,7 +1019,65 @@ def test_hypot_refuses_with_a_line_tagged_error(expression, mode, error):
     assert payload["value"] is None
 
 
-@pytest.mark.parametrize("name", ["hypot", "avg", "max", "min", "variance", "gcd", "lcm"])
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # Sum of squares (40.26): Σ xi**2. All-integer operands stay on the grid, so
+        # exact in every mode — the fixed-point default here.
+        ("sumsq(3, 4)", None, "25 (exact)"),  # 9 + 16
+        ("sumsq(2, 3, 6)", None, "49 (exact)"),  # VARIADIC, 3 operands: 4 + 9 + 36
+        ("sumsq(5)", None, "25 (exact)"),  # the lone-operand form is just x**2
+        ("sumsq(-5)", None, "25 (exact)"),  # every real in domain — squaring erases sign
+        ("sumsq(0)", None, "0 (exact)"),
+        ("sumsq([1, 2, 3])", None, "14 (exact)"),  # a SINGLE vector reduces its ELEMENTS
+        # The AVG stance (not hypot's): each square quantizes to the covering scale BEFORE
+        # summing, so a sub-grid square rounds. 0.1**2 = 0.01 rounds to 0.0 at scale 1.
+        (
+            "sumsq(0.1)",
+            None,
+            "0.0 (inexact, rounded to 1 decimal — pass min_fixed_point_precision "
+            "for more; e.g. =5 → 0.01000)",
+        ),
+        # 0.3**2=0.09→0.1 and 0.4**2=0.16→0.2 each round, then add exactly to 0.3 (true 0.25).
+        (
+            "sumsq(0.3, 0.4)",
+            None,
+            "0.3 (inexact, rounded to 1 decimal — pass min_fixed_point_precision "
+            "for more; e.g. =5 → 0.25000)",
+        ),
+        # binary64 is unconditionally inexact, even for an integer sum of squares.
+        ("sumsq(3, 4)", "floating-point", "25.0 (inexact)"),
+        ("sumsq(2, 3, 6)", "floating-point", "49.0 (inexact)"),
+        # Rational squares and adds exactly — no grid to fall off.
+        ("sumsq(3, 4)", "rational", "25 (exact)"),
+        ("sumsq(1/2, 1/2)", "rational", "1/2 (exact)"),  # 1/4 + 1/4
+        ("sumsq(3/5, 4/5)", "rational", "1 (exact)"),  # 9/25 + 16/25
+        ("sumsq([1, 2, 3])", "rational", "14 (exact)"),
+    ],
+)
+def test_sumsq(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "error"),
+    [
+        # A vector is legal only as the SOLE operand — mixing it or emptying it refuses,
+        # spelling out the two forms (the _series_operands contract shared with avg/variance).
+        (
+            "sumsq([1, 2], 3)",
+            "sumsq has two forms — sumsq(vector) or sumsq(a, b, …) — and cannot mix them",
+        ),
+        ("sumsq([])", "sumsq of an empty vector is undefined"),
+    ],
+)
+def test_sumsq_refuses_with_a_line_tagged_error(expression, error):
+    payload = _calc(expression)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize("name", ["hypot", "sumsq", "avg", "max", "min", "variance", "gcd", "lcm"])
 def test_variadic_functions_refuse_below_their_arity_floor(name):
     # A variadic (1, None) function needs at least one operand; calling it with none is a
     # parse-time arity error, not a domain refusal. Pins the lower-bound wording for the

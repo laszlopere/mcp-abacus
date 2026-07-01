@@ -116,6 +116,7 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "percentile": Value.percentile,  # 40.12 — (p, data…); quantile scaled by 100, p in [0,100]
     "clamp": Value.clamp,  # 40.21 — ternary; min(hi, max(lo, x)) selection, exact, refuses lo>hi
     "lerp": Value.lerp,  # 40.22 — ternary; linear interpolation a+(b-a)*t, arithmetic stance
+    "sumsq": Value.sumsq,  # 40.26 — variadic/vector; Σ xi**2 (hypot's inner sum), avg stance
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
     "covariance": Value.covariance,  # 40.13 — two vectors; population mean((x-mx)*(y-my))
@@ -151,6 +152,7 @@ _VECTOR_FUNCS: frozenset[str] = frozenset(
         "median",
         "quantile",
         "percentile",
+        "sumsq",
         "variance",
         "stddev",
         "covariance",
@@ -293,6 +295,8 @@ FUNCTION_HELP: dict[str, str] = {
     "type, carries the chosen operand verbatim, refuses lo>hi",
     "lerp": "linear interpolation a+(b-a)*t; exact in rational, may round in fixed-point/float, "
     "t unrestricted (outside [0,1] extrapolates)",
+    "sumsq": "sum of squares x1^2+...+xn^2 of the operands (or a single vector's elements); "
+    "hypot's inner sum, any reals, exact in rational, may round in fixed-point/float",
     "variance": "population variance, sum of squared deviations / n of the operands (or a "
     "single vector's elements)",
     "stddev": "population standard deviation, sqrt of variance (operands or a single vector)",

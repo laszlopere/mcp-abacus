@@ -2103,6 +2103,28 @@ class Value:
         """
         return functools.reduce(Value.add, others, self)
 
+    def sumsq(self, *others: "Value") -> "Value":
+        """Sum of squares x1**2 + x2**2 + ... + xn**2 (40.26) — VARIADIC, or over a
+        SINGLE vector's elements.
+
+        Either a flat run or one vector (``sumsq([a, b, …])``, 19.1.10), resolved
+        by ``_series_operands``. It is the inner sum that ``hypot`` (40.20) roots —
+        exposed on its own — and the reduce half of ``residual_sum_squares``
+        (40.25). EVERY real is in domain (squaring erases the sign), so there is no
+        refusal; ``sumsq(a)`` is just ``a**2``.
+
+        Unlike ``hypot`` (which accumulates the squares EXACTLY at the doubled
+        scale for a single final rounding under the root), sumsq takes the AVG/
+        variance stance (28.4/28.8): it folds the type's own ``mul`` then ``add``,
+        so each square quantizes on the type's grid BEFORE summing. Addition never
+        leaves the grid, so the total is EXACT in rational and MAY ROUND in
+        fixed-point/float — but only where a square already did (fixed-point
+        ``mul`` quantizes to the covering scale, binary64 rounds every product).
+        Same-mode is enforced by the composed ops (no mixing).
+        """
+        operands = self._series_operands(others, "sumsq")
+        return functools.reduce(Value.add, (op.mul(op) for op in operands))
+
     def avg(self, *others: "Value") -> "Value":
         """Arithmetic mean (28.4) — VARIADIC, or over a SINGLE vector's elements.
 

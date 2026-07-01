@@ -873,6 +873,20 @@ FUNCTION_DETAILS: dict[str, str] = {
         "with no truncation of its own and inherits the body's per-mode story. any "
         "inexactness in the result is the body's, never the form's."
     ),
+    "sumsq": (
+        "sum of squares x1^2 + x2^2 + ... + xn^2 — VARIADIC, or over a single vector "
+        "(sumsq([a, b, ...])); a vector is legal only as the sole operand, and an empty vector "
+        "is refused. every real is in domain (squaring erases the sign), so there is no "
+        "refusal; sumsq(a) is just a^2. it is the inner sum hypot roots (exposed on its own) "
+        "and the reduce half of residual_sum_squares."
+        "\n\n"
+        "unlike hypot — which accumulates the squares EXACTLY at the doubled scale for a "
+        "single final rounding under the root — sumsq takes the avg/variance stance: it folds "
+        "the type's own mul then add, so each square quantizes on the type's grid BEFORE "
+        "summing. addition never leaves the grid, so the total is EXACT in rational and MAY "
+        "ROUND in fixed-point/float, but only where a square already did (fixed-point mul "
+        "quantizes to the covering scale, binary64 rounds every product)."
+    ),
     "tan": (
         "tangent of an angle given in radians, equal to sin/cos. transcendental, so inexact "
         "everywhere except the trivial tan(0) = 0."

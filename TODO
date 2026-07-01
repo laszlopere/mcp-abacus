@@ -1419,7 +1419,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                (a) refuse unequal-length xs/ys and empty data; (b) name — lead with
                residual_sum_squares, sum_squared_residuals the alt order; (c) whether a
                weighted form (a third vector w) is a later variant.
-    [ ] 40.26. sumsq(...) — sum of squares x1**2 + x2**2 + ..., VARIADIC (the sum/hypot
+    [x] 40.26. sumsq(...) — sum of squares x1**2 + x2**2 + ..., VARIADIC (the sum/hypot
                shape, 40.20) with a VECTOR overload (sumsq(vector)); a reducer, so it
                joins _VECTOR_FUNCS. Plain squaring + addition: EXACT in rational, may
                round in fixed-point/float (the avg stance, not sqrt's). Note hypot (40.20)

@@ -187,6 +187,7 @@ def test_function_arities_match_the_registry():
         "percentile": (2, None),  # 40.12 — point + at least one datum
         "clamp": (3, 3),  # 40.21 — TERNARY, constrain x to [lo, hi]
         "lerp": (3, 3),  # 40.22 — TERNARY, linear interpolation a+(b-a)*t
+        "sumsq": (1, None),  # 40.26 — VARIADIC/vector, Σ xi**2
         "variance": (1, None),
         "stddev": (1, None),
         "covariance": (2, 2),  # 40.13 — BINARY, two equal-length vectors
