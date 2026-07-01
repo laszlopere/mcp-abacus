@@ -211,6 +211,7 @@ def test_function_arities_match_the_registry():
         "diff": (3, 3),  # special form (40.17) — fixed arity 3, not read off a signature
         "sum": (4, 4),  # special form (40.19) — range Σ, sum(i, lo, hi, expr)
         "product": (4, 4),  # special form (40.19) — range Π, product(i, lo, hi, expr)
+        "map": (3, 3),  # special form (40.24) — element-wise map(vector, name, body)
     }
 
 

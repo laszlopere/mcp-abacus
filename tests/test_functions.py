@@ -275,6 +275,94 @@ def test_range_fold_arity_is_a_parse_error():
     assert "takes 4 argument(s)" in payload["error"]
 
 
+# --- map(vector, name, body): the element-wise transform special form (40.24) --
+# A higher-order special form like sum/product (40.19): `name` is a bare NAME (the element
+# dummy) and `body` the unevaluated expression, NOT values — but the 1st arg is a VECTOR that
+# IS evaluated, and the result is a VECTOR (not a scalar). The FIRST form that both consumes
+# and produces a vector. map only dispatches: exactness is the body's, per element.
+@pytest.mark.parametrize(
+    ("expression", "mode", "floor", "value"),
+    [
+        ("map([1, 2, 3], x, x**2)", None, None, "[1, 4, 9] (exact)"),  # fixed-point default
+        ("map([1, 2, 3], x, 2*x + 1)", None, None, "[3, 5, 7] (exact)"),  # body is an expr in x
+        # An EMPTY source maps to an empty vector, vacuously exact in every mode.
+        ("map([], x, x**2)", None, None, "[] (exact)"),
+        # The result carries the run's element mode: rational holds the reciprocals exactly.
+        ("map([1, 2, 4], x, 1/x)", "rational", None, "[1, 1/2, 1/4] (exact)"),
+        # A float body makes every element — and so the vector — inexact.
+        ("map([1.0, 2.0], x, x*2)", "floating-point", None, "[2.0, 4.0] (inexact)"),
+        # The body reads the element at the run scale, so a raised floor carries through.
+        ("map([1, 2], x, x)", None, 4, "[1.0000, 2.0000] (exact)"),
+    ],
+)
+def test_map(expression, mode, floor, value):
+    assert _value(expression, mode, floor) == value
+
+
+def test_map_inherits_body_inexactness():
+    # An inexact element (fixed-point sqrt rounds) makes the whole vector inexact, exactly as
+    # a vector literal folds its elements' flags — map stamps no verdict of its own.
+    assert _value("map([2, 3], x, sqrt(x))").startswith("[1, 2] (inexact")
+
+
+def test_map_consumes_a_produced_vector():
+    # map both CONSUMES and PRODUCES a vector, so it composes with the other vector-producer:
+    # factor(12) = [2, 2, 3], squared element-wise is [4, 4, 9].
+    assert _value("map(factor(12), x, x**2)") == "[4, 4, 9] (exact)"
+
+
+def test_map_reads_outer_variables():
+    # The body re-evaluates in a child store seeded from the run's, so it reads an outer
+    # binding (k) while the element dummy (x) shadows the per-element value: k*x over [1,2,3].
+    assert _value("k = 10\nmap([1, 2, 3], x, k*x)") == "[10, 20, 30] (exact)"
+
+
+def test_map_element_dummy_shadows_an_outer_binding_of_the_same_name():
+    # When the element name reuses an OUTER binding, the per-element value shadows it inside
+    # the body: x is 1,2,3 in turn, not the outer 99. Proves the dummy is a fresh child scope.
+    assert _value("x = 99\nmap([1, 2, 3], x, x + 1)") == "[2, 3, 4] (exact)"
+
+
+def test_map_masks_its_element_name_in_referenced_names():
+    # The element name is BOUND (a dummy map rebinds per element), so it is not a free
+    # reference — only genuinely free names (here the source `data` and the body's `t`) leak
+    # out, keeping the dummy from being mistaken for a solver unknown. (The name is the SECOND
+    # arg, like integral/diff's variable — _SPECIAL_FORM_BOUND_VAR tracks which.)
+    assert parse("map(data, x, x*t)").referenced_names() == frozenset({"data", "t"})
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # The 1st arg must be a VECTOR: map transforms a series, so a scalar has no elements to
+        # walk and refuses rather than silently wrapping in a 1-element vector.
+        ("map(5, x, x**2)", None, "map's first argument must be a vector"),
+        # The element name (2nd arg) must be a bare name: a literal or a constant nullary
+        # (pi/e) is not — the same stance sum/integral/diff take on their variable argument.
+        ("map([1, 2], 3, x)", None, "map's variable (2nd argument) must be a name"),
+        ("map([1, 2], pi, x)", None, "map's variable (2nd argument) must be a name"),
+        # A transcendental body in rational mode refuses at the element, like sin everywhere —
+        # surfaced as the body's own line-tagged error (the element 1 is a non-zero rational).
+        ("map([1, 2], x, sin(x))", "rational", "sine of a non-zero rational is irrational"),
+        # A body that itself produces a vector would nest — refused by the 1-D vector rule.
+        ("map([1, 2], x, [x, x])", None, "vectors must be one-dimensional; a vector cannot "
+         "hold a vector"),
+    ],
+)
+def test_map_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+def test_map_arity_is_a_parse_error():
+    # Fixed arity 3, wired through FUNCTION_ARITIES like every call — wrong count is caught at
+    # parse, before evaluation, the same as a misused ordinary function.
+    payload = _calc("map([1, 2, 3], x)")
+    assert payload["value"] is None
+    assert "takes 3 argument(s)" in payload["error"]
+
+
 @pytest.mark.parametrize(
     ("expression", "mode", "value"),
     [

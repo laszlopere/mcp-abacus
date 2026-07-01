@@ -539,6 +539,27 @@ FUNCTION_DETAILS: dict[str, str] = {
         "0, which alone is representable; any other argument refuses, the exact-or-refuse "
         "stance of log."
     ),
+    "map": (
+        "element-wise transform of a vector: apply a body expression to every element and "
+        "collect a same-length vector. the arguments are map(vector, name, body): the 1st is "
+        "the source vector (an ordinary expression, evaluated up front — it MUST be a vector, "
+        "a scalar refuses since map is vector-in/vector-out), the 2nd a bare NAME (not a "
+        "value) — the element dummy, the 3rd the UNEVALUATED body re-evaluated once per "
+        "element with name rebound to it. name shadows any outer binding of the same name and "
+        "may not be a name the body assigns. map([1,2,3], x, x**2) = [1, 4, 9]; an empty "
+        "vector maps to an empty vector."
+        "\n\n"
+        "it is the missing element-wise primitive — the vector type otherwise refuses every "
+        "operator and function, so map is how you transform a series. the FIRST function that "
+        "both CONSUMES and PRODUCES a vector, reusing factor's producer plumbing. a "
+        "transcendental body in rational mode refuses at the element, the same stance the "
+        "other special forms take."
+        "\n\n"
+        "map itself only DISPATCHES — it adds no arithmetic and stamps no verdict of its own. "
+        "exactness is the BODY's, per element: the result is exact iff every mapped element "
+        "is (an empty source is vacuously exact); a fixed-point body that rounds, or a float "
+        "body, makes the elements — and so the vector — inexact."
+    ),
     "max": (
         "largest operand, returned VERBATIM: pure selection, never math. it compares "
         "value-only and returns whichever operand is greatest unchanged, so the result "

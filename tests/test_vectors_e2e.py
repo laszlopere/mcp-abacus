@@ -313,6 +313,30 @@ def test_factor_refusals():
         assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
 
 
+def test_map_transforms_a_vector_element_wise():
+    # map (40.24) is the first function that both CONSUMES and PRODUCES a vector: it evaluates
+    # the body for each element with the 2nd-arg NAME bound to it, collecting a same-length
+    # vector. It composes with factor (the other vector-producer) and reads outer bindings; a
+    # scalar 1st arg or a non-name 2nd arg refuses over the real stdio path.
+    cases = [
+        ("map([1, 2, 3], x, x**2)", "[1, 4, 9]", True, None),
+        ("map([], x, x**2)", "[]", True, None),  # empty maps to empty, vacuously exact
+        ("map(factor(12), x, x**2)", "[4, 4, 9]", True, None),  # consumes a produced vector
+        ("k = 10\nmap([1, 2, 3], x, k*x)", "[10, 20, 30]", True, None),  # reads an outer binding
+        ("map(5, x, x**2)", None, None, "map's first argument must be a vector"),
+        ("map([1, 2], 3, x)", None, None, "map's variable (2nd argument) must be a name"),
+    ]
+    payloads = _run_calc([(e, "fixed-point") for e, _r, _x, _m in cases])
+    for (expr, rendered, exact, message), payload in zip(cases, payloads, strict=True):
+        assert payload["error"] == message, f"{expr!r} -> {payload['error']!r}"
+        if message is None:
+            assert _bare(payload) == rendered, f"{expr!r} -> {payload['value']!r}"
+            assert payload["exact"] is exact, f"{expr!r} exact mismatch"
+            assert payload["precision"] is None  # a vector has no single decimal scale
+        else:
+            assert payload["value"] is None, f"{expr!r} unexpectedly succeeded"
+
+
 def test_nested_vectors_are_rejected():
     # Strictly one-dimensional (19.1.10): an element that is itself a vector is refused.
     (payload,) = _run_calc([("[[1,2],[3,4]]", "fixed-point")])

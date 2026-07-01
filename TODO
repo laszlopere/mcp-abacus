@@ -1386,7 +1386,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                factor / factorize / primefactors / factorint. Settle the vector-PRODUCER
                plumbing here; it is the prerequisite any future list-returning function
                (divisors, range, …) reuses.
-    [ ] 40.24. map(vector, name, body) — evaluate an EXPRESSION per element and RETURN
+    [x] 40.24. map(vector, name, body) — evaluate an EXPRESSION per element and RETURN
                a new VECTOR. Higher-order like diff/integral/sum-fold (40.17/40.18/40.19):
                arg 1 is a vector, arg 2 a BARE NAME, arg 3 the UNEVALUATED body; for each
                element the body runs with `name` bound to that element, and the results

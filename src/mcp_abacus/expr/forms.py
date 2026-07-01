@@ -13,7 +13,9 @@ expression while searching. ``diff(expr, var, at)`` (40.17) is its sibling — a
 derivative, the same rebind-and-sample shape over a tight finite-difference stencil.
 ``sum(i, lo, hi, expr)`` / ``product(i, lo, hi, expr)`` (40.19) are the Σ/Π folds — the same
 rebind-the-body shape, but over INTEGER steps from ``lo`` to ``hi`` inclusive rather than a
-continuous interval.
+continuous interval. ``map(vector, name, body)`` (40.24) is the same rebind-the-body shape once
+more, but over the ELEMENTS of an already-built vector, and it RETURNS a vector rather than a
+scalar — the first form that both consumes and produces one (reusing factor's producer, 40.23).
 
 This is a SIBLING engine to solver.py: it imports expr.nodes (Node.evaluate, the AST) to
 re-run the integrand, an edge value.py cannot carry — which is why these live here and not
@@ -71,6 +73,8 @@ def dispatch_special_form(name: str, ctx: EvalContext, args: tuple[Node, ...]) -
         return _range_fold(ctx, args, "sum", Value.add, 0)
     if name == "product":
         return _range_fold(ctx, args, "product", Value.mul, 1)
+    if name == "map":
+        return _map(ctx, args)
     raise EvalError(f"unknown special form: {name!r}", line=0)
 
 
@@ -283,6 +287,65 @@ def _range_fold(
     for k in range(lo + 1, hi + 1):
         acc = op(acc, term(k))
     return acc
+
+
+def _map(ctx: EvalContext, args: tuple[Node, ...]) -> Value:
+    """Element-wise transform ``map(vector, name, body)`` — a new VECTOR (40.24).
+
+    ``vector`` is an ordinary expression evaluated up front (it MUST be a vector — a
+    scalar is refused, map is vector-in/vector-out), ``name`` a bare NAME (the element
+    dummy), ``body`` the unevaluated expression re-evaluated once per element with
+    ``name`` rebound to it. The results collect into a same-length VECTOR in the run's
+    element mode — the FIRST function that both CONSUMES and PRODUCES a vector, reusing
+    factor's ``Value.vector`` producer plumbing (40.23).
+
+    Higher-order like sum/product (40.19): map itself only DISPATCHES — it adds no
+    arithmetic and stamps no verdict of its own. Exactness is the BODY's, per element:
+    ``Value.vector`` folds the elements' flags, so the result is exact iff every mapped
+    element is (an EMPTY source maps to an empty vector, vacuously exact). A transcendental
+    body in rational mode refuses at the element, the same stance the other forms take.
+    """
+    vector_node, name_node, body = args
+
+    # The element variable must be a bare NAME — same stance as integral/diff/sum (a
+    # constant like pi/e parses to a nullary FuncCall, a literal to a Number; neither is a
+    # name to bind an element to).
+    if not isinstance(name_node, Var):
+        raise EvalError("map's variable (2nd argument) must be a name", line=name_node.line)
+    name = name_node.name
+    # A dummy the map rebinds cannot also be a name the body assigns (mirrors the other
+    # forms). Unreachable through the parser today — an argument is an expression, never an
+    # assignment — but guards a directly built tree.
+    if name in body.assigned_names():
+        raise EvalError(f"map variable {name!r} is assigned by the body", line=name_node.line)
+
+    source = vector_node._walk(ctx)
+    if source.mode is not Mode.VECTOR:
+        # map transforms a SERIES; a scalar has no elements to walk. Refuse rather than
+        # silently wrap it in a 1-element vector (the vector-in/vector-out contract, 40.24).
+        raise EvalError("map's first argument must be a vector", line=vector_node.line)
+
+    results = []
+    for element in source.payload.elements:  # type: ignore[union-attr]
+        # Re-evaluate the body with ``name`` bound to the element (40.24) — same child-store /
+        # CONTINUE_AND_REPORT handling as sum/product: the body still reads outer bindings,
+        # ``name`` shadows any outer binding of the same name, and an element's inexactness
+        # never aborts mid-map (the abort, if requested, fires once on map's own vector result
+        # at the outer FuncCall node).
+        store = ctx.variables.copy()
+        store.set(name, element)
+        results.append(
+            body.evaluate(
+                ctx.mode,
+                ctx.min_fixed_point_precision,
+                now_ns=ctx.now_ns,
+                variables=store,
+                inexact_handling=InexactHandling.CONTINUE_AND_REPORT,
+            )
+        )
+    # Pack straight into a VECTOR in the run's element mode, exactly as factor does (40.23);
+    # a body that produced a vector makes this refuse (no nesting, per Value.vector).
+    return Value.vector(results, ctx.mode)
 
 
 def _step(ctx: EvalContext, x: Value) -> Value:

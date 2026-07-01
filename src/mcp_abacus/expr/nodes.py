@@ -191,19 +191,22 @@ _SPECIAL_FORM_ARITIES: dict[str, tuple[int, int | None]] = {
     "diff": (3, 3),  # 40.17 — diff(expr, var, at); numerical derivative, always inexact
     "sum": (4, 4),  # 40.19 — sum(i, lo, hi, expr); range summation Σ, EXACT finite fold
     "product": (4, 4),  # 40.19 — product(i, lo, hi, expr); range product Π, EXACT finite fold
+    "map": (3, 3),  # 40.24 — map(vector, name, body); element-wise transform, vector -> vector
 }
 _SPECIAL_FORM_NAMES: frozenset[str] = frozenset(_SPECIAL_FORM_ARITIES)
 
 # Which ARGUMENT of each special form is the bound variable NAME (the dummy the form
-# rebinds per sample/term), so it is masked from referenced_names rather than leaking as a
-# free solver unknown. ``integral``/``diff`` put the integrand FIRST (var at index 1);
+# rebinds per sample/term/element), so it is masked from referenced_names rather than leaking
+# as a free solver unknown. ``integral``/``diff`` put the integrand FIRST (var at index 1);
 # ``sum``/``product`` (40.19) follow the Σ/Π reading order ``sum(i, lo, hi, expr)`` — the
-# index NAME comes first (index 0), the body last.
+# index NAME comes first (index 0), the body last. ``map`` (40.24) puts the source vector
+# first, so its element NAME sits at index 1 like integral/diff's variable.
 _SPECIAL_FORM_BOUND_VAR: dict[str, int] = {
     "integral": 1,
     "diff": 1,
     "sum": 0,
     "product": 0,
+    "map": 1,
 }
 
 
@@ -328,6 +331,10 @@ FUNCTION_HELP: dict[str, str] = {
     "diff": "numerical derivative of an expression at a point w.r.t. the variable NAMED by "
     "the 2nd arg (1st arg is the unevaluated expression, 2nd a bare name, 3rd the point — "
     "NOT values); five-point central difference, always inexact",
+    "map": "element-wise transform of a vector: evaluate the body for each element with the "
+    "2nd-arg NAME bound to it, collecting a same-length vector (map([1,2,3], x, x**2) = "
+    "[1, 4, 9]); 1st arg a vector, 2nd a bare name, 3rd the unevaluated body — exactness is "
+    "the body's, per element",
 }
 
 
