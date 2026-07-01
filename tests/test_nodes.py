@@ -188,6 +188,8 @@ def test_function_arities_match_the_registry():
         "clamp": (3, 3),  # 40.21 — TERNARY, constrain x to [lo, hi]
         "lerp": (3, 3),  # 40.22 — TERNARY, linear interpolation a+(b-a)*t
         "sumsq": (1, None),  # 40.26 — VARIADIC/vector, Σ xi**2
+        "geomean": (1, None),  # 40.15 — VARIADIC/vector, n-th root of the product
+        "harmean": (1, None),  # 40.16 — VARIADIC/vector, n / Σ(1/xi)
         "variance": (1, None),
         "stddev": (1, None),
         "covariance": (2, 2),  # 40.13 — BINARY, two equal-length vectors

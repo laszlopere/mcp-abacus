@@ -2142,6 +2142,53 @@ class Value:
         count = Value._from_scaled_int(len(operands), 0, operands[0].mode)
         return total.div(count)
 
+    def geomean(self, *others: "Value") -> "Value":
+        """Geometric mean (40.15) — the n-th root of the product, VARIADIC or over a
+        SINGLE vector's elements.
+
+        Either a flat run or one vector (``geomean([a, b, …])``, 19.1.10), resolved
+        by ``_series_operands``. ``(x1*x2*…*xn)**(1/n)``: the product is folded over
+        the type's own ``mul`` (each fixed-point/float step quantizing on the grid,
+        rational exact) and then ``_integer_root`` takes the n-th root — the
+        generalization of ``sqrt``/``cbrt`` (19.5.2/28.21). So it is IRRATIONAL in
+        general (inexact in float and fixed-point) and EXACT only where the root
+        lands on the grid — in rational ONLY for a perfect n-th power, else it
+        REFUSES. ``geomean(a)`` is ``a`` and ``geomean(0, …)`` is ``0``.
+
+        DOMAIN non-negative: a NEGATIVE operand makes an even root complex, so it is
+        refused like ``sqrt``'s negative (checked per operand, before the product —
+        two negatives must not cancel into a positive product that hides them).
+        """
+        operands = self._series_operands(others, "geomean")
+        if any(op._sign() < 0 for op in operands):
+            raise NotRepresentableError("geometric mean of a negative value")
+        product = functools.reduce(Value.mul, operands)
+        return product._integer_root(len(operands))
+
+    def harmean(self, *others: "Value") -> "Value":
+        """Harmonic mean ``n / sum(1/xi)`` (40.16) — VARIADIC or over a SINGLE
+        vector's elements.
+
+        Either a flat run or one vector (``harmean([a, b, …])``, 19.1.10), resolved
+        by ``_series_operands``. Composes the mode's own ``/`` and ``+`` (the count
+        divided by the total of the reciprocals), so it follows ``avg``'s division
+        stance (28.4): EXACT in rational, and MAY ROUND in fixed-point/float (each
+        reciprocal quantizes to the covering scale — at the default scale 0 that is
+        integer division, so widen min_fixed_point_precision for a meaningful
+        fractional mean). ``harmean(a)`` is ``a``.
+
+        DOMAIN positive: a NEGATIVE operand (mixed signs are ill-defined) is refused
+        here, while a ZERO makes ``1/xi`` undefined and raises ZeroDivisionError
+        through the reciprocal — the two distinct failure modes the domain names.
+        """
+        operands = self._series_operands(others, "harmean")
+        if any(op._sign() < 0 for op in operands):
+            raise NotRepresentableError("harmonic mean of a non-positive value")
+        one = Value._from_scaled_int(1, 0, operands[0].mode)
+        reciprocal_total = functools.reduce(Value.add, (one.div(op) for op in operands))
+        count = Value._from_scaled_int(len(operands), 0, operands[0].mode)
+        return count.div(reciprocal_total)
+
     def _compare(self, other: "Value", op: str) -> int:
         """Order two same-mode Values: -1 if self < other, 0 if equal, +1 if greater.
 
@@ -2168,6 +2215,27 @@ class Value:
                 # No total order on C — so min/max/median/clamp, which all route
                 # through here, refuse rather than invent a magnitude/real-part order.
                 raise NotRepresentableError(f"{op} is undefined for complex numbers (no ordering)")
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def _sign(self) -> int:
+        """The sign of a real value: -1, 0, or +1. Complex has no order (no sign),
+        so it raises — the domain gate the positivity-constrained means geomean
+        (40.15) and harmean (40.16) use to refuse negative operands.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return (self.payload > 0) - (self.payload < 0)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                return (self.payload > 0) - (self.payload < 0)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                m = self.payload.mantissa
+                return (m > 0) - (m < 0)
+            case Mode.COMPLEX:
+                raise NotRepresentableError("sign is undefined for complex numbers (no ordering)")
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 
@@ -2993,6 +3061,49 @@ class Value:
                 )
             case Mode.COMPLEX:
                 raise NotRepresentableError("cbrt is not supported for complex numbers")
+            case _:
+                raise ValueError(f"unsupported mode: {self.mode!r}")
+
+    def _integer_root(self, n: int) -> "Value":
+        """The n-th root of a NON-NEGATIVE value (n >= 1) — the generalization of
+        ``sqrt`` (n=2, 19.5.2) and ``cbrt`` (n=3, 28.21) that ``geomean`` (40.15)
+        roots its product with. Inexact except where the root lands on the mode's
+        own grid; the caller has already ruled out negatives (an even root of a
+        negative is complex), so no sign handling is needed here.
+
+        fixed-point: the integer n-th root (``_iroot``, 28.20.1) of the mantissa
+            rescaled to the operand's scale, rounded to nearest at that scale (a tie
+            is impossible — the n-th root of the scaled integer is never a
+            half-integer). Exact only when the operand was exact AND it is a perfect
+            n-th power at that scale.
+        floating-point: ``x ** (1/n)``; unconditionally inexact.
+        rational: exact ONLY when numerator and denominator are BOTH perfect n-th
+            powers (``_perfect_root``); otherwise irrational -> NotRepresentableError,
+            the exact-or-refuse stance of sqrt.
+        """
+        match self.mode:
+            case Mode.FLOATING_POINT:
+                assert isinstance(self.payload, float)
+                return Value(Mode.FLOATING_POINT, self.payload ** (1 / n), exact=False)
+            case Mode.FIXED_POINT:
+                assert isinstance(self.payload, FixedPoint)
+                fp = self.payload
+                # root(m * 10**-d) held at scale d == root(m * 10**((n-1)d)) * 10**-d:
+                # the integer n-th root of the mantissa rescaled by 10**((n-1)d).
+                scaled = fp.mantissa * 10 ** ((n - 1) * fp.decimals)
+                root = _iroot(scaled, n)
+                exact = self.exact and root**n == scaled
+                if 2**n * scaled >= (2 * root + 1) ** n:  # nearest is root+1 (tie impossible)
+                    root += 1
+                return Value(Mode.FIXED_POINT, FixedPoint(root, fp.decimals), exact=exact)
+            case Mode.RATIONAL:
+                assert isinstance(self.payload, Fraction)
+                fr = self.payload
+                root_num = _perfect_root(fr.numerator, n)
+                root_den = _perfect_root(fr.denominator, n)
+                if root_num is None or root_den is None:
+                    raise NotRepresentableError("rational nth root is irrational")
+                return Value(Mode.RATIONAL, Fraction(root_num, root_den), exact=self.exact)
             case _:
                 raise ValueError(f"unsupported mode: {self.mode!r}")
 

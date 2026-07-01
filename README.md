@@ -41,8 +41,8 @@ type; it calculates *using* that type.
   A **vector literal** `[a, b, …]` builds a one-dimensional list of values in the
   chosen mode (e.g. `[1, 2, 3]`, the empty `[]`, or `[1+1, 2*3]` → `[2, 6]`); it is
   an internal container, not a selectable mode. The whole stats family reduces over a
-  single vector's elements — `min`/`max`/`avg`/`median`/`variance`/`stddev`/`sumsq`
-  (`avg([1, 2, 3])` → `2`, `sumsq([1, 2, 3])` → `14`), as do the integer reducers `gcd`/`lcm`
+  single vector's elements — `min`/`max`/`avg`/`median`/`variance`/`stddev`/`sumsq`/`geomean`/`harmean`
+  (`avg([1, 2, 3])` → `2`, `sumsq([1, 2, 3])` → `14`, `geomean([4, 9])` → `6`), as do the integer reducers `gcd`/`lcm`
   (`gcd([54, 24, 6])` → `6`). The order statistics take a leading point then the
   data (a run or one vector): `quantile(q, …)` for `q` in `[0, 1]` and
   `percentile(p, …)` for `p` in `[0, 100]` read the value at that rank (type-7

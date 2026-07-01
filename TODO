@@ -1328,13 +1328,13 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                inexact in float/fixed-point, rational refuses (irrational root).
                Same two-vector BLOCKER as covariance (40.13) — depends on the same
                call-shape decision.
-    [ ] 40.15. geometric mean — geomean(...) = (x1*x2*...*xn)**(1/n), the n-th root
+    [x] 40.15. geometric mean — geomean(...) = (x1*x2*...*xn)**(1/n), the n-th root
                of the product, VARIADIC (the avg shape). DOMAIN non-negative
                operands (a negative makes an even root complex — refuse, like
                sqrt). Irrational in general: inexact in float/fixed-point (via the
                exp/log core or _iroot, 28.20.1/28.27), rational exact ONLY for a
                perfect n-th power. geomean(0, ...) = 0.
-    [ ] 40.16. harmonic mean — harmean(...) = n / sum(1/xi), VARIADIC. DOMAIN
+    [x] 40.16. harmonic mean — harmean(...) = n / sum(1/xi), VARIADIC. DOMAIN
                positive operands (a zero makes a term undefined — ZeroDivisionError;
                mixed signs are ill-defined, refuse). No sqrt, so it follows avg's
                division stance: EXACT in rational, may round in fixed-point/float.

@@ -415,6 +415,22 @@ FUNCTION_DETAILS: dict[str, str] = {
         "the grid, so there is no rounding and no inexact flag. same-mode is enforced like "
         "every variadic, and the result is a whole number at scale 0 in fixed-point."
     ),
+    "geomean": (
+        "geometric mean, the n-th root of the product (x1*x2*...*xn)^(1/n) — VARIADIC, or over "
+        "a single vector (geomean([a, b, ...])); a vector is legal only as the sole operand, "
+        "and an empty vector is refused. geomean(a) is a and geomean(0, ...) is 0. DOMAIN "
+        "non-negative: a negative operand makes an even root complex, so it is refused like "
+        "sqrt's negative — checked per operand, so two negatives cannot cancel into a positive "
+        "product that hides them."
+        "\n\n"
+        "the product is folded over the type's own mul (each fixed-point/float step quantizing "
+        "on the grid, rational exact), then the n-th root generalizes sqrt/cbrt: the integer "
+        "n-th root of the rescaled mantissa in fixed-point, x**(1/n) in float, and both parts "
+        "as perfect n-th powers in rational. so it is IRRATIONAL in general — inexact in "
+        "float/fixed-point (widen min_fixed_point_precision for accuracy) — and EXACT only "
+        "where the root lands on the grid: in fixed-point a perfect n-th power at the scale, "
+        "in rational ONLY a perfect n-th power (else it refuses)."
+    ),
     "hypot": (
         "euclidean norm sqrt(x1^2 + x2^2 + ... + xn^2) — VARIADIC: self is the first "
         "coordinate, so hypot(x) is just |x| and hypot(a, b) is the leg-to-hypotenuse "
@@ -434,6 +450,19 @@ FUNCTION_DETAILS: dict[str, str] = {
         "the sum is a perfect square. rational: exact sum of squares then sqrt's "
         "exact-or-refuse — exact only when both parts of the sum are perfect squares, "
         "otherwise it refuses."
+    ),
+    "harmean": (
+        "harmonic mean n / (1/x1 + 1/x2 + ... + 1/xn) — VARIADIC, or over a single vector "
+        "(harmean([a, b, ...])); a vector is legal only as the sole operand, and an empty "
+        "vector is refused. harmean(a) is a. DOMAIN positive: a NEGATIVE operand (mixed signs "
+        "are ill-defined) is refused, while a ZERO makes 1/xi undefined and raises "
+        "ZeroDivisionError through the reciprocal — the two distinct failure modes."
+        "\n\n"
+        "it composes the mode's own / and + (the count divided by the total of the "
+        "reciprocals), so it follows avg's division stance: EXACT in rational, and MAY ROUND "
+        "in fixed-point/float. each reciprocal quantizes to the covering scale — at the "
+        "default scale 0 that is integer division (1/2 vanishes to 0), so widen "
+        "min_fixed_point_precision for a meaningful fractional mean."
     ),
     "im": (
         "imaginary part Im(z) — the b (the real coefficient of i) in a+bi, not b*i. Zero in "

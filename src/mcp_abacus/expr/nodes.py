@@ -117,6 +117,8 @@ _FUNCS: dict[str, Callable[..., Value]] = {
     "clamp": Value.clamp,  # 40.21 — ternary; min(hi, max(lo, x)) selection, exact, refuses lo>hi
     "lerp": Value.lerp,  # 40.22 — ternary; linear interpolation a+(b-a)*t, arithmetic stance
     "sumsq": Value.sumsq,  # 40.26 — variadic/vector; Σ xi**2 (hypot's inner sum), avg stance
+    "geomean": Value.geomean,  # 40.15 — variadic/vector; n-th root of the product, nonneg domain
+    "harmean": Value.harmean,  # 40.16 — variadic/vector; n / Σ(1/xi), positive domain, avg stance
     "variance": Value.variance,  # 28.8 — variadic; population sum-of-squared-deviations / n
     "stddev": Value.stddev,  # 28.9 — variadic; sqrt(variance), inherits sqrt's per-mode story
     "covariance": Value.covariance,  # 40.13 — two vectors; population mean((x-mx)*(y-my))
@@ -153,6 +155,8 @@ _VECTOR_FUNCS: frozenset[str] = frozenset(
         "quantile",
         "percentile",
         "sumsq",
+        "geomean",
+        "harmean",
         "variance",
         "stddev",
         "covariance",
@@ -297,6 +301,11 @@ FUNCTION_HELP: dict[str, str] = {
     "t unrestricted (outside [0,1] extrapolates)",
     "sumsq": "sum of squares x1^2+...+xn^2 of the operands (or a single vector's elements); "
     "hypot's inner sum, any reals, exact in rational, may round in fixed-point/float",
+    "geomean": "geometric mean, the n-th root of the product of the operands (or a single "
+    "vector's elements); non-negative domain, inexact in float/fixed-point, rational exact only "
+    "for a perfect n-th power",
+    "harmean": "harmonic mean n/sum(1/xi) of the operands (or a single vector's elements); "
+    "positive domain, exact in rational, may round in fixed-point/float (avg's / stance)",
     "variance": "population variance, sum of squared deviations / n of the operands (or a "
     "single vector's elements)",
     "stddev": "population standard deviation, sqrt of variance (operands or a single vector)",

@@ -1077,7 +1077,120 @@ def test_sumsq_refuses_with_a_line_tagged_error(expression, error):
     assert payload["value"] is None
 
 
-@pytest.mark.parametrize("name", ["hypot", "sumsq", "avg", "max", "min", "variance", "gcd", "lcm"])
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # Geometric mean (40.15): the n-th root of the product. When the root lands on
+        # the grid it is EXACT even in fixed-point — geomean(4, 9) = sqrt(36) = 6.
+        ("geomean(4, 9)", None, "6 (exact)"),  # fixed-point default; a perfect square
+        ("geomean(2, 8)", None, "4 (exact)"),  # sqrt(16)
+        ("geomean(2, 4, 8)", None, "4 (exact)"),  # cube root of 64
+        ("geomean(5)", None, "5 (exact)"),  # the lone-operand form is x itself
+        ("geomean(0, 5)", None, "0 (exact)"),  # a zero factor zeroes the product
+        ("geomean(2.00, 8.00)", None, "4.00 (exact)"),  # scale preserved
+        ("geomean([4, 9])", None, "6 (exact)"),  # a SINGLE vector reduces its ELEMENTS
+        # An irrational root rounds in fixed-point (widen the scale for accuracy) and in
+        # float; here 24**(1/4) at the default scale 0 floors to 2.
+        (
+            "geomean(1, 2, 3, 4)",
+            None,
+            "2 (inexact, rounded to 0 decimals — pass min_fixed_point_precision "
+            "for more; e.g. =4 → 2.2134)",
+        ),
+        # binary64 is unconditionally inexact, even on a perfect square.
+        ("geomean(4, 9)", "floating-point", "6.0 (inexact)"),
+        ("geomean(1, 2, 3, 4)", "floating-point", "2.213363839400643 (inexact)"),
+        # Rational is exact ONLY for a perfect n-th power (both parts perfect powers).
+        ("geomean(4, 9)", "rational", "6 (exact)"),
+        ("geomean(8, 27, 64)", "rational", "24 (exact)"),  # cube root of 8*27*64 = 13824 = 24^3
+        ("geomean(1/4, 1/9)", "rational", "1/6 (exact)"),  # sqrt of 1/36
+        ("geomean([4, 9])", "rational", "6 (exact)"),
+    ],
+)
+def test_geomean(expression, mode, value):
+    assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # DOMAIN non-negative: a negative operand makes an even root complex, refused
+        # like sqrt's negative — checked per operand, so two negatives cannot cancel.
+        ("geomean(-4, 9)", None, "geometric mean of a negative value"),
+        ("geomean(-4, -9)", None, "geometric mean of a negative value"),
+        ("geomean(-4, 9)", "floating-point", "geometric mean of a negative value"),
+        # Rational refuses an irrational root rather than fabricate digits (exact-or-refuse).
+        ("geomean(1, 2, 3, 4)", "rational", "rational nth root is irrational"),
+        # The vector overload shares _series_operands' two-form contract.
+        (
+            "geomean([1, 2], 3)",
+            None,
+            "geomean has two forms — geomean(vector) or geomean(a, b, …) — and cannot mix them",
+        ),
+        ("geomean([])", None, "geomean of an empty vector is undefined"),
+    ],
+)
+def test_geomean_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "value"),
+    [
+        # Harmonic mean (40.16): n / Σ(1/xi). It composes the mode's own / and +, so like
+        # avg it is EXACT in rational and rounds in fixed-point/float. Rational shows the
+        # true value: harmean(1, 2, 4) = 3 / (1 + 1/2 + 1/4) = 3 / (7/4) = 12/7.
+        ("harmean(1, 2, 4)", "rational", "12/7 (exact)"),
+        ("harmean([2, 3])", "rational", "12/5 (exact)"),  # a SINGLE vector; 2/(1/2+1/3)
+        ("harmean(6)", "rational", "6 (exact)"),  # the lone-operand form is x itself
+        ("harmean(2, 3, 6)", "rational", "3 (exact)"),  # 3/(1/2+1/3+1/6) = 3/1
+        # Fixed-point rounds each reciprocal to the covering scale — meaningful only at a
+        # wider scale (the default scale 0 makes 1/2, 1/4 vanish), so widen precision.
+        ("harmean(1, 2, 4)", "floating-point", "1.7142857142857142 (inexact)"),
+        (
+            "harmean(1, 2, 4)",
+            4,  # min_fixed_point_precision via the floor argument
+            "1.7143 (inexact, rounded to 4 decimals)",
+        ),
+    ],
+)
+def test_harmean(expression, mode, value):
+    # `mode` doubles as the fixed-point floor when it is an int (the wide-scale case).
+    if isinstance(mode, int):
+        assert _value(expression, None, mode) == value
+    else:
+        assert _value(expression, mode) == value
+
+
+@pytest.mark.parametrize(
+    ("expression", "mode", "error"),
+    [
+        # DOMAIN positive: a NEGATIVE operand (mixed signs are ill-defined) refuses here,
+        # while a ZERO makes 1/xi undefined and divides by zero — the two failure modes.
+        ("harmean(-1, 2)", "rational", "harmonic mean of a non-positive value"),
+        ("harmean(2, -3)", "rational", "harmonic mean of a non-positive value"),
+        ("harmean(0, 4)", None, "fixed-point division by zero"),  # zero factor: 1/0
+        # The vector overload shares _series_operands' two-form contract.
+        (
+            "harmean([1, 2], 3)",
+            None,
+            "harmean has two forms — harmean(vector) or harmean(a, b, …) — and cannot mix them",
+        ),
+        ("harmean([])", None, "harmean of an empty vector is undefined"),
+    ],
+)
+def test_harmean_refuses_with_a_line_tagged_error(expression, mode, error):
+    payload = _calc(expression, mode)
+    assert payload["error"] == error
+    assert payload["value"] is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["hypot", "sumsq", "geomean", "harmean", "avg", "max", "min", "variance", "gcd", "lcm"],
+)
 def test_variadic_functions_refuse_below_their_arity_floor(name):
     # A variadic (1, None) function needs at least one operand; calling it with none is a
     # parse-time arity error, not a domain refusal. Pins the lower-bound wording for the
