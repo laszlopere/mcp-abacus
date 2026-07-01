@@ -1386,6 +1386,48 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                factor / factorize / primefactors / factorint. Settle the vector-PRODUCER
                plumbing here; it is the prerequisite any future list-returning function
                (divisors, range, …) reuses.
+    [ ] 40.24. map(vector, name, body) — evaluate an EXPRESSION per element and RETURN
+               a new VECTOR. Higher-order like diff/integral/sum-fold (40.17/40.18/40.19):
+               arg 1 is a vector, arg 2 a BARE NAME, arg 3 the UNEVALUATED body; for each
+               element the body runs with `name` bound to that element, and the results
+               collect into a same-length vector (map([1,2,3], x, x**2) = [1, 4, 9]).
+               This is the missing element-wise primitive — the vector type refuses
+               operators/functions today (19.1.10), so map is how you transform a series.
+               First function that is BOTH a vector CONSUMER and a vector PRODUCER (reuses
+               the 40.23 producer plumbing). Element mode follows the run mode; exactness
+               is the BODY's (map itself only dispatches). DECIDE: (a) name — map / apply /
+               transform; (b) does the result nest — is map over a scalar an error or a
+               1-elt vector; (c) whether a two-vector zip form (map two series in lockstep)
+               is in scope here or a separate item — 40.25 needs the parallel walk.
+    [ ] 40.25. residual_sum_squares(expr, var, xs, ys) — least-squares cost of a MODEL
+               against PAIRED DATA: sum over i of (ys_i - expr[var := xs_i])**2, the sum
+               of squared residuals (RSS/SSE). Spelled out, NOT an acronym — the
+               covariance/correlation/variance stance (a cryptic `rss`/`sse` would collide
+               and read as nothing). Higher-order — arg 1 the UNEVALUATED model expr, arg 2
+               a BARE NAME (the free variable), args 3/4 two EQUAL-LENGTH vectors of the
+               observed x and y. Walks xs/ys in PARALLEL (the two-vector lockstep 40.24(c)
+               flags), binds `var` to each xs_i, and folds the squared gap. RETURNS a
+               scalar; the arithmetic stance of sum/avg (EXACT in rational, may round in
+               fixed-point/float). This is the direct answer to "square distance of a set
+               of (x, y) pairs and an expression" — the caller-supplied-model analogue of
+               curve_fit's residual error (which only ranks its built-in forms). Once map
+               (40.24) + a zip exist it is just sumsq of the per-point gaps, so it is
+               convenience sugar — DECIDE whether it earns its own function or callers
+               compose sumsq(map2(...)). Reserve the plural `residuals(expr, var, xs, ys)`
+               for a future sibling that RETURNS the signed per-point gap VECTOR (that is
+               the standard meaning of "residuals" — it falls out of map/zip). DECIDE:
+               (a) refuse unequal-length xs/ys and empty data; (b) name — lead with
+               residual_sum_squares, sum_squared_residuals the alt order; (c) whether a
+               weighted form (a third vector w) is a later variant.
+    [ ] 40.26. sumsq(...) — sum of squares x1**2 + x2**2 + ..., VARIADIC (the sum/hypot
+               shape, 40.20) with a VECTOR overload (sumsq(vector)); a reducer, so it
+               joins _VECTOR_FUNCS. Plain squaring + addition: EXACT in rational, may
+               round in fixed-point/float (the avg stance, not sqrt's). Note hypot (40.20)
+               is sqrt(sumsq(...)) — this is that inner sum exposed on its own, and the
+               reduce half of residual_sum_squares (40.25). Every real allowed. Keep the
+               short name `sumsq`: it is a recognized idiom, not an acronym, and a real
+               function in Excel (SUMSQ) and Octave — the terse primitive callers compose.
+               DECIDE: name — sumsq (lead) / sum_of_squares if full-spelling wins.
 
 
 [ ] 42.  SOLVER: compare candidate objectives in-mode, not via to_float(). The
