@@ -160,6 +160,37 @@ def test_exponential_is_dropped_in_rational_mode():
     assert "linear" in forms
 
 
+def test_exp_reciprocal_fit_in_floating_point():
+    # 44.2.14: y = 3*exp(2/x) (the Arrhenius law) — it linearises under logs of y against 1/x,
+    # so it recovers a≈3, b≈2 in floating-point. The equation reads a*exp(b/x), not a*exp(b*x).
+    xs = [0.5, 1, 2, 3, 4]
+    ys = [3 * math.exp(2 / x) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "exp-reciprocal")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert "*exp(" in result.equation and "/x)" in result.equation
+    assert not result.error.exact
+
+
+def test_exp_reciprocal_is_dropped_in_rational_mode():
+    # Like the exponential/power forms, its log-linearisation needs ln/exp — irrational, so
+    # rational mode refuses them and the form drops while the polynomials remain.
+    ys = [3 * math.exp(2 / x) for x in (0.5, 1, 2, 3, 4)]
+    forms = [r.form for r in fit_all([0.5, 1, 2, 3, 4], ys, Mode.RATIONAL, 0)]
+    assert "exp-reciprocal" not in forms
+    assert "cubic" in forms  # a polynomial remains (best-3 may trail off quadratic)
+
+
+def test_exp_reciprocal_is_dropped_when_some_x_is_zero():
+    # a*exp(b/x) needs the reciprocal 1/x; an x = 0 datum raises ZeroDivisionError, which the
+    # fitter catches as a clean DROP (no crash) while the forms with no 1/x still fit.
+    ys = [3 * math.exp(2 / x) for x in (1, 2, 3, 4)]
+    forms = [r.form for r in fit_all([0, 1, 2, 3], ys, Mode.FLOATING_POINT, 0)]
+    assert "exp-reciprocal" not in forms
+    assert "quadratic" in forms
+
+
 def test_logarithmic_fit_in_floating_point():
     # 44.2.6: y = 2 + 3*ln(x) — affine in {1, ln x}, recovered via the shared basis fitter.
     xs = [1, 2, 3, 4, 5]
@@ -420,10 +451,11 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.13: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.14: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
-    # saturation/hyperbolic reciprocal-line forms, and the Laurent direct-basis form — in TODO
-    # numeric order — each with its parameter names, model template and domain limit.
+    # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, and the
+    # exp-reciprocal / Arrhenius law — in TODO numeric order — each with its parameter names,
+    # model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -439,6 +471,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "saturation",
         "hyperbolic",
         "laurent",
+        "exp-reciprocal",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -481,6 +514,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["laurent"].parameters == ("a", "b", "c")
     assert by_name["laurent"].template == "a + b*x + c/x"
     assert by_name["laurent"].domain == "x != 0"
+    # The exp-reciprocal / Arrhenius form (44.2.14): two parameters, log-linearised against 1/x,
+    # domain x != 0 (the reciprocal) and y > 0 (the log).
+    assert by_name["exp-reciprocal"].parameters == ("a", "b")
+    assert by_name["exp-reciprocal"].template == "a*exp(b/x)"
+    assert by_name["exp-reciprocal"].domain == "x != 0, y > 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

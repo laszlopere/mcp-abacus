@@ -32,13 +32,15 @@ solution:
     The linear form keeps the line's direct two-coefficient formula (``_fit_linear`` /
     ``_line_coeffs``),
     which the power and exponential fits reuse on logged data.
-  - power ``a·x**b`` and exponential ``a·exp(b·x)`` are intrinsically non-linear but
-    LINEARISE under logs. Power logs both axes — ``ln y = ln a + b·ln x`` is a straight line
-    in ``(ln x, ln y)`` (``_fit_power``); exponential logs only ``y`` — ``ln y = ln a + b·x``
-    is a line in ``(x, ln y)`` (``_fit_exponential``) — and both recover ``b`` from the slope
-    and ``a = exp(intercept)``. The logs make them inexact wherever the mode rounds them; in
-    rational mode the logs are irrational and the type refuses them, so both forms are simply
-    dropped there (their honest exact-or-refuse outcome).
+  - power ``a·x**b``, exponential ``a·exp(b·x)`` and exp-reciprocal ``a·exp(b/x)`` (44.2.14,
+    the Arrhenius law) are intrinsically non-linear but LINEARISE under logs. Power logs both
+    axes — ``ln y = ln a + b·ln x`` is a straight line in ``(ln x, ln y)`` (``_fit_power``);
+    exponential logs only ``y`` — ``ln y = ln a + b·x`` is a line in ``(x, ln y)``
+    (``_fit_exponential``); exp-reciprocal logs ``y`` against the RECIPROCAL of ``x`` — ``ln y
+    = ln a + b·(1/x)`` is a line in ``(1/x, ln y)`` (``_fit_exp_reciprocal``) — and all recover
+    ``b`` from the slope and ``a = exp(intercept)``. The logs make them inexact wherever the
+    mode rounds them; in rational mode the logs are irrational and the type refuses them, so all
+    three are simply dropped there (their honest exact-or-refuse outcome).
   - the gaussian ``a·exp(−(x−b)²/(2c²))`` (44.2.10) also linearises under logs, but to a
     QUADRATIC rather than a line — Caruana's method: ``ln y = p₂·x² + p₁·x + p₀``, so the fit
     least-squares-fits that quadratic over the power basis ``{x², x, 1}`` (the same normal
@@ -508,6 +510,44 @@ def _fit_exponential(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -
     return FitResult("exponential", equation, (("a", a), ("b", b)), error)
 
 
+def _fit_exp_reciprocal(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Least-squares fit of the Arrhenius law ``a*exp(b/x)`` (44.2.14); domain ``x != 0, y > 0``.
+
+    The exponential's cousin with ``1/x`` in place of ``x`` — the ubiquitous rate / vapour-
+    pressure shape. It linearises under logs of ``y`` against the RECIPROCAL of ``x``: ``ln y =
+    ln a + b·(1/x)`` is a straight line in ``(1/x, ln y)`` — so the fit is :func:`_line_coeffs`
+    on ``(1/xs, ln ys)``, with ``b`` the slope and ``a = exp(intercept)``, every step in
+    mode-faithful Value arithmetic. The error is the sum of squared residuals
+    ``Σ (a·exp(b/xᵢ) − yᵢ)²`` of the ORIGINAL model in the active mode, so it measures the fit
+    where the data lives, not in log/reciprocal space (like the exponential fit).
+
+    Raises FitError (so the form is dropped, 44.3) when the transform is undefined or
+    unrepresentable: any ``xᵢ = 0`` has no ``1/x`` (ZeroDivisionError), any ``yᵢ ≤ 0`` has no
+    real log, and in rational mode the logs and ``exp`` are irrational — the type refuses them
+    — so the form simply does not fit there (like the exponential/power forms). An OverflowError
+    from a blown-up ``exp`` (a large ``b/x`` near ``x = 0``) drops it too rather than crashing
+    the other forms.
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        inv_x = [one.div(x) for x in xs]
+        log_y = [y.ln() for y in ys]
+        slope, intercept = _line_coeffs(inv_x, log_y, mode, scale)  # reciprocal xs, logged ys
+        b = slope
+        a = intercept.exp()
+        model = [a.mul(b.mul(rx).exp()) for rx in inv_x]  # a·exp(b·(1/x)) == a·exp(b/x)
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit a*exp(b/x): it needs x != 0 for the reciprocal and y > 0 for the "
+            "logarithm, and a mode that can represent them (rational refuses the irrational "
+            f"logs / exp). {exc}"
+        ) from exc
+    b_str = f"({b.to_string()})" if b.to_float() < 0 else b.to_string()
+    equation = f"{a.to_string()}*exp({b_str}/x)"
+    return FitResult("exp-reciprocal", equation, (("a", a), ("b", b)), error)
+
+
 # The affine non-polynomial basis functions (44.2.6-44.2.8): each is fⱼ(x, mode, scale) ->
 # Value, wired into _linear_basis_fitter. The constant `1` term mints a mode-faithful Value
 # (x may be zero, so it cannot be recovered from x); the others apply the mode's own ln/
@@ -939,7 +979,9 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # reciprocal-line transform (the double-reciprocal Lineweaver-Burk line 1/y = a + b·(1/x) for
 # the saturation, the line 1/y = a·x + b for the hyperbolic). The Laurent form a + b*x + c/x
 # (44.2.13) closes with a DIRECT linear basis {1, x, 1/x} (no transform), wired into the same
-# _linear_basis_fitter as the affine log/sqrt/reciprocal forms.
+# _linear_basis_fitter as the affine log/sqrt/reciprocal forms. The exp-reciprocal / Arrhenius
+# form a*exp(b/x) (44.2.14) log-linearises like the exponential, but against 1/x — the line
+# ln y = ln a + b*(1/x) — so it drops in rational mode like the power/exponential forms.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1029,6 +1071,17 @@ LAURENT = CurveForm(
     "x != 0",
     _linear_basis_fitter("laurent", ("a", "b", "c"), (_one, _x, _recip_x), _laurent_equation),
 )
+# The exp-reciprocal / Arrhenius form (44.2.14): the exponential's cousin with 1/x in place of
+# x, a*exp(b/x) — the rate / vapour-pressure shape. Log-linearises to the line ln y = ln a +
+# b*(1/x) over (1/x, ln y), so it drops in rational mode (irrational logs/exp, like the
+# exponential/power forms). Domain x != 0 (the reciprocal) and y > 0 (the log).
+EXP_RECIPROCAL = CurveForm(
+    "exp-reciprocal",
+    ("a", "b"),
+    "a*exp(b/x)",
+    "x != 0, y > 0",
+    _fit_exp_reciprocal,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1043,6 +1096,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     SATURATION,
     HYPERBOLIC,
     LAURENT,
+    EXP_RECIPROCAL,
 )
 
 

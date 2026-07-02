@@ -1541,7 +1541,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.13. Laurent — a + b*x + c/x; linear trend with a near-origin pole;
                      domain x!=0. Closed form: direct linear basis {1, x, 1/x} (44.9),
                      no transform.
-        [ ] 44.2.14. exp-reciprocal (Arrhenius) — a*exp(b/x); rate/vapor-pressure shape;
+        [x] 44.2.14. exp-reciprocal (Arrhenius) — a*exp(b/x); rate/vapor-pressure shape;
                      domain x!=0, y>0. Closed form via ln y = ln a + b*(1/x), linear
                      basis {1, 1/x} in log-space (cousin of exponential 44.2.5 with 1/x).
         [ ] 44.2.15. Hoerl — a * b**x * x**c; rise-then-decay; domain x>0, y>0. Closed

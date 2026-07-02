@@ -67,13 +67,14 @@ type; it calculates *using* that type.
   with `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report
   each fitted equation with its error. Hand over the data and it estimates, for the
-  straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`, logarithm
+  straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`,
+  exp-reciprocal (Arrhenius) `a*exp(b/x)`, logarithm
   `a + b*ln(x)`, square root `a*sqrt(x) + b`, reciprocal `a/x + b`, sinusoid
   `a*sin(b*x + c) + d`, gaussian `a*exp(-(x-b)**2/(2*c**2))`, saturation `x/(a*x + b)`
   (Michaelis-Menten), hyperbolic `1/(a*x + b)` and Laurent `a + b*x + c/x`, the parameters that best
   match in the least-squares sense —
-  polynomials and the affine forms in closed form via the normal equations, the power and
-  exponential laws by a log-linearisation, the gaussian by Caruana's method (logs to a
+  polynomials and the affine forms in closed form via the normal equations, the power,
+  exponential and exp-reciprocal laws by a log-linearisation, the gaussian by Caruana's method (logs to a
   quadratic), the saturation and hyperbolic by a reciprocal-line transform, and the sinusoid
   (the lone form with no closed
   form) by an iterative frequency search — then

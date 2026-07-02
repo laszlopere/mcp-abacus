@@ -208,6 +208,22 @@ def test_laurent_form_fits_exactly_over_the_wire():
     assert fit["exact"] is True
 
 
+def test_exp_reciprocal_form_fits_over_the_wire():
+    # 44.2.14: y = 3*exp(2/x) (the Arrhenius law) in floating-point — the exp-reciprocal form
+    # recovers a≈3, b≈2 via the log-line ln y = ln a + b*(1/x), rendered as a pasteable
+    # "…*exp(…/x)" with an inexact error (the logs round in floating-point).
+    xs = [0.5, 1, 2, 3, 4]
+    ys = [3 * math.exp(2 / x) for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    assert payload["error"] is None
+    fit = _by_form(payload)["exp-reciprocal"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(3.0, rel=1e-6)
+    assert params["b"] == pytest.approx(2.0, rel=1e-6)
+    assert "*exp(" in fit["equation"] and "/x)" in fit["equation"]
+    assert fit["exact"] is False
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None
