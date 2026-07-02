@@ -341,6 +341,38 @@ def test_gaussian_is_dropped_when_some_y_is_not_positive():
     assert "linear" in forms  # the log-free polynomial/affine forms still fit
 
 
+def test_hoerl_recovers_base_and_exponent_in_floating_point():
+    # 44.2.15: y = 2*1.5**x*x**0.5 — the Hoerl model logs to a line over {1, x, ln x}, so it
+    # recovers a≈2, b≈1.5, c≈0.5 in floating-point. The equation reads a*b**x*x**c.
+    xs = [1, 2, 3, 4, 5]
+    ys = [2 * 1.5**x * x**0.5 for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "hoerl")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(1.5, rel=1e-6)
+    assert params["c"].to_float() == pytest.approx(0.5, rel=1e-6)
+    assert "**x*x**" in result.equation  # a*b**x*x**c
+    assert not result.error.exact
+
+
+def test_hoerl_is_dropped_in_rational_mode():
+    # The log-linearisation needs ln/exp, which are irrational — rational mode refuses them, so
+    # the Hoerl form drops while the polynomials remain (like the power/gaussian forms).
+    ys = [2 * 1.5**x * x**0.5 for x in (1, 2, 3, 4, 5)]
+    forms = [r.form for r in fit_all([1, 2, 3, 4, 5], ys, Mode.RATIONAL, 0)]
+    assert "hoerl" not in forms
+    assert "cubic" in forms  # a polynomial remains (best-3 may trail off quadratic)
+
+
+def test_hoerl_is_dropped_when_some_x_is_not_positive():
+    # a*b**x*x**c needs ln x, so a non-positive x has no real log and the form drops cleanly —
+    # the polynomial forms, which need no log, still fit.
+    ys = [2 * 1.5 ** abs(x) * abs(x) ** 0.5 + 1 for x in (-1, 1, 2, 3)]
+    forms = [r.form for r in fit_all([-1, 1, 2, 3], ys, Mode.FLOATING_POINT, 0)]
+    assert "hoerl" not in forms
+    assert "quadratic" in forms
+
+
 def test_saturation_recovers_exactly_in_rational():
     # 44.2.11: y = x/(x + 2) (so a=1, b=2) — the double-reciprocal line 1/y = a + b*(1/x) is
     # exact in rational mode (reciprocals of rationals are rational), so a and b are recovered
@@ -451,11 +483,11 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.14: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.15: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
-    # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, and the
-    # exp-reciprocal / Arrhenius law — in TODO numeric order — each with its parameter names,
-    # model template and domain limit.
+    # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, the
+    # exp-reciprocal / Arrhenius law, and the Hoerl model — in TODO numeric order — each with
+    # its parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -472,6 +504,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "hyperbolic",
         "laurent",
         "exp-reciprocal",
+        "hoerl",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -519,6 +552,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["exp-reciprocal"].parameters == ("a", "b")
     assert by_name["exp-reciprocal"].template == "a*exp(b/x)"
     assert by_name["exp-reciprocal"].domain == "x != 0, y > 0"
+    # The Hoerl model (44.2.15): three parameters, log-linearised over the basis {1, x, ln x},
+    # domain x > 0 and y > 0 (both logs).
+    assert by_name["hoerl"].parameters == ("a", "b", "c")
+    assert by_name["hoerl"].template == "a*b**x*x**c"
+    assert by_name["hoerl"].domain == "x > 0, y > 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

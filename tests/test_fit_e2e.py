@@ -224,6 +224,23 @@ def test_exp_reciprocal_form_fits_over_the_wire():
     assert fit["exact"] is False
 
 
+def test_hoerl_form_fits_over_the_wire():
+    # 44.2.15: y = 2*1.5**x*x**0.5 (the Hoerl model) in floating-point — it recovers a≈2,
+    # b≈1.5, c≈0.5 via the log-line over {1, x, ln x}, rendered as a pasteable "…**x*x**…"
+    # with an inexact error (the logs round in floating-point).
+    xs = [1, 2, 3, 4, 5]
+    ys = [2 * 1.5**x * x**0.5 for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    assert payload["error"] is None
+    fit = _by_form(payload)["hoerl"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(2.0, rel=1e-6)
+    assert params["b"] == pytest.approx(1.5, rel=1e-6)
+    assert params["c"] == pytest.approx(0.5, rel=1e-6)
+    assert "**x*x**" in fit["equation"]
+    assert fit["exact"] is False
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

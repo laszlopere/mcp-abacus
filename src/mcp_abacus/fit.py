@@ -48,6 +48,14 @@ solution:
     ``b = −p₁/2p₂``, ``a = exp(p₀ − p₂·b²)``), needing a downward parabola (``p₂ < 0``);
     non-positive ``y`` has no log and rational refuses the irrational logs/exp/√, so it drops
     there too (``_fit_gaussian``).
+  - the Hoerl model ``a·b**x·x**c`` (44.2.15, a power law modulated by an exponential) is the
+    gaussian's structural twin: it logs to a LINE over TWO regressors — ``ln y = ln a +
+    (ln b)·x + c·ln x`` — linear in its coefficients over the basis ``{1, x, ln x}``, so the
+    fit least-squares-fits that basis to ``(x, ln y)`` by the SAME normal equations
+    (``_solve_linear_system``) and RECOVERS ``a = exp(p₀)``, ``b = exp(p₁)``, ``c = p₂`` from the
+    coefficients; the rebuilt model ``exp(p₀ + p₁·x + p₂·ln x)`` is identically ``a·b**x·x**c``,
+    measured in data space (``_fit_hoerl``). It needs ``x > 0`` and ``y > 0`` for the two logs,
+    and rational refuses the irrational logs/exp, so it drops there like the power/gaussian forms.
   - the saturation ``x/(a·x + b)`` (44.2.11, Michaelis-Menten) and hyperbolic ``1/(a·x + b)``
     (44.2.12) — the last two forms — linearise under RECIPROCALS rather than logs. The
     saturation's double reciprocal is the Lineweaver-Burk line ``1/y = a + b·(1/x)``, affine
@@ -870,6 +878,82 @@ def _fit_gaussian(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> F
     return FitResult("gaussian", equation, (("a", a), ("b", b), ("c", c)), error)
 
 
+def _hoerl_equation(a: Value, b: Value, c: Value) -> str:
+    """Render ``a*b**x*x**c`` over ``x`` — the Hoerl model (44.2.15).
+
+    The peak ``a`` and base ``b`` are always positive (both ``exp(…)``), so each renders bare;
+    only the exponent ``c`` can be negative, and a negative ``c`` is parenthesised as
+    ``x**(-0.3)`` so the ``**`` reads cleanly (the same parenthesise-a-negative-exponent
+    convention as the power form's ``a*x**b``). ``**`` binds tighter than ``*``, so
+    ``a*b**x*x**c`` parses as ``a·(b**x)·(x**c)`` — valid calculate source over ``x`` (44.5),
+    pasteable straight back in.
+    """
+    c_str = f"({c.to_string()})" if c.to_float() < 0 else c.to_string()
+    return f"{a.to_string()}*{b.to_string()}**x*x**{c_str}"
+
+
+def _fit_hoerl(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the Hoerl model ``a*b**x*x**c`` (44.2.15); domain ``x > 0, y > 0``.
+
+    A three-parameter rise-then-decay shape (a power law ``x**c`` modulated by an exponential
+    ``b**x``). It linearises under logs to a LINE over TWO regressors — ``ln y = ln a +
+    (ln b)·x + c·ln x`` — a model linear in its coefficients over the basis ``{1, x, ln x}``.
+    So the fit logs the ``y`` values, least-squares fits that basis to ``(x, ln y)`` (the normal
+    equations, solved by :func:`_solve_linear_system` in mode-faithful Value arithmetic, exactly
+    as the gaussian's Caruana fit does over its own basis), and RECOVERS the parameters from the
+    coefficients ``(p₀, p₁, p₂)``: ``a = exp(p₀)`` (the intercept ``ln a``), ``b = exp(p₁)`` (the
+    ``x`` slope ``ln b``) and ``c = p₂`` (the ``ln x`` slope, taken as is). The rebuilt model is
+    ``exp(p₀ + p₁·x + p₂·ln x)`` — identically ``a·b**x·x**c`` — measured in DATA space, so the
+    error is the sum of squared residuals ``Σ (a·b^xᵢ·xᵢ^c − yᵢ)²`` in the active mode (where the
+    data lives, not in log space — like the power/exponential/gaussian fits).
+
+    Raises FitError (so the form is DROPPED, 44.3) when the logs are undefined or
+    unrepresentable: any ``xᵢ ≤ 0`` has no ``ln x`` and any ``yᵢ ≤ 0`` no ``ln y``, and in
+    rational mode the logs and ``exp`` are irrational — the type refuses them — so the form
+    simply does not fit there (like the power/exponential/gaussian forms). An OverflowError from
+    a blown-up ``exp`` drops it too rather than crashing the other forms.
+    """
+    # Every x equal collapses the {1, x, ln x} rows to a rank-1 design; detected DIRECTLY here,
+    # as in _line_coeffs / _linear_basis_fitter, rather than via the singular-pivot test, because
+    # in fixed-point the normal-equations determinant can round to a tiny NON-zero for identical
+    # inputs (the rounded ln x do not cancel exactly) and slip a degenerate fit through.
+    if all(x.to_string() == xs[0].to_string() for x in xs):
+        raise FitError(
+            "Cannot fit a*b**x*x**c: every x value is equal, so its basis is degenerate. "
+            "Provide data with at least two distinct x values."
+        )
+    try:
+        log_y = [y.ln() for y in ys]
+        # Least-squares line over the basis {1, x, ln x}, fitted to (xs, log_y): the same
+        # normal-equations construction as the gaussian's log-quadratic (44.9), a different basis.
+        basis = (_one, _x, _ln_x)  # coefficients line up as (ln a, ln b, c)
+        design = [[f(x, mode, scale) for f in basis] for x in xs]
+        matrix = [
+            [_sum([row[j].mul(row[m]) for row in design], mode, scale) for m in range(3)]
+            for j in range(3)
+        ]
+        rhs = [
+            _sum([row[j].mul(ly) for row, ly in zip(design, log_y, strict=True)], mode, scale)
+            for j in range(3)
+        ]
+        p0, p1, c = _solve_linear_system(matrix, rhs, "hoerl", mode, scale)
+        a = p0.exp()  # exp(ln a), positive
+        b = p1.exp()  # exp(ln b), positive
+        # Rebuild in data space as exp(p0 + p1*x + p2*ln x) == a*b**x*x**c, reusing the logs.
+        model = [
+            _sum([coef.mul(row[j]) for j, coef in enumerate((p0, p1, c))], mode, scale).exp()
+            for row in design
+        ]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit a*b**x*x**c: it needs x > 0 and y > 0 for the logarithms, and a mode "
+            f"that can represent them (rational refuses the irrational logs / exp). {exc}"
+        ) from exc
+    equation = _hoerl_equation(a, b, c)
+    return FitResult("hoerl", equation, (("a", a), ("b", b), ("c", c)), error)
+
+
 def _saturation_equation(a: Value, b: Value) -> str:
     """Render ``x/(a*x + b)`` over ``x`` with clean signs in the denominator.
 
@@ -981,7 +1065,10 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # (44.2.13) closes with a DIRECT linear basis {1, x, 1/x} (no transform), wired into the same
 # _linear_basis_fitter as the affine log/sqrt/reciprocal forms. The exp-reciprocal / Arrhenius
 # form a*exp(b/x) (44.2.14) log-linearises like the exponential, but against 1/x — the line
-# ln y = ln a + b*(1/x) — so it drops in rational mode like the power/exponential forms.
+# ln y = ln a + b*(1/x) — so it drops in rational mode like the power/exponential forms. The
+# Hoerl model a*b**x*x**c (44.2.15) log-linearises to a line over two regressors, ln y = ln a +
+# (ln b)*x + c*ln x over the basis {1, x, ln x} — the gaussian's twin, fitted by the same normal
+# equations, then a/b/c recovered by exp — so it too drops in rational mode.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1082,6 +1169,18 @@ EXP_RECIPROCAL = CurveForm(
     "x != 0, y > 0",
     _fit_exp_reciprocal,
 )
+# The Hoerl model (44.2.15): a rise-then-decay a*b**x*x**c (a power law modulated by an
+# exponential). Log-linearises to a LINE over two regressors, ln y = ln a + (ln b)*x + c*ln x —
+# linear in its coefficients over the basis {1, x, ln x} — fitted by the same normal equations as
+# the gaussian's log-quadratic, then a = exp(p0), b = exp(p1), c = p2 recovered. Domain x > 0 and
+# y > 0 (both logs); drops in rational mode (irrational logs/exp, like the power/gaussian forms).
+HOERL = CurveForm(
+    "hoerl",
+    ("a", "b", "c"),
+    "a*b**x*x**c",
+    "x > 0, y > 0",
+    _fit_hoerl,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1097,6 +1196,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     HYPERBOLIC,
     LAURENT,
     EXP_RECIPROCAL,
+    HOERL,
 )
 
 
