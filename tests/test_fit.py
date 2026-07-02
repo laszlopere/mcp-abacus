@@ -19,6 +19,7 @@ from mcp_abacus.fit import (
     CURVE_FORMS,
     FitError,
     FitResult,
+    _fit_scale,
     _linear_basis_fitter,
     fit_all,
 )
@@ -29,6 +30,21 @@ def _pick(results: list[FitResult], form: str) -> FitResult:
     matches = [r for r in results if r.form == form]
     assert matches, f"the {form} form was not among the fits"
     return matches[0]
+
+
+def _fit_one(form: str, xs: list[float], ys: list[float], mode: Mode, floor: int = 0) -> FitResult:
+    """Fit a SINGLE named form directly, bypassing fit_all's best-3 truncation.
+
+    Materialises the data exactly as fit_all does (same scale) and calls that form's fitter, so
+    the result is identical to fit_all's — but visible even when the form ranks outside the best
+    three (a low-parameter form like linear is beaten on few points by any exactly-fitting form).
+    """
+    scale = _fit_scale(mode, floor)
+    x_values = [Value.from_real(x, mode, scale) for x in xs]
+    y_values = [Value.from_real(y, mode, scale) for y in ys]
+    fitter = {f.name: f for f in CURVE_FORMS}[form].fit
+    assert fitter is not None
+    return fitter(x_values, y_values, mode, scale)
 
 
 def test_perfect_line_is_recovered_exactly_in_rational():
@@ -52,8 +68,9 @@ def test_perfect_line_is_exact_in_fixed_point():
 
 def test_noisy_data_gives_the_least_squares_line_in_rational():
     # The prompt's example: x=[1,1.5,2], y=[2,5.8,8.9]. OLS gives slope 69/10,
-    # intercept -287/60, SSR 49/600 — all exact in rational mode.
-    result = _pick(fit_all([1, 1.5, 2.0], [2, 5.8, 8.9], Mode.RATIONAL, 0), "linear")
+    # intercept -287/60, SSR 49/600 — all exact in rational mode. Fit linear directly: on three
+    # points any exactly-fitting 3-parameter form outranks it, so it need not be in the best three.
+    result = _fit_one("linear", [1, 1.5, 2.0], [2, 5.8, 8.9], Mode.RATIONAL)
     params = dict(result.parameters)
     assert params["a"].to_string() == "69/10"
     assert params["b"].to_string() == "-287/60"
@@ -70,10 +87,11 @@ def test_floating_point_fit_is_close_but_inexact():
 
 
 def test_equation_renders_over_x_with_a_clean_sign():
-    # A positive intercept reads "+ b"; the noisy case's negative intercept reads "- |b|".
-    positive = _pick(fit_all([1, 2, 3], [3, 5, 7], Mode.RATIONAL, 0), "linear")
+    # A positive intercept reads "+ b"; the noisy case's negative intercept reads "- |b|". Fit
+    # linear directly — on three points it is outranked by any exactly-fitting 3-parameter form.
+    positive = _fit_one("linear", [1, 2, 3], [3, 5, 7], Mode.RATIONAL)
     assert positive.equation == "2*x + 1"
-    negative = _pick(fit_all([1, 1.5, 2.0], [2, 5.8, 8.9], Mode.RATIONAL, 0), "linear")
+    negative = _fit_one("linear", [1, 1.5, 2.0], [2, 5.8, 8.9], Mode.RATIONAL)
     assert negative.equation == "69/10*x - 287/60"
 
 
@@ -157,7 +175,7 @@ def test_exponential_is_dropped_in_rational_mode():
     ys = [3 * math.exp(0.5 * x) for x in (0, 1, 2, 3, 4)]
     forms = [r.form for r in fit_all([0, 1, 2, 3, 4], ys, Mode.RATIONAL, 0)]
     assert "exponential" not in forms
-    assert "linear" in forms
+    assert "quadratic" in forms  # the polynomials remain (best-3 may trail off linear)
 
 
 def test_exp_reciprocal_fit_in_floating_point():
@@ -497,6 +515,42 @@ def test_hyperbolic_is_dropped_when_some_y_is_zero():
     assert "quadratic" in forms  # forms needing no 1/y still fit (best-3 may trail off linear)
 
 
+def test_generalized_hyperbolic_recovers_exactly_in_rational():
+    # 44.2.18: y = 1/(x**2 + 1) (so a=1, b=0, c=1) — the reciprocal-quadratic 1/y = a*x**2 + b*x
+    # + c is exact in rational mode (reciprocals of rationals are rational, the quadratic is
+    # polynomial), so the coefficients are recovered on the nose with error 0.
+    results = fit_all([0, 1, 2, 3], [1, 0.5, 0.2, 0.1], Mode.RATIONAL, 0)
+    result = _pick(results, "generalized-hyperbolic")
+    params = dict(result.parameters)
+    assert params["a"].to_string() == "1"
+    assert params["b"].to_string() == "0"
+    assert params["c"].to_string() == "1"
+    assert result.equation == "1/(1*x**2 + 0*x + 1)"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
+
+
+def test_generalized_hyperbolic_recovers_a_true_reciprocal_quadratic_in_floating_point():
+    # y = 1/(2*x**2 + 3*x + 5) over six points — y is NOT a low-degree polynomial, so only the
+    # reciprocal-quadratic fits it exactly, recovering a≈2, b≈3, c≈5 (the polynomials trail off).
+    xs = [-2, -1, 0, 1, 2, 3]
+    ys = [1 / (2 * x**2 + 3 * x + 5) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "generalized-hyperbolic")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)
+    assert params["b"].to_float() == pytest.approx(3.0, rel=1e-6)
+    assert params["c"].to_float() == pytest.approx(5.0, rel=1e-6)
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_generalized_hyperbolic_is_dropped_when_some_y_is_zero():
+    # 1/y at y = 0 raises ZeroDivisionError; the reciprocal-quadratic fitter catches it as a
+    # clean DROP (no crash), while the forms that need no 1/y still fit and come back.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [1, 0, 0.2, 0.1], Mode.FLOATING_POINT, 0)]
+    assert "generalized-hyperbolic" not in forms
+    assert "quadratic" in forms
+
+
 def test_laurent_recovers_exactly_in_rational():
     # 44.2.13: y = 2 + 3*x + 1/x (so a=2, b=3, c=1) — the direct basis {1, x, 1/x} is exact in
     # rational mode (a constant, x, and a reciprocal of a rational are all exact), so the three
@@ -566,11 +620,12 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.17: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.18: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
     # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, the
-    # exp-reciprocal / Arrhenius law, the Hoerl model, the Weibull CDF, and the fixed-L logistic
-    # — in TODO numeric order — each with its parameter names, model template and domain limit.
+    # exp-reciprocal / Arrhenius law, the Hoerl model, the Weibull CDF, the fixed-L logistic, and
+    # the generalized hyperbolic — in TODO numeric order — each with its parameter names, model
+    # template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -590,6 +645,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "hoerl",
         "weibull",
         "logistic",
+        "generalized-hyperbolic",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -652,6 +708,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["logistic"].parameters == ("a", "b", "c")
     assert by_name["logistic"].template == "a/(1 + exp(-(b*x + c)))"
     assert by_name["logistic"].domain == "0 < y < a"
+    # The generalized hyperbolic (44.2.18): three parameters over a reciprocal-quadratic
+    # (1/y = a*x**2 + b*x + c, coefficients read directly), domain y != 0; exact in rational.
+    assert by_name["generalized-hyperbolic"].parameters == ("a", "b", "c")
+    assert by_name["generalized-hyperbolic"].template == "1/(a*x**2 + b*x + c)"
+    assert by_name["generalized-hyperbolic"].domain == "y != 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

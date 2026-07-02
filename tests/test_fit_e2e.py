@@ -274,6 +274,19 @@ def test_logistic_form_fits_over_the_wire():
     assert fit["exact"] is False
 
 
+def test_generalized_hyperbolic_form_fits_exactly_over_the_wire():
+    # 44.2.18: y = 1/(x**2 + 1) in rational mode — the reciprocal-quadratic 1/y = a*x**2 + b*x + c
+    # recovers a=1, b=0, c=1 exactly, rendered as a pasteable "1/(1*x**2 + 0*x + 1)" with an
+    # exact error (pure reciprocals/polynomials stay exact in rational).
+    payload = _fit([0, 1, 2, 3], [1, 0.5, 0.2, 0.1], mode="rational")
+    assert payload["error"] is None
+    fit = _by_form(payload)["generalized-hyperbolic"]
+    assert fit["equation"] == "1/(1*x**2 + 0*x + 1)"
+    assert [p["value"] for p in fit["parameters"]] == ["1 (exact)", "0 (exact)", "1 (exact)"]
+    assert fit["fit_error"] == "0 (exact)"
+    assert fit["exact"] is True
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

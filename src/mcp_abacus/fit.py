@@ -87,6 +87,13 @@ solution:
     in rational (a reciprocal of a rational is rational — no logs/roots), so unlike the
     power/log forms they do NOT drop in rational; only a zero reciprocal (a domain miss — an
     ``x = 0`` / ``y = 0`` datum, or a model denominator ``a·x + b = 0``) drops them.
+  - the generalized hyperbolic ``1/(a·x² + b·x + c)`` (44.2.18) lifts that reciprocal-LINE
+    transform to a reciprocal-QUADRATIC: ``1/y = a·x² + b·x + c`` is a quadratic in ``x``, so the
+    shared :func:`_reciprocal_quadratic_coeffs` least-squares-fits ``{x², x, 1}`` to ``(x, 1/y)``
+    and its coefficients ARE ``(a, b, c)`` directly (``_fit_generalized_hyperbolic``); like the
+    hyperbolic it is EXACT in rational and drops only on a zero reciprocal (a ``y = 0`` datum or a
+    zero model denominator). It shares that reciprocal-quadratic core with the Lorentzian peak
+    (44.2.19), which maps the same coefficients back to a peak/centre/width.
 
 The genuinely non-linearisable sinusoid ``a*sin(b*x + c) + d`` (44.2.9) is the one form
 that keeps an iterative optimise engine: it is non-linear ONLY in the frequency ``b``, so
@@ -1200,6 +1207,93 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
     return FitResult("hyperbolic", equation, (("a", a), ("b", b)), error)
 
 
+def _reciprocal_quadratic_coeffs(
+    xs: list[Value], ys: list[Value], mode: Mode, scale: int, name: str
+) -> tuple[Value, Value, Value]:
+    """Fit ``1/y = A·x² + B·x + C`` — the reciprocal-quadratic core shared by 44.2.18 / 44.2.19.
+
+    The hyperbolic's reciprocal-LINE transform (44.2.12) lifted to a reciprocal-QUADRATIC: taking
+    the reciprocal of ``y`` turns both the generalized hyperbolic ``1/(a·x² + b·x + c)`` (44.2.18)
+    and the Lorentzian peak ``a/(1 + ((x−b)/c)²)`` (44.2.19) into a QUADRATIC in ``x`` — ``1/y =
+    A·x² + B·x + C``. So this helper transforms ``Y = 1/y`` and least-squares-fits the quadratic
+    over the power basis ``{x², x, 1}`` (the same normal equations as the polynomial / gaussian
+    fits, solved by :func:`_solve_linear_system` in mode-faithful Value arithmetic) and returns the
+    coefficients ``(A, B, C)`` — which the generalized hyperbolic reads DIRECTLY as ``(a, b, c)``
+    and the Lorentzian maps back to its peak/centre/width. Being pure reciprocals and polynomials
+    (no logs or roots), the fit is EXACT in rational mode, so neither caller drops there.
+
+    Raises FitError (so the form is DROPPED, 44.3) when the fit is undefined: every ``x`` equal
+    collapses the ``{x², x, 1}`` rows to rank 1 (a degenerate basis, detected DIRECTLY here as in
+    :func:`_line_coeffs` rather than via the singular-pivot test, which fixed-point rounding can
+    slip past), and a ``yᵢ = 0`` has no ``1/y`` (a ZeroDivisionError the callers convert). The
+    caller guarantees at least two points; the quadratic needs three distinct ``x``, else
+    :func:`_solve_linear_system` reports the singular matrix.
+    """
+    if all(x.to_string() == xs[0].to_string() for x in xs):
+        raise FitError(
+            f"Cannot fit {name}: every x value is equal, so its quadratic basis is degenerate. "
+            "Provide data with at least three distinct x values."
+        )
+    one = Value.from_real(1, mode, scale)
+    inv_y = [one.div(y) for y in ys]  # 1/y; a y = 0 raises ZeroDivisionError (a domain miss)
+    basis = (_power_term(2), _power_term(1), _power_term(0))  # {x², x, 1}, highest degree first
+    design = [[f(x, mode, scale) for f in basis] for x in xs]
+    matrix = [
+        [_sum([row[j].mul(row[m]) for row in design], mode, scale) for m in range(3)]
+        for j in range(3)
+    ]
+    rhs = [
+        _sum([row[j].mul(iy) for row, iy in zip(design, inv_y, strict=True)], mode, scale)
+        for j in range(3)
+    ]
+    return tuple(_solve_linear_system(matrix, rhs, name, mode, scale))  # type: ignore[return-value]
+
+
+def _generalized_hyperbolic_equation(a: Value, b: Value, c: Value) -> str:
+    """Render ``1/(a*x**2 + b*x + c)`` over ``x`` (44.2.18).
+
+    The denominator ``a*x**2 + b*x + c`` is the same quadratic :func:`_polynomial_equation`
+    renders (leading ``a*x**2`` keeps its own sign, later terms split ``+ |·|`` / ``- |·|``, e.g.
+    ``2*x**2 - 3*x + 1``), wrapped as ``1/(…)``. Valid calculate source over ``x`` (44.5).
+    """
+    return f"1/({_polynomial_equation([a, b, c])})"
+
+
+def _fit_generalized_hyperbolic(
+    xs: list[Value], ys: list[Value], mode: Mode, scale: int
+) -> FitResult:
+    """Closed-form fit of the generalized hyperbolic ``1/(a*x**2 + b*x + c)`` (44.2.18); ``y != 0``.
+
+    The hyperbolic ``1/(a·x + b)`` (44.2.12) with a QUADRATIC denominator instead of an affine
+    one. It linearises under the reciprocal of ``y``: ``1/y = a·x² + b·x + c`` is a quadratic in
+    ``x``, so the fit is the shared :func:`_reciprocal_quadratic_coeffs` — least-squares-fit the
+    quadratic ``{x², x, 1}`` to ``(x, 1/y)`` — whose coefficients ARE the parameters ``(a, b, c)``
+    directly (no recovery, unlike the Lorentzian). The error is the sum of squared residuals
+    ``Σ (1/(a·xᵢ² + b·xᵢ + c) − yᵢ)²`` of the ORIGINAL model in the active mode, so it measures the
+    fit where the data lives, not in reciprocal space (like the hyperbolic fit).
+
+    This form is EXACT in rational mode — reciprocals of rationals are rational and the quadratic
+    is polynomial, no logs or roots — so it does NOT drop there; only a genuine domain miss drops
+    it. Raises FitError (so the form is DROPPED, 44.3) when a reciprocal hits zero: any ``yᵢ = 0``
+    (no ``1/y``) or a model denominator ``a·xᵢ² + b·xᵢ + c = 0`` raises ZeroDivisionError;
+    NotRepresentableError / OverflowError are caught too so a stray domain miss drops cleanly
+    rather than crashing the other forms (44.3).
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        a, b, c = _reciprocal_quadratic_coeffs(xs, ys, mode, scale, "1/(a*x**2 + b*x + c)")
+        # Model in data space: 1/(a*x**2 + b*x + c).
+        model = [one.div(a.mul(x.mul(x)).add(b.mul(x)).add(c)) for x in xs]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit 1/(a*x**2 + b*x + c): it needs y != 0 for the reciprocal, and a non-zero "
+            f"denominator a*x**2 + b*x + c in the model. {exc}"
+        ) from exc
+    equation = _generalized_hyperbolic_equation(a, b, c)
+    return FitResult("generalized-hyperbolic", equation, (("a", a), ("b", b), ("c", c)), error)
+
+
 # The curve library (44.2): one entry per model form, iterated by the fit tool. Each entry
 # DECLARES the form — its name, model template over x, free-parameter names and any domain
 # limit — and carries the closed-form fitter that estimates its parameters (44.3). Linear,
@@ -1224,7 +1318,11 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # plot slope (b > 0) and drops in rational mode like the power/gaussian forms. The logistic
 # a/(1 + exp(-(b*x + c))) (44.2.17) linearises under the logit ln(y/(a - y)) = b*x + c ONCE its
 # ceiling a is fixed (1 for proportions, else 1.05*max y) — the one form whose leading constant is
-# data-derived, not fitted — and drops in rational mode like the power/gaussian forms.
+# data-derived, not fitted — and drops in rational mode like the power/gaussian forms. The
+# generalized hyperbolic 1/(a*x**2 + b*x + c) (44.2.18) lifts the hyperbolic's reciprocal-line to a
+# reciprocal-QUADRATIC — 1/y = a*x**2 + b*x + c — fitted by the shared _reciprocal_quadratic_coeffs
+# whose coefficients ARE (a, b, c); exact in rational (pure reciprocals/polynomials), dropping only
+# on a zero reciprocal.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1362,6 +1460,18 @@ LOGISTIC = CurveForm(
     "0 < y < a",
     _fit_logistic,
 )
+# The generalized hyperbolic (44.2.18): the hyperbolic 1/(a*x + b) with a QUADRATIC denominator,
+# 1/(a*x**2 + b*x + c). Reciprocal-quadratic transform — 1/y = a*x**2 + b*x + c — fitted by the
+# shared _reciprocal_quadratic_coeffs, whose coefficients ARE (a, b, c) directly. Exact in
+# rational (pure reciprocals/polynomials), so it does NOT drop there; only y = 0 (or a zero model
+# denominator) drops it. Domain y != 0.
+GENERALIZED_HYPERBOLIC = CurveForm(
+    "generalized-hyperbolic",
+    ("a", "b", "c"),
+    "1/(a*x**2 + b*x + c)",
+    "y != 0",
+    _fit_generalized_hyperbolic,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1380,6 +1490,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     HOERL,
     WEIBULL,
     LOGISTIC,
+    GENERALIZED_HYPERBOLIC,
 )
 
 

@@ -72,14 +72,14 @@ type; it calculates *using* that type.
   `a + b*ln(x)`, square root `a*sqrt(x) + b`, reciprocal `a/x + b`, sinusoid
   `a*sin(b*x + c) + d`, gaussian `a*exp(-(x-b)**2/(2*c**2))`, saturation `x/(a*x + b)`
   (Michaelis-Menten), hyperbolic `1/(a*x + b)`, Laurent `a + b*x + c/x`, Hoerl
-  `a*b**x*x**c`, Weibull CDF `1 - exp(-(x/a)**b)` and logistic `a/(1 + exp(-(b*x + c)))`
-  (with a data-fixed ceiling `a`), the parameters that best
+  `a*b**x*x**c`, Weibull CDF `1 - exp(-(x/a)**b)`, logistic `a/(1 + exp(-(b*x + c)))`
+  (with a data-fixed ceiling `a`) and generalized hyperbolic `1/(a*x**2 + b*x + c)`, the parameters that best
   match in the least-squares sense —
   polynomials and the affine forms in closed form via the normal equations, the power,
   exponential and exp-reciprocal laws by a log-linearisation, the gaussian and Hoerl by fitting a
   log-space basis (Caruana's method for the gaussian), the Weibull by the double-log Weibull plot,
   the logistic by the logit once its ceiling is fixed,
-  the saturation and hyperbolic by a reciprocal-line transform, and the sinusoid
+  the saturation and hyperbolic by a reciprocal-line transform (the generalized hyperbolic by a reciprocal-quadratic), and the sinusoid
   (the lone form with no closed
   form) by an iterative frequency search — then
   ranks them by residual error and returns the best three (e.g. `x=[1,1.5,2],

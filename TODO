@@ -1553,7 +1553,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.17. logistic (fixed L) — L/(1 + exp(-(a*x + b))); S-curve with fixed
                      carrying capacity L (L=1 for proportions, else L=max y); domain
                      0<y<L. Closed form via the logit ln(y/(L-y)) = a*x + b, linear.
-        [ ] 44.2.18. generalized hyperbolic — 1/(a*x**2 + b*x + c); domain y!=0. Closed
+        [x] 44.2.18. generalized hyperbolic — 1/(a*x**2 + b*x + c); domain y!=0. Closed
                      form via 1/y = quadratic in x (generalizes 44.2.12 to a quadratic
                      denominator); shares the reciprocal-quadratic wrapper with 44.2.19.
         [ ] 44.2.19. Lorentzian/Cauchy peak — a/(1 + ((x-b)/c)**2) (peak a at centre b,
