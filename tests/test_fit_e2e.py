@@ -195,6 +195,19 @@ def test_hyperbolic_form_fits_exactly_over_the_wire():
     assert fit["exact"] is True
 
 
+def test_laurent_form_fits_exactly_over_the_wire():
+    # 44.2.13: y = 2 + 3*x + 1/x in rational mode (x powers of two so 1/x is exact in binary)
+    # — the Laurent form recovers a=2, b=3, c=1 exactly via the direct basis {1, x, 1/x},
+    # rendered as a pasteable "2 + 3*x + 1/x" with an exact error.
+    payload = _fit([1, 2, 4, 8], [6, 8.5, 14.25, 26.125], mode="rational")
+    assert payload["error"] is None
+    fit = _by_form(payload)["laurent"]
+    assert fit["equation"] == "2 + 3*x + 1/x"
+    assert [p["value"] for p in fit["parameters"]] == ["2 (exact)", "3 (exact)", "1 (exact)"]
+    assert fit["fit_error"] == "0 (exact)"
+    assert fit["exact"] is True
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

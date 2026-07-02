@@ -105,10 +105,11 @@ def test_cubic_recovers_exact_cubic_in_rational():
 
 def test_polynomial_drops_when_data_underdetermines_it():
     # Three points cannot determine a cubic's four coefficients (a singular normal-equations
-    # matrix), so the cubic is DROPPED — but the lower-order forms still fit and come back.
+    # matrix), so the cubic is DROPPED — but the lower-order forms still fit and come back
+    # (quadratic among the best three; the best-3 truncation may trail off linear).
     forms = [r.form for r in fit_all([1, 2, 3], [2, 5, 10], Mode.RATIONAL, 0)]
     assert "cubic" not in forms
-    assert "linear" in forms and "quadratic" in forms
+    assert "quadratic" in forms
 
 
 def test_power_law_fit_in_floating_point():
@@ -126,7 +127,7 @@ def test_power_is_dropped_in_rational_mode():
     # them (exact-or-refuse), so the power form is dropped while the polynomials remain.
     forms = [r.form for r in fit_all([1, 2, 3, 4], [2, 8, 18, 32], Mode.RATIONAL, 0)]
     assert "power" not in forms
-    assert "linear" in forms
+    assert "quadratic" in forms  # the polynomials still fit (best-3 may trail off linear)
 
 
 def test_power_is_dropped_when_x_is_not_positive():
@@ -197,7 +198,7 @@ def test_square_root_is_dropped_in_rational_mode():
     ys = [2 * math.sqrt(x) + 1 for x in (1, 2, 3, 5)]
     forms = [r.form for r in fit_all([1, 2, 3, 5], ys, Mode.RATIONAL, 0)]
     assert "square-root" not in forms
-    assert "linear" in forms
+    assert "quadratic" in forms  # the polynomials still fit (best-3 may trail off linear)
 
 
 def test_reciprocal_recovers_exactly_in_rational():
@@ -347,6 +348,28 @@ def test_hyperbolic_is_dropped_when_some_y_is_zero():
     # while the forms that need no 1/y still fit and come back.
     forms = [r.form for r in fit_all([1, 2, 3, 4], [1, 0, 3, 4], Mode.RATIONAL, 0)]
     assert "hyperbolic" not in forms
+    assert "quadratic" in forms  # forms needing no 1/y still fit (best-3 may trail off linear)
+
+
+def test_laurent_recovers_exactly_in_rational():
+    # 44.2.13: y = 2 + 3*x + 1/x (so a=2, b=3, c=1) — the direct basis {1, x, 1/x} is exact in
+    # rational mode (a constant, x, and a reciprocal of a rational are all exact), so the three
+    # coefficients are recovered on the nose with error 0. Three distinct x exactly determine them.
+    result = _pick(fit_all([1, 2, 4], [6, 8.5, 14.25], Mode.RATIONAL, 0), "laurent")
+    params = dict(result.parameters)
+    assert params["a"].to_string() == "2"
+    assert params["b"].to_string() == "3"
+    assert params["c"].to_string() == "1"
+    assert result.equation == "2 + 3*x + 1/x"
+    assert result.error.to_string() == "0"
+    assert result.error.exact
+
+
+def test_laurent_is_dropped_when_some_x_is_zero():
+    # The Laurent basis has a 1/x term, so an x = 0 datum raises ZeroDivisionError; the basis
+    # fitter catches it as a clean DROP (no crash), while the forms with no 1/x still fit.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [1, 2, 3, 4], Mode.RATIONAL, 0)]
+    assert "laurent" not in forms
     assert "linear" in forms and "quadratic" in forms
 
 
@@ -397,10 +420,10 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.12: the registry declares linear plus the quadratic/cubic/power, the
-    # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, and
-    # the saturation/hyperbolic reciprocal-line forms — in TODO numeric order — each with its
-    # parameter names, model template and domain limit.
+    # 44.2.1-44.2.13: the registry declares linear plus the quadratic/cubic/power, the
+    # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
+    # saturation/hyperbolic reciprocal-line forms, and the Laurent direct-basis form — in TODO
+    # numeric order — each with its parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -415,6 +438,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "gaussian",
         "saturation",
         "hyperbolic",
+        "laurent",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -452,6 +476,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["hyperbolic"].parameters == ("a", "b")
     assert by_name["hyperbolic"].template == "1/(a*x + b)"
     assert by_name["hyperbolic"].domain == "y != 0"
+    # The Laurent form (44.2.13): three parameters over the direct basis {1, x, 1/x}, domain
+    # x != 0 (its 1/x pole), fitted in closed form with no transform.
+    assert by_name["laurent"].parameters == ("a", "b", "c")
+    assert by_name["laurent"].template == "a + b*x + c/x"
+    assert by_name["laurent"].domain == "x != 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

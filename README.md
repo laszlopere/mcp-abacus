@@ -70,7 +70,7 @@ type; it calculates *using* that type.
   straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`, logarithm
   `a + b*ln(x)`, square root `a*sqrt(x) + b`, reciprocal `a/x + b`, sinusoid
   `a*sin(b*x + c) + d`, gaussian `a*exp(-(x-b)**2/(2*c**2))`, saturation `x/(a*x + b)`
-  (Michaelis-Menten) and hyperbolic `1/(a*x + b)`, the parameters that best
+  (Michaelis-Menten), hyperbolic `1/(a*x + b)` and Laurent `a + b*x + c/x`, the parameters that best
   match in the least-squares sense —
   polynomials and the affine forms in closed form via the normal equations, the power and
   exponential laws by a log-linearisation, the gaussian by Caruana's method (logs to a

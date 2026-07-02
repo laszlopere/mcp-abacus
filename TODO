@@ -1538,7 +1538,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.12. hyperbolic — 1/(a*x + b); smooth 1/x-style falloff; domain y!=0.
                      Closed form via the line 1/y = a*x + b (distinct from 44.2.8's
                      additive a/x + b).
-        [ ] 44.2.13. Laurent — a + b*x + c/x; linear trend with a near-origin pole;
+        [x] 44.2.13. Laurent — a + b*x + c/x; linear trend with a near-origin pole;
                      domain x!=0. Closed form: direct linear basis {1, x, 1/x} (44.9),
                      no transform.
         [ ] 44.2.14. exp-reciprocal (Arrhenius) — a*exp(b/x); rate/vapor-pressure shape;

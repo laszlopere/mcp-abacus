@@ -23,12 +23,14 @@ solution:
     mode-rounded in fixed-point, and a native double in floating-point. The quadratic and
     cubic share one general basis fitter (``_linear_basis_fitter``, 44.9) over the power
     basis ``{x**degree, …, x, 1}``; the logarithmic ``a + b·ln x`` (basis ``{1, ln x}``),
-    square-root ``a·√x + b`` (basis ``{√x, 1}``) and reciprocal ``a/x + b`` (basis
-    ``{1/x, 1}``) forms are affine in their own curved basis, so each just wires its basis
-    into that same fitter rather than re-deriving the normal equations. The reciprocal is
-    exact in every mode (``1/x`` of a rational is rational); the logarithmic and square-root
-    are irrational in rational mode (like the power form), so they drop there. The linear
-    form keeps the line's direct two-coefficient formula (``_fit_linear`` / ``_line_coeffs``),
+    square-root ``a·√x + b`` (basis ``{√x, 1}``), reciprocal ``a/x + b`` (basis ``{1/x, 1}``)
+    and Laurent ``a + b·x + c/x`` (basis ``{1, x, 1/x}``, 44.2.13) forms are linear in their
+    own curved basis, so each just wires its basis into that same fitter rather than
+    re-deriving the normal equations. The reciprocal and Laurent are exact in every mode
+    (``1/x`` of a rational is rational, and ``x`` / the constant are exact); the logarithmic
+    and square-root are irrational in rational mode (like the power form), so they drop there.
+    The linear form keeps the line's direct two-coefficient formula (``_fit_linear`` /
+    ``_line_coeffs``),
     which the power and exponential fits reuse on logged data.
   - power ``a·x**b`` and exponential ``a·exp(b·x)`` are intrinsically non-linear but
     LINEARISE under logs. Power logs both axes — ``ln y = ln a + b·ln x`` is a straight line
@@ -527,6 +529,10 @@ def _recip_x(x: Value, mode: Mode, scale: int) -> Value:
     return Value.from_real(1, mode, scale).div(x)
 
 
+def _x(x: Value, mode: Mode, scale: int) -> Value:
+    return x  # the identity basis term, for the Laurent form's `x` (44.2.13)
+
+
 def _logarithmic_equation(coeffs: list[Value]) -> str:
     """Render ``a + b*ln(x)`` over ``x`` with clean signs (basis ``{1, ln x}``)."""
     return _affine_equation(coeffs, (lambda m: m.to_string(), lambda m: f"{m.to_string()}*ln(x)"))
@@ -540,6 +546,14 @@ def _square_root_equation(coeffs: list[Value]) -> str:
 def _reciprocal_equation(coeffs: list[Value]) -> str:
     """Render ``a/x + b`` over ``x`` with clean signs (basis ``{1/x, 1}``)."""
     return _affine_equation(coeffs, (lambda m: f"{m.to_string()}/x", lambda m: m.to_string()))
+
+
+def _laurent_equation(coeffs: list[Value]) -> str:
+    """Render ``a + b*x + c/x`` over ``x`` with clean signs (basis ``{1, x, 1/x}``)."""
+    return _affine_equation(
+        coeffs,
+        (lambda m: m.to_string(), lambda m: f"{m.to_string()}*x", lambda m: f"{m.to_string()}/x"),
+    )
 
 
 # --- Sinusoidal fit (44.2.9) --------------------------------------------------
@@ -923,7 +937,9 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # alone keeps the iterative frequency search. The final two forms — the saturation
 # x/(a*x + b) (44.2.11) and hyperbolic 1/(a*x + b) (44.2.12) curves — are closed form via a
 # reciprocal-line transform (the double-reciprocal Lineweaver-Burk line 1/y = a + b·(1/x) for
-# the saturation, the line 1/y = a·x + b for the hyperbolic), and complete the library.
+# the saturation, the line 1/y = a·x + b for the hyperbolic). The Laurent form a + b*x + c/x
+# (44.2.13) closes with a DIRECT linear basis {1, x, 1/x} (no transform), wired into the same
+# _linear_basis_fitter as the affine log/sqrt/reciprocal forms.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1000,6 +1016,19 @@ HYPERBOLIC = CurveForm(
     "y != 0",
     _fit_hyperbolic,
 )
+# The Laurent form (44.2.13): a linear trend with a near-origin 1/x pole, a + b*x + c/x. Linear
+# in its parameters over the DIRECT basis {1, x, 1/x} (no transform, unlike the power/reciprocal-
+# line forms), so it wires straight into _linear_basis_fitter (44.9) like the log/sqrt/reciprocal
+# affine forms. Exact in rational (the basis is a constant, x, and a reciprocal of a rational — no
+# logs or roots), so it does NOT drop there; only x = 0 (its 1/x pole) drops it, hence domain
+# x != 0. The fitter catches that ZeroDivisionError to drop the form rather than crash the rest.
+LAURENT = CurveForm(
+    "laurent",
+    ("a", "b", "c"),
+    "a + b*x + c/x",
+    "x != 0",
+    _linear_basis_fitter("laurent", ("a", "b", "c"), (_one, _x, _recip_x), _laurent_equation),
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1013,6 +1042,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     GAUSSIAN,
     SATURATION,
     HYPERBOLIC,
+    LAURENT,
 )
 
 
