@@ -1538,6 +1538,28 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.12. hyperbolic — 1/(a*x + b); smooth 1/x-style falloff; domain y!=0.
                      Closed form via the line 1/y = a*x + b (distinct from 44.2.8's
                      additive a/x + b).
+        [ ] 44.2.13. Laurent — a + b*x + c/x; linear trend with a near-origin pole;
+                     domain x!=0. Closed form: direct linear basis {1, x, 1/x} (44.9),
+                     no transform.
+        [ ] 44.2.14. exp-reciprocal (Arrhenius) — a*exp(b/x); rate/vapor-pressure shape;
+                     domain x!=0, y>0. Closed form via ln y = ln a + b*(1/x), linear
+                     basis {1, 1/x} in log-space (cousin of exponential 44.2.5 with 1/x).
+        [ ] 44.2.15. Hoerl — a * b**x * x**c; rise-then-decay; domain x>0, y>0. Closed
+                     form via ln y = ln a + (ln b)*x + c*ln x, linear basis {1, x, ln x}
+                     in log-space.
+        [ ] 44.2.16. Weibull CDF — 1 - exp(-(x/L)**k); reliability/survival S-curve;
+                     domain x>0, 0<y<1. Closed form (Weibull plot) via
+                     ln(-ln(1-y)) = k*ln x - k*ln L, linear in ln x.
+        [ ] 44.2.17. logistic (fixed L) — L/(1 + exp(-(a*x + b))); S-curve with fixed
+                     carrying capacity L (L=1 for proportions, else L=max y); domain
+                     0<y<L. Closed form via the logit ln(y/(L-y)) = a*x + b, linear.
+        [ ] 44.2.18. generalized hyperbolic — 1/(a*x**2 + b*x + c); domain y!=0. Closed
+                     form via 1/y = quadratic in x (generalizes 44.2.12 to a quadratic
+                     denominator); shares the reciprocal-quadratic wrapper with 44.2.19.
+        [ ] 44.2.19. Lorentzian/Cauchy peak — a/(1 + ((x-b)/c)**2) (peak a at centre b,
+                     half-width c); the symmetric-peak counterpart to gaussian 44.2.10;
+                     domain y!=0. Closed form via 1/y = quadratic in x, recovering a, b,
+                     c from the coefficients (needs an upward parabola in 1/y).
     [x] 44.3.  Fit each form independently — estimate its parameters by minimising
                the residual error over the data, driving the existing solver
                optimise engine (least-squares objective Σ(model(xᵢ)-yᵢ)²). Forms are
