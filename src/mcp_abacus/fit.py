@@ -56,6 +56,16 @@ solution:
     coefficients; the rebuilt model ``exp(p₀ + p₁·x + p₂·ln x)`` is identically ``a·b**x·x**c``,
     measured in data space (``_fit_hoerl``). It needs ``x > 0`` and ``y > 0`` for the two logs,
     and rational refuses the irrational logs/exp, so it drops there like the power/gaussian forms.
+  - the Weibull CDF ``1 − exp(−(x/a)**b)`` (44.2.16, the reliability / survival S-curve, scale
+    ``a`` and shape ``b``) linearises under a DOUBLE log — the classic Weibull plot: ``1 − y =
+    exp(−(x/a)**b)`` gives ``−ln(1 − y) = (x/a)**b`` and a second log makes ``ln(−ln(1 − y)) =
+    b·ln x − b·ln a`` a line in ``(ln x, ln(−ln(1 − y)))``. So the fit lines that transformed
+    data (``_line_coeffs``) and reads the SLOPE as the shape ``b`` and the scale as
+    ``a = exp(−intercept/b)`` (the intercept being ``−b·ln a``); the model rebuilds as
+    ``1 − exp(−exp(b·ln x + intercept))`` in data space (``_fit_weibull``). Like the gaussian's
+    downward-parabola requirement it needs a POSITIVE plot slope (a valid shape ``b > 0``),
+    else it drops; it needs ``x > 0`` and ``0 < y < 1`` for the two logs, and rational refuses
+    the irrational logs/exp, so it drops there like the power/gaussian forms.
   - the saturation ``x/(a·x + b)`` (44.2.11, Michaelis-Menten) and hyperbolic ``1/(a·x + b)``
     (44.2.12) — the last two forms — linearise under RECIPROCALS rather than logs. The
     saturation's double reciprocal is the Lineweaver-Burk line ``1/y = a + b·(1/x)``, affine
@@ -954,6 +964,68 @@ def _fit_hoerl(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitR
     return FitResult("hoerl", equation, (("a", a), ("b", b), ("c", c)), error)
 
 
+def _weibull_equation(a: Value, b: Value) -> str:
+    """Render ``1 - exp(-(x/a)**b)`` over ``x`` — the Weibull CDF (44.2.16).
+
+    The scale ``a`` (= ``L``) is always positive (``exp(…)``) and the shape ``b`` (= ``k``) is
+    fitted only when positive (the Weibull-plot slope must be > 0), so both render bare — no
+    sign to split. ``**`` binds tighter than ``/``, so the ``(x/a)`` is parenthesised for the
+    power to read as ``(x/a)**b`` rather than ``x/(a**b)``. Valid calculate source over ``x``
+    (44.5), pasteable straight back in.
+    """
+    return f"1 - exp(-(x/{a.to_string()})**{b.to_string()})"
+
+
+def _fit_weibull(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the Weibull CDF ``1 - exp(-(x/a)**b)`` (44.2.16); domain ``x>0, 0<y<1``.
+
+    The reliability / survival S-curve, with scale ``a`` (= ``L``) and shape ``b`` (= ``k``). It
+    linearises under a DOUBLE log — the classic Weibull plot: ``1 - y = exp(-(x/a)**b)`` gives
+    ``-ln(1 − y) = (x/a)**b``, and a second log makes ``ln(-ln(1 − y)) = b·ln x − b·ln a`` a
+    straight line in ``(ln x, ln(-ln(1 − y)))``. So the fit runs :func:`_line_coeffs` on that
+    transformed data and reads the parameters off the line: the SLOPE is the shape ``b``, and the
+    scale is ``a = exp(-intercept/b)`` (since the intercept is ``-b·ln a``). The error is the sum
+    of squared residuals ``Σ (1 − exp(-(xᵢ/a)**b) − yᵢ)²`` of the ORIGINAL model in the active
+    mode, so it measures the fit where the data lives, not in log-log space (like the power fit).
+    The model is rebuilt as ``1 − exp(−exp(b·ln xᵢ + intercept))`` — identically the CDF —
+    reusing the logs.
+
+    A valid Weibull needs a POSITIVE shape, i.e. a positive Weibull-plot slope; data whose slope
+    is ``≤ 0`` is not Weibull-shaped, so the form is dropped (a FitError), the reliability analogue
+    of the gaussian's downward-parabola requirement. Raises FitError (so the form is DROPPED,
+    44.3) also when the transform is undefined or unrepresentable: any ``xᵢ ≤ 0`` has no ``ln x``,
+    any ``yᵢ`` outside ``(0, 1)`` leaves ``ln(-ln(1 − y))`` undefined (``1 − y ≤ 0`` for ``y ≥ 1``,
+    or ``-ln(1 − y) ≤ 0`` for ``y ≤ 0``), and in rational mode the logs and ``exp`` are irrational
+    — the type refuses them — so the form simply does not fit there (like the power/gaussian
+    forms). An OverflowError from a blown-up ``exp`` drops it too rather than crashing the rest.
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        log_x = [x.ln() for x in xs]
+        # The Weibull-plot ordinate Y = ln(-ln(1 - y)); 1 - y <= 0 (y >= 1) or -ln(1 - y) <= 0
+        # (y <= 0) makes a log undefined, so a y outside (0, 1) raises and drops the form.
+        weibull_y = [one.sub(y).ln().neg().ln() for y in ys]
+        slope, intercept = _line_coeffs(log_x, weibull_y, mode, scale)  # Y = b*ln x - b*ln a
+        b = slope  # the shape k
+        if b.to_float() <= 0:  # a valid Weibull has a positive shape (positive plot slope)
+            raise FitError(
+                "Cannot fit 1 - exp(-(x/a)**b): the Weibull-plot slope (the shape b) is not "
+                "positive, so the data is not Weibull-shaped."
+            )
+        a = intercept.neg().div(b).exp()  # exp(-intercept/b) == exp(ln a), the scale L
+        # Rebuild in data space as 1 - exp(-exp(b*ln x + intercept)) == 1 - exp(-(x/a)**b).
+        model = [one.sub(b.mul(lx).add(intercept).exp().neg().exp()) for lx in log_x]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit 1 - exp(-(x/a)**b): it needs x > 0 and 0 < y < 1 for the log-log "
+            "transform, and a mode that can represent the logs / exp (rational refuses the "
+            f"irrationals). {exc}"
+        ) from exc
+    equation = _weibull_equation(a, b)
+    return FitResult("weibull", equation, (("a", a), ("b", b)), error)
+
+
 def _saturation_equation(a: Value, b: Value) -> str:
     """Render ``x/(a*x + b)`` over ``x`` with clean signs in the denominator.
 
@@ -1068,7 +1140,10 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # ln y = ln a + b*(1/x) — so it drops in rational mode like the power/exponential forms. The
 # Hoerl model a*b**x*x**c (44.2.15) log-linearises to a line over two regressors, ln y = ln a +
 # (ln b)*x + c*ln x over the basis {1, x, ln x} — the gaussian's twin, fitted by the same normal
-# equations, then a/b/c recovered by exp — so it too drops in rational mode.
+# equations, then a/b/c recovered by exp — so it too drops in rational mode. The Weibull CDF
+# 1 - exp(-(x/a)**b) (44.2.16) linearises under a DOUBLE log — the Weibull plot ln(-ln(1-y)) =
+# b*ln x - b*ln a — read as slope = shape b and scale a = exp(-intercept/b); it needs a positive
+# plot slope (b > 0) and drops in rational mode like the power/gaussian forms.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1181,6 +1256,19 @@ HOERL = CurveForm(
     "x > 0, y > 0",
     _fit_hoerl,
 )
+# The Weibull CDF (44.2.16): the reliability / survival S-curve 1 - exp(-(x/a)**b), scale a (=L)
+# and shape b (=k). Linearises under a DOUBLE log — the Weibull plot ln(-ln(1-y)) = b*ln x -
+# b*ln a, a line in (ln x, ln(-ln(1-y))) — so the fit lines it and reads the slope as b and the
+# scale as a = exp(-intercept/b). Needs a POSITIVE plot slope (a valid shape b > 0), the
+# reliability analogue of the gaussian's downward-parabola check. Domain x > 0 and 0 < y < 1
+# (the two logs); drops in rational mode (irrational logs/exp, like the power/gaussian forms).
+WEIBULL = CurveForm(
+    "weibull",
+    ("a", "b"),
+    "1 - exp(-(x/a)**b)",
+    "x > 0, 0 < y < 1",
+    _fit_weibull,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1197,6 +1285,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     LAURENT,
     EXP_RECIPROCAL,
     HOERL,
+    WEIBULL,
 )
 
 

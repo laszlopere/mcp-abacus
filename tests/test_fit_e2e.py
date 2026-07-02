@@ -241,6 +241,22 @@ def test_hoerl_form_fits_over_the_wire():
     assert fit["exact"] is False
 
 
+def test_weibull_form_fits_over_the_wire():
+    # 44.2.16: y = 1 - exp(-(x/2)**1.5) (the Weibull CDF) in floating-point — it recovers the
+    # scale a≈2 and shape b≈1.5 via the double-log Weibull plot, rendered as a pasteable
+    # "1 - exp(-(x/…)**…)" with an inexact error (the logs round in floating-point).
+    xs = [1, 2, 3, 4, 5]
+    ys = [1 - math.exp(-((x / 2) ** 1.5)) for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    assert payload["error"] is None
+    fit = _by_form(payload)["weibull"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(2.0, rel=1e-6)
+    assert params["b"] == pytest.approx(1.5, rel=1e-6)
+    assert "exp(-(x/" in fit["equation"] and ")**" in fit["equation"]
+    assert fit["exact"] is False
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

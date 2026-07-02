@@ -373,6 +373,46 @@ def test_hoerl_is_dropped_when_some_x_is_not_positive():
     assert "quadratic" in forms
 
 
+def test_weibull_recovers_scale_and_shape_in_floating_point():
+    # 44.2.16: y = 1 - exp(-(x/2)**1.5) — the Weibull plot ln(-ln(1-y)) = b*ln x - b*ln a is a
+    # line, so it recovers the scale a≈2 and shape b≈1.5 in floating-point, error ≈ 0.
+    xs = [1, 2, 3, 4, 5]
+    ys = [1 - math.exp(-((x / 2) ** 1.5)) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "weibull")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(2.0, rel=1e-6)  # the scale L
+    assert params["b"].to_float() == pytest.approx(1.5, rel=1e-6)  # the shape k
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)
+    assert "exp(-(x/" in result.equation and ")**" in result.equation
+    assert not result.error.exact
+
+
+def test_weibull_is_dropped_in_rational_mode():
+    # The double-log transform needs ln/exp, which are irrational — rational mode refuses them,
+    # so the Weibull form drops while the polynomials remain (like the power/gaussian forms).
+    ys = [1 - math.exp(-((x / 2) ** 1.5)) for x in (1, 2, 3, 4, 5)]
+    forms = [r.form for r in fit_all([1, 2, 3, 4, 5], ys, Mode.RATIONAL, 0)]
+    assert "weibull" not in forms
+    assert "cubic" in forms  # a polynomial remains
+
+
+def test_weibull_is_dropped_when_y_is_outside_the_unit_interval():
+    # The ordinate ln(-ln(1 - y)) needs 0 < y < 1; a y = 1 makes 1 - y = 0, so the inner log is
+    # undefined and the form drops cleanly while the log-free forms still fit.
+    forms = [r.form for r in fit_all([1, 2, 3, 4], [0.3, 0.6, 0.8, 1.0], Mode.FLOATING_POINT, 0)]
+    assert "weibull" not in forms
+    assert "cubic" in forms
+
+
+def test_weibull_is_dropped_when_data_is_not_weibull_shaped():
+    # A valid Weibull CDF rises, so its Weibull-plot slope (the shape b) is positive; decreasing
+    # data gives a non-positive slope and drops the form (the reliability analogue of the
+    # gaussian's downward-parabola check), while the monotone-agnostic forms still fit.
+    forms = [r.form for r in fit_all([1, 2, 3, 4], [0.8, 0.6, 0.4, 0.2], Mode.FLOATING_POINT, 0)]
+    assert "weibull" not in forms
+    assert "quadratic" in forms
+
+
 def test_saturation_recovers_exactly_in_rational():
     # 44.2.11: y = x/(x + 2) (so a=1, b=2) — the double-reciprocal line 1/y = a + b*(1/x) is
     # exact in rational mode (reciprocals of rationals are rational), so a and b are recovered
@@ -483,11 +523,11 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.15: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.16: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
     # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, the
-    # exp-reciprocal / Arrhenius law, and the Hoerl model — in TODO numeric order — each with
-    # its parameter names, model template and domain limit.
+    # exp-reciprocal / Arrhenius law, the Hoerl model, and the Weibull CDF — in TODO numeric
+    # order — each with its parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -505,6 +545,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "laurent",
         "exp-reciprocal",
         "hoerl",
+        "weibull",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -557,6 +598,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["hoerl"].parameters == ("a", "b", "c")
     assert by_name["hoerl"].template == "a*b**x*x**c"
     assert by_name["hoerl"].domain == "x > 0, y > 0"
+    # The Weibull CDF (44.2.16): two parameters (scale a, shape b), fitted by the double-log
+    # Weibull plot, domain x > 0 and 0 < y < 1 (the two logs).
+    assert by_name["weibull"].parameters == ("a", "b")
+    assert by_name["weibull"].template == "1 - exp(-(x/a)**b)"
+    assert by_name["weibull"].domain == "x > 0, 0 < y < 1"
 
 
 def test_every_form_is_now_wired_to_a_fitter():
