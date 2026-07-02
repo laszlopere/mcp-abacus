@@ -413,6 +413,49 @@ def test_weibull_is_dropped_when_data_is_not_weibull_shaped():
     assert "quadratic" in forms
 
 
+def test_logistic_recovers_growth_and_intercept_for_proportions_in_floating_point():
+    # 44.2.17: y = 1/(1 + exp(-(0.8*x - 2))) — proportion data (every y < 1), so the fixed
+    # ceiling a = 1 matches the true carrying capacity and the logit ln(y/(1 - y)) = b*x + c is
+    # a line, recovering the growth rate b≈0.8 and intercept c≈-2 with error ≈ 0.
+    xs = [0, 1, 2, 3, 4, 5]
+    ys = [1 / (1 + math.exp(-(0.8 * x - 2))) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "logistic")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(1.0)  # proportions -> ceiling 1
+    assert params["b"].to_float() == pytest.approx(0.8, rel=1e-6)
+    assert params["c"].to_float() == pytest.approx(-2.0, rel=1e-6)
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)
+    assert "/(1 + exp(-(" in result.equation
+    assert not result.error.exact
+
+
+def test_logistic_ceiling_uses_headroom_above_the_max_for_non_proportion_data():
+    # For non-proportion data (some y >= 1) the ceiling a is NOT fitted — it is the largest
+    # observation lifted by 5% headroom, so no datum sits at the ceiling. Genuine sigmoid data
+    # (saturating near 8) ranks the logistic among the best three, and its a = 1.05*max(y).
+    xs = [0, 1, 2, 3, 4, 5, 6]
+    ys = [8 / (1 + math.exp(-1.2 * (x - 3))) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "logistic")
+    assert dict(result.parameters)["a"].to_float() == pytest.approx(1.05 * max(ys))
+
+
+def test_logistic_is_dropped_in_rational_mode():
+    # The logit needs ln/exp, which are irrational — rational mode refuses them, so the logistic
+    # form drops while the polynomials remain (like the power/gaussian forms).
+    ys = [1 / (1 + math.exp(-(0.8 * x - 2))) for x in (0, 1, 2, 3, 4, 5)]
+    forms = [r.form for r in fit_all([0, 1, 2, 3, 4, 5], ys, Mode.RATIONAL, 0)]
+    assert "logistic" not in forms
+    assert "cubic" in forms
+
+
+def test_logistic_is_dropped_when_some_y_is_not_positive():
+    # The logit ln(y/(a - y)) needs y > 0; a non-positive y makes the ratio non-positive and the
+    # log undefined, so the form drops cleanly while the log-free forms still fit.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [0.2, 0.5, 0.8, 0.0], Mode.FLOATING_POINT, 0)]
+    assert "logistic" not in forms
+    assert "quadratic" in forms
+
+
 def test_saturation_recovers_exactly_in_rational():
     # 44.2.11: y = x/(x + 2) (so a=1, b=2) — the double-reciprocal line 1/y = a + b*(1/x) is
     # exact in rational mode (reciprocals of rationals are rational), so a and b are recovered
@@ -523,11 +566,11 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.16: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.17: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
     # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, the
-    # exp-reciprocal / Arrhenius law, the Hoerl model, and the Weibull CDF — in TODO numeric
-    # order — each with its parameter names, model template and domain limit.
+    # exp-reciprocal / Arrhenius law, the Hoerl model, the Weibull CDF, and the fixed-L logistic
+    # — in TODO numeric order — each with its parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -546,6 +589,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "exp-reciprocal",
         "hoerl",
         "weibull",
+        "logistic",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -603,6 +647,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["weibull"].parameters == ("a", "b")
     assert by_name["weibull"].template == "1 - exp(-(x/a)**b)"
     assert by_name["weibull"].domain == "x > 0, 0 < y < 1"
+    # The logistic (44.2.17): three parameters (ceiling a — data-fixed, not fitted — growth rate
+    # b, intercept c), fitted by the logit once a is fixed, domain 0 < y < a.
+    assert by_name["logistic"].parameters == ("a", "b", "c")
+    assert by_name["logistic"].template == "a/(1 + exp(-(b*x + c)))"
+    assert by_name["logistic"].domain == "0 < y < a"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

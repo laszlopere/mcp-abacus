@@ -1550,7 +1550,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.16. Weibull CDF — 1 - exp(-(x/L)**k); reliability/survival S-curve;
                      domain x>0, 0<y<1. Closed form (Weibull plot) via
                      ln(-ln(1-y)) = k*ln x - k*ln L, linear in ln x.
-        [ ] 44.2.17. logistic (fixed L) — L/(1 + exp(-(a*x + b))); S-curve with fixed
+        [x] 44.2.17. logistic (fixed L) — L/(1 + exp(-(a*x + b))); S-curve with fixed
                      carrying capacity L (L=1 for proportions, else L=max y); domain
                      0<y<L. Closed form via the logit ln(y/(L-y)) = a*x + b, linear.
         [ ] 44.2.18. generalized hyperbolic — 1/(a*x**2 + b*x + c); domain y!=0. Closed

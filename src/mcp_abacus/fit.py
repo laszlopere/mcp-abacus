@@ -66,6 +66,16 @@ solution:
     downward-parabola requirement it needs a POSITIVE plot slope (a valid shape ``b > 0``),
     else it drops; it needs ``x > 0`` and ``0 < y < 1`` for the two logs, and rational refuses
     the irrational logs/exp, so it drops there like the power/gaussian forms.
+  - the logistic ``a/(1 + exp(−(b·x + c)))`` (44.2.17, an S-curve with ceiling ``a``, growth
+    rate ``b`` and intercept ``c``) linearises under the LOGIT — but only once its carrying
+    capacity ``a`` is FIXED (that is what keeps it closed form, the one form whose ceiling is a
+    data-derived constant rather than least-squares-fitted): ``a = 1`` for proportions (every
+    ``y < 1``) else ``a = 1.05·max(y)`` (lifted by ``_LOGISTIC_HEADROOM`` so no datum sits at the
+    ceiling), and with ``a`` known ``ln(y/(a − y)) = b·x + c`` is a line in ``(x, logit)``, so the
+    fit lines it (``_line_coeffs``) and reads the SLOPE as ``b`` and the INTERCEPT as ``c``
+    (``_fit_logistic``). Both an increasing and a decreasing sigmoid are valid, so (unlike the
+    Weibull) there is no slope-sign guard; a non-positive ``y`` leaves the logit undefined and
+    rational refuses the irrational logs/exp, so it drops there like the power/gaussian forms.
   - the saturation ``x/(a·x + b)`` (44.2.11, Michaelis-Menten) and hyperbolic ``1/(a·x + b)``
     (44.2.12) — the last two forms — linearise under RECIPROCALS rather than logs. The
     saturation's double reciprocal is the Lineweaver-Burk line ``1/y = a + b·(1/x)``, affine
@@ -99,11 +109,19 @@ exact/inexact verdict — then RANKED best (least error) first and truncated to 
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 from mcp_abacus.expr.value import Mode, NotRepresentableError, Value
 
 _RATIONAL_FIT_DECIMALS = 12  # rational has no scale of its own; materialise data at this one
 _BEST_N = 3  # the fit tool reports the best this-many forms by error (44.5); fewer if fewer fit
+
+# Logistic fit (44.2.17): the carrying capacity L is FIXED before the logit line-fit (that is
+# what keeps the fit closed-form). For proportion data (every y < 1) L is 1; otherwise L is the
+# largest observation lifted by this headroom factor, so no datum sits exactly at the ceiling
+# (y = L would make the logit ln(y/(L-y)) blow up). 5% is a small, documented bias — the price
+# of a fixed L rather than a fitted one.
+_LOGISTIC_HEADROOM = Fraction(21, 20)  # 1.05 * max(y) for non-proportion data
 
 # Sinusoidal fit (44.2.9): the lone non-linearisable form, fitted by an iterative frequency
 # search rather than in closed form. SSR(b) is multimodal in the frequency b, so a coarse
@@ -1026,6 +1044,66 @@ def _fit_weibull(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> Fi
     return FitResult("weibull", equation, (("a", a), ("b", b)), error)
 
 
+def _logistic_equation(a: Value, b: Value, c: Value) -> str:
+    """Render ``a/(1 + exp(-(b*x + c)))`` over ``x`` — the fixed-L logistic (44.2.17).
+
+    The carrying capacity ``a`` is always positive (1 for proportions, else a lifted maximum),
+    so it renders bare as the numerator; the growth rate ``b`` and intercept ``c`` are the logit
+    line's coefficients, rendered with :func:`_affine_equation`'s sign-splitting (``b*x + c``,
+    e.g. ``2*x - 3``) inside the negated exponent ``-(b*x + c)``. Valid calculate source over
+    ``x`` (44.5), pasteable straight back in.
+    """
+    inner = _affine_equation([b, c], (lambda m: f"{m.to_string()}*x", lambda m: m.to_string()))
+    return f"{a.to_string()}/(1 + exp(-({inner})))"
+
+
+def _fit_logistic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the logistic ``a/(1 + exp(-(b*x + c)))`` (44.2.17); domain ``0 < y < a``.
+
+    The S-curve with a FIXED carrying capacity ``a`` (= ``L``), growth rate ``b`` and intercept
+    ``c``. Fixing ``a`` is what makes the fit closed-form: with the ceiling known, the logit
+    ``ln(y/(a − y)) = b·x + c`` is a straight line in ``(x, logit)``, so the fit runs
+    :func:`_line_coeffs` on the transformed data and reads the SLOPE as ``b`` and the INTERCEPT
+    as ``c``. The ceiling itself is a DATA-DERIVED constant, NOT least-squares-fitted (reported
+    alongside ``b``/``c`` so the model is complete): ``a = 1`` when the data are proportions
+    (every ``y < 1``), otherwise ``a = 1.05·max(y)`` — the observed maximum lifted by
+    :data:`_LOGISTIC_HEADROOM` so no datum sits at the ceiling (``y = a`` would blow up the
+    logit). The error is the sum of squared residuals ``Σ (a/(1 + exp(−(b·xᵢ + c))) − yᵢ)²`` of
+    the ORIGINAL model in the active mode, so it measures the fit where the data lives, not in
+    logit space (like the power fit). Both an increasing sigmoid (``b > 0``) and a decreasing one
+    (``b < 0``) are valid, so — unlike the Weibull — there is no slope-sign guard.
+
+    Raises FitError (so the form is DROPPED, 44.3) when the logit is undefined or unrepresentable:
+    any ``yᵢ ≤ 0`` has no ``ln(y/(a − y))`` (the ratio is non-positive), and in rational mode the
+    logs and ``exp`` are irrational — the type refuses them — so the form simply does not fit
+    there (like the power/gaussian forms). By construction ``a > max(y)`` (or ``a = 1 > y`` for
+    proportions), so ``a − y > 0`` never divides by zero; an OverflowError from a blown-up ``exp``
+    drops it too rather than crashing the rest.
+    """
+    one = Value.from_real(1, mode, scale)
+    if max(y.to_float() for y in ys) < 1.0:
+        a = one  # proportion data: the natural carrying capacity is 1
+    else:
+        # Lift the largest observation by the headroom so no datum sits at the ceiling a.
+        y_max = max(ys, key=lambda v: v.to_float())
+        a = y_max.mul(Value.from_real(_LOGISTIC_HEADROOM, mode, scale))
+    try:
+        logit = [y.div(a.sub(y)).ln() for y in ys]  # ln(y/(a - y)) = b*x + c
+        b, c = _line_coeffs(xs, logit, mode, scale)  # slope is b, intercept is c
+        # Model in data space: a/(1 + exp(-(b*x + c))).
+        model = [a.div(one.add(b.mul(x).add(c).neg().exp())) for x in xs]
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit a/(1 + exp(-(b*x + c))): the fixed-L logit ln(y/(a - y)) needs 0 < y < a "
+            "for every point (a is the carrying capacity — 1 for proportions, else 1.05*max y), "
+            f"and a mode that can represent the logs / exp (rational refuses the irrationals). "
+            f"{exc}"
+        ) from exc
+    equation = _logistic_equation(a, b, c)
+    return FitResult("logistic", equation, (("a", a), ("b", b), ("c", c)), error)
+
+
 def _saturation_equation(a: Value, b: Value) -> str:
     """Render ``x/(a*x + b)`` over ``x`` with clean signs in the denominator.
 
@@ -1143,7 +1221,10 @@ def _fit_hyperbolic(xs: list[Value], ys: list[Value], mode: Mode, scale: int) ->
 # equations, then a/b/c recovered by exp — so it too drops in rational mode. The Weibull CDF
 # 1 - exp(-(x/a)**b) (44.2.16) linearises under a DOUBLE log — the Weibull plot ln(-ln(1-y)) =
 # b*ln x - b*ln a — read as slope = shape b and scale a = exp(-intercept/b); it needs a positive
-# plot slope (b > 0) and drops in rational mode like the power/gaussian forms.
+# plot slope (b > 0) and drops in rational mode like the power/gaussian forms. The logistic
+# a/(1 + exp(-(b*x + c))) (44.2.17) linearises under the logit ln(y/(a - y)) = b*x + c ONCE its
+# ceiling a is fixed (1 for proportions, else 1.05*max y) — the one form whose leading constant is
+# data-derived, not fitted — and drops in rational mode like the power/gaussian forms.
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1269,6 +1350,18 @@ WEIBULL = CurveForm(
     "x > 0, 0 < y < 1",
     _fit_weibull,
 )
+# The logistic with FIXED carrying capacity (44.2.17): the S-curve a/(1 + exp(-(b*x + c))), with
+# a the ceiling, b the growth rate and c the intercept. Fixing a (= 1 for proportions, else
+# 1.05*max y — a data-derived constant, NOT least-squares-fitted) is what makes it closed form:
+# the logit ln(y/(a - y)) = b*x + c is then a line, read as slope b and intercept c. Domain
+# 0 < y < a (a held above the data so a - y > 0); drops in rational mode (irrational logs/exp).
+LOGISTIC = CurveForm(
+    "logistic",
+    ("a", "b", "c"),
+    "a/(1 + exp(-(b*x + c)))",
+    "0 < y < a",
+    _fit_logistic,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1286,6 +1379,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     EXP_RECIPROCAL,
     HOERL,
     WEIBULL,
+    LOGISTIC,
 )
 
 
