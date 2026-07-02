@@ -92,8 +92,15 @@ solution:
     shared :func:`_reciprocal_quadratic_coeffs` least-squares-fits ``{x², x, 1}`` to ``(x, 1/y)``
     and its coefficients ARE ``(a, b, c)`` directly (``_fit_generalized_hyperbolic``); like the
     hyperbolic it is EXACT in rational and drops only on a zero reciprocal (a ``y = 0`` datum or a
-    zero model denominator). It shares that reciprocal-quadratic core with the Lorentzian peak
-    (44.2.19), which maps the same coefficients back to a peak/centre/width.
+    zero model denominator).
+  - the Lorentzian / Cauchy peak ``a/(1 + ((x−b)/c)²)`` (44.2.19, the symmetric-peak counterpart
+    to the gaussian, peak ``a`` at centre ``b`` with half-width ``c``) shares that reciprocal-
+    quadratic core: the same ``1/y = A·x² + B·x + C`` from :func:`_reciprocal_quadratic_coeffs`,
+    but with the peak/centre/width RECOVERED from the coefficients — ``b = −B/(2A)``,
+    ``a = 1/(C − A·b²)``, ``c = √(1/(a·A))`` (``_fit_lorentzian``). Like the gaussian's downward-
+    parabola requirement it needs an UPWARD parabola in ``1/y`` (``A > 0``) and a positive peak,
+    else it drops; and the half-width's ``√`` is irrational in rational mode, so — unlike the
+    generalized hyperbolic — it DROPS in rational, exactly like the gaussian.
 
 The genuinely non-linearisable sinusoid ``a*sin(b*x + c) + d`` (44.2.9) is the one form
 that keeps an iterative optimise engine: it is non-linear ONLY in the frequency ``b``, so
@@ -1294,6 +1301,81 @@ def _fit_generalized_hyperbolic(
     return FitResult("generalized-hyperbolic", equation, (("a", a), ("b", b), ("c", c)), error)
 
 
+def _lorentzian_equation(a: Value, b: Value, c: Value) -> str:
+    """Render ``a/(1 + ((x-b)/c)**2)`` over ``x`` with a clean sign on the centre ``b`` (44.2.19).
+
+    The peak ``a`` and half-width ``c`` are always positive (``a = 1/(positive)``, ``c =
+    sqrt(positive)``), so each renders bare; only the centre ``b`` carries a sign, split INSIDE
+    the ``(x - b)`` group so a negative centre reads ``(x + |b|)`` rather than ``(x - -2)`` — the
+    same convention as :func:`_gaussian_equation`. Valid calculate source over ``x`` (44.5).
+    """
+    b_neg = b.to_float() < 0
+    b_mag = (b.neg() if b_neg else b).to_string()
+    inner = f"x {'+' if b_neg else '-'} {b_mag}"
+    return f"{a.to_string()}/(1 + (({inner})/{c.to_string()})**2)"
+
+
+def _fit_lorentzian(xs: list[Value], ys: list[Value], mode: Mode, scale: int) -> FitResult:
+    """Closed-form fit of the Lorentzian/Cauchy peak ``a/(1 + ((x-b)/c)**2)`` (44.2.19); ``y != 0``.
+
+    The symmetric-peak counterpart to the gaussian (44.2.10) — peak ``a`` at centre ``b`` with
+    half-width ``c`` — fitted through the SAME reciprocal-quadratic core as the generalized
+    hyperbolic (44.2.18). Taking the reciprocal of ``y`` turns the peak into a QUADRATIC in ``x``:
+    ``1/y = A·x² + B·x + C`` with ``A = 1/(a·c²)``, ``B = −2b/(a·c²)``, ``C = 1/a + b²/(a·c²)``.
+    So the fit least-squares-fits that quadratic (the shared :func:`_reciprocal_quadratic_coeffs`)
+    and RECOVERS the peak/centre/width from the coefficients ``(A, B, C)``:
+
+      - ``b = −B/(2·A)`` — the centre;
+      - ``a = 1/(C − A·b²)`` — the peak (since ``C − A·b² = 1/a``);
+      - ``c = sqrt(1/(a·A))`` — the positive half-width.
+
+    Like the gaussian's downward-parabola requirement, the recovery needs an UPWARD parabola in
+    ``1/y`` (``A > 0``, checked before the divisions) and a positive peak (``1/a = C − A·b² > 0``);
+    data failing either is not a Lorentzian peak, so the form is dropped (a FitError). The error is
+    the sum of squared residuals ``Σ (a/(1 + ((xᵢ−b)/c)²) − yᵢ)²`` of the model in DATA space (like
+    the gaussian), in the active mode.
+
+    Raises FitError (so the form is DROPPED, 44.3) when a reciprocal hits zero (any ``yᵢ = 0`` has
+    no ``1/y``) or the recovery is unrepresentable: the half-width's ``sqrt`` is irrational in
+    rational mode, so — like the gaussian — the Lorentzian simply does not fit there.
+    NotRepresentableError / ZeroDivisionError / OverflowError are all converted here.
+    """
+    try:
+        one = Value.from_real(1, mode, scale)
+        two = Value.from_real(2, mode, scale)
+        big_a, big_b, big_c = _reciprocal_quadratic_coeffs(
+            xs, ys, mode, scale, "a/(1 + ((x-b)/c)**2)"
+        )
+        if big_a.to_float() <= 0:  # not an upward parabola in 1/y -> not a peak, drop the form
+            raise FitError(
+                "Cannot fit a/(1 + ((x-b)/c)**2): the reciprocal data is not an upward parabola "
+                "(its quadratic's leading coefficient is not positive), so the data is not "
+                "peak-shaped."
+            )
+        b = big_b.neg().div(two.mul(big_a))  # -B/(2*A), the centre
+        peak_recip = big_c.sub(big_a.mul(b.mul(b)))  # 1/a = C - A*b**2
+        if peak_recip.to_float() <= 0:  # a non-positive peak is not a Lorentzian peak, drop it
+            raise FitError(
+                "Cannot fit a/(1 + ((x-b)/c)**2): the recovered peak is not positive, so the "
+                "data is not peak-shaped."
+            )
+        a = one.div(peak_recip)  # the positive peak
+        c = one.div(a.mul(big_a)).sqrt()  # sqrt(1/(a*A)), the positive half-width
+        c2 = c.mul(c)  # c**2, the model's denominator scale
+        model = [
+            a.div(one.add(x.sub(b).mul(x.sub(b)).div(c2))) for x in xs
+        ]  # a/(1 + (x-b)**2/c**2), measured in data space
+        error = _sum_squared_residuals(model, ys, mode, scale)
+    except (NotRepresentableError, ZeroDivisionError, OverflowError) as exc:
+        raise FitError(
+            "Cannot fit a/(1 + ((x-b)/c)**2): it needs y != 0 and peak-shaped data, and a mode "
+            "that can represent the recovered half-width's sqrt (rational refuses the irrational "
+            f"sqrt, like the gaussian). {exc}"
+        ) from exc
+    equation = _lorentzian_equation(a, b, c)
+    return FitResult("lorentzian", equation, (("a", a), ("b", b), ("c", c)), error)
+
+
 # The curve library (44.2): one entry per model form, iterated by the fit tool. Each entry
 # DECLARES the form — its name, model template over x, free-parameter names and any domain
 # limit — and carries the closed-form fitter that estimates its parameters (44.3). Linear,
@@ -1322,7 +1404,10 @@ def _fit_generalized_hyperbolic(
 # generalized hyperbolic 1/(a*x**2 + b*x + c) (44.2.18) lifts the hyperbolic's reciprocal-line to a
 # reciprocal-QUADRATIC — 1/y = a*x**2 + b*x + c — fitted by the shared _reciprocal_quadratic_coeffs
 # whose coefficients ARE (a, b, c); exact in rational (pure reciprocals/polynomials), dropping only
-# on a zero reciprocal.
+# on a zero reciprocal. The Lorentzian / Cauchy peak a/(1 + ((x-b)/c)**2) (44.2.19) shares that
+# reciprocal-quadratic core but RECOVERS peak/centre/width from the coefficients (b = -B/(2A),
+# a = 1/(C - A*b**2), c = sqrt(1/(a*A))) — the gaussian's symmetric-peak counterpart, dropping in
+# rational (the recovery's sqrt) and on non-peak-shaped data (needs an upward parabola in 1/y).
 LINEAR = CurveForm("linear", ("a", "b"), "a*x + b", None, _fit_linear)
 QUADRATIC = CurveForm(
     "quadratic",
@@ -1472,6 +1557,19 @@ GENERALIZED_HYPERBOLIC = CurveForm(
     "y != 0",
     _fit_generalized_hyperbolic,
 )
+# The Lorentzian / Cauchy peak (44.2.19): the symmetric-peak counterpart to the gaussian,
+# a/(1 + ((x-b)/c)**2) (peak a at centre b, half-width c). Fitted through the SAME reciprocal-
+# quadratic core as the generalized hyperbolic (1/y = A*x**2 + B*x + C), then peak/centre/width
+# recovered: b = -B/(2A), a = 1/(C - A*b**2), c = sqrt(1/(a*A)). Needs an upward parabola in 1/y
+# (A > 0) and a positive peak, like the gaussian's downward-parabola check; the sqrt in the
+# recovery is irrational in rational mode, so it drops there like the gaussian. Domain y != 0.
+LORENTZIAN = CurveForm(
+    "lorentzian",
+    ("a", "b", "c"),
+    "a/(1 + ((x-b)/c)**2)",
+    "y != 0",
+    _fit_lorentzian,
+)
 CURVE_FORMS: tuple[CurveForm, ...] = (
     LINEAR,
     QUADRATIC,
@@ -1491,6 +1589,7 @@ CURVE_FORMS: tuple[CurveForm, ...] = (
     WEIBULL,
     LOGISTIC,
     GENERALIZED_HYPERBOLIC,
+    LORENTZIAN,
 )
 
 

@@ -287,6 +287,23 @@ def test_generalized_hyperbolic_form_fits_exactly_over_the_wire():
     assert fit["exact"] is True
 
 
+def test_lorentzian_form_fits_over_the_wire():
+    # 44.2.19: y = 5/(1 + ((x-3)/2)**2) (a Lorentzian peak) in floating-point — the reciprocal-
+    # quadratic recovers the peak a≈5, centre b≈3, half-width c≈2, rendered as a pasteable
+    # "…/(1 + ((x - …)/…)**2)" with an inexact error (the recovery's sqrt rounds).
+    xs = [0, 1, 2, 3, 4, 5, 6]
+    ys = [5 / (1 + ((x - 3) / 2) ** 2) for x in xs]
+    payload = _fit(xs, ys, mode="floating-point")
+    assert payload["error"] is None
+    fit = _by_form(payload)["lorentzian"]
+    params = {p["name"]: float(p["value"].split()[0]) for p in fit["parameters"]}
+    assert params["a"] == pytest.approx(5.0, rel=1e-6)
+    assert params["b"] == pytest.approx(3.0, rel=1e-6)
+    assert params["c"] == pytest.approx(2.0, rel=1e-6)
+    assert "/(1 + ((x - " in fit["equation"] and ")**2)" in fit["equation"]
+    assert fit["exact"] is False
+
+
 def test_length_mismatch_is_an_error():
     payload = _fit([1, 2, 3], [1, 2])
     assert payload["fits"] is None and payload["mode"] is None

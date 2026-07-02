@@ -309,7 +309,7 @@ def test_sinusoidal_is_dropped_when_too_few_distinct_x():
     # distinct points drop it cleanly (no crash) while the lower-order forms still fit.
     forms = [r.form for r in fit_all([1, 2, 3], [2, 5, 10], Mode.FLOATING_POINT, 0)]
     assert "sinusoidal" not in forms
-    assert "quadratic" in forms  # a lower-order form still fits the three points
+    assert "cubic" in forms  # a lower-order form still fits the three points
 
 
 def test_gaussian_recovers_peak_centre_and_width_in_floating_point():
@@ -551,6 +551,47 @@ def test_generalized_hyperbolic_is_dropped_when_some_y_is_zero():
     assert "quadratic" in forms
 
 
+def test_lorentzian_recovers_peak_centre_and_width_in_floating_point():
+    # 44.2.19: y = 5/(1 + ((x-3)/2)**2) — the reciprocal-quadratic 1/y = A*x**2 + B*x + C is
+    # fitted and the peak/centre/width recovered: peak a≈5, centre b≈3, half-width c≈2, error ≈ 0.
+    xs = [0, 1, 2, 3, 4, 5, 6]
+    ys = [5 / (1 + ((x - 3) / 2) ** 2) for x in xs]
+    result = _pick(fit_all(xs, ys, Mode.FLOATING_POINT, 0), "lorentzian")
+    params = dict(result.parameters)
+    assert params["a"].to_float() == pytest.approx(5.0, rel=1e-6)  # the peak
+    assert params["b"].to_float() == pytest.approx(3.0, rel=1e-6)  # the centre
+    assert params["c"].to_float() == pytest.approx(2.0, rel=1e-6)  # the half-width
+    assert result.error.to_float() == pytest.approx(0.0, abs=1e-9)
+    assert "/(1 + ((x - " in result.equation and ")**2)" in result.equation
+    assert not result.error.exact
+
+
+def test_lorentzian_is_dropped_in_rational_mode():
+    # The half-width recovery takes a sqrt, which is irrational — rational mode refuses it, so the
+    # Lorentzian drops (like the gaussian), even though its reciprocal-quadratic sibling does not.
+    ys = [5 / (1 + ((x - 3) / 2) ** 2) for x in (0, 1, 2, 3, 4, 5, 6)]
+    forms = [r.form for r in fit_all([0, 1, 2, 3, 4, 5, 6], ys, Mode.RATIONAL, 0)]
+    assert "lorentzian" not in forms
+    assert "generalized-hyperbolic" in forms  # the sqrt-free sibling stays exact in rational
+
+
+def test_lorentzian_is_dropped_when_data_is_not_peak_shaped():
+    # A Lorentzian peaks, so its reciprocal 1/y is an UPWARD parabola; valley data (y = x**2 + 1)
+    # makes 1/y a downward parabola (A < 0) and drops the form — the gaussian analogue of the
+    # downward-parabola check — while the polynomial forms still fit.
+    forms = [r.form for r in fit_all([-2, -1, 0, 1, 2], [5, 2, 1, 2, 5], Mode.FLOATING_POINT, 0)]
+    assert "lorentzian" not in forms
+    assert "quadratic" in forms
+
+
+def test_lorentzian_is_dropped_when_some_y_is_zero():
+    # 1/y at y = 0 raises ZeroDivisionError in the reciprocal-quadratic core; the fitter catches
+    # it as a clean DROP (no crash), while the forms that need no 1/y still fit.
+    forms = [r.form for r in fit_all([0, 1, 2, 3], [1, 0, 0.2, 0.1], Mode.FLOATING_POINT, 0)]
+    assert "lorentzian" not in forms
+    assert "quadratic" in forms
+
+
 def test_laurent_recovers_exactly_in_rational():
     # 44.2.13: y = 2 + 3*x + 1/x (so a=2, b=3, c=1) — the direct basis {1, x, 1/x} is exact in
     # rational mode (a constant, x, and a reciprocal of a rational are all exact), so the three
@@ -620,12 +661,12 @@ def test_no_form_fitting_surfaces_the_linear_reason():
 
 
 def test_curve_library_declares_every_form_with_its_metadata():
-    # 44.2.1-44.2.18: the registry declares linear plus the quadratic/cubic/power, the
+    # 44.2.1-44.2.19: the registry declares linear plus the quadratic/cubic/power, the
     # exponential/logarithmic/square-root/reciprocal forms, the sinusoid, the gaussian, the
     # saturation/hyperbolic reciprocal-line forms, the Laurent direct-basis form, the
-    # exp-reciprocal / Arrhenius law, the Hoerl model, the Weibull CDF, the fixed-L logistic, and
-    # the generalized hyperbolic — in TODO numeric order — each with its parameter names, model
-    # template and domain limit.
+    # exp-reciprocal / Arrhenius law, the Hoerl model, the Weibull CDF, the fixed-L logistic, the
+    # generalized hyperbolic, and the Lorentzian peak — in TODO numeric order — each with its
+    # parameter names, model template and domain limit.
     by_name = {form.name: form for form in CURVE_FORMS}
     assert list(by_name) == [
         "linear",
@@ -646,6 +687,7 @@ def test_curve_library_declares_every_form_with_its_metadata():
         "weibull",
         "logistic",
         "generalized-hyperbolic",
+        "lorentzian",
     ]
     assert by_name["linear"].parameters == ("a", "b")
     assert by_name["quadratic"].parameters == ("a", "b", "c")
@@ -713,6 +755,11 @@ def test_curve_library_declares_every_form_with_its_metadata():
     assert by_name["generalized-hyperbolic"].parameters == ("a", "b", "c")
     assert by_name["generalized-hyperbolic"].template == "1/(a*x**2 + b*x + c)"
     assert by_name["generalized-hyperbolic"].domain == "y != 0"
+    # The Lorentzian / Cauchy peak (44.2.19): three parameters (peak a, centre b, half-width c),
+    # the same reciprocal-quadratic with peak/centre/width recovered, domain y != 0.
+    assert by_name["lorentzian"].parameters == ("a", "b", "c")
+    assert by_name["lorentzian"].template == "a/(1 + ((x-b)/c)**2)"
+    assert by_name["lorentzian"].domain == "y != 0"
 
 
 def test_every_form_is_now_wired_to_a_fitter():

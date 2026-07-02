@@ -1556,7 +1556,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
         [x] 44.2.18. generalized hyperbolic — 1/(a*x**2 + b*x + c); domain y!=0. Closed
                      form via 1/y = quadratic in x (generalizes 44.2.12 to a quadratic
                      denominator); shares the reciprocal-quadratic wrapper with 44.2.19.
-        [ ] 44.2.19. Lorentzian/Cauchy peak — a/(1 + ((x-b)/c)**2) (peak a at centre b,
+        [x] 44.2.19. Lorentzian/Cauchy peak — a/(1 + ((x-b)/c)**2) (peak a at centre b,
                      half-width c); the symmetric-peak counterpart to gaussian 44.2.10;
                      domain y!=0. Closed form via 1/y = quadratic in x, recovering a, b,
                      c from the coefficients (needs an upward parabola in 1/y).
