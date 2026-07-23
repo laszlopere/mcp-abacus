@@ -38,11 +38,10 @@ from mcp_abacus.solver import (
     SolverResult,
     autodetect_variable,
     bracketed_root,
-    brent_parabolic,
+    minimise,
     nelder_mead,
     resolve_algorithm,
     resolve_objective,
-    search,
     tangent_root,
     validate_bracket,
     validate_unknown,
@@ -967,10 +966,6 @@ def solver(
             validate_unknown(node, name)
         if resolved_algorithm is Algorithm.NELDER_MEAD:
             result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
-        elif resolved_algorithm is Algorithm.BRENT_PARABOLIC:
-            # single-variable, like golden-section — _resolve_unknowns guaranteed one
-            name, lo, hi = unknowns[0]
-            result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
         elif resolved_algorithm in TANGENT_ROOT_ENGINES:
             # Find-root like the bracketers below, but bracket-free (33.4 / 33.8): these
             # follow finite-difference derivatives from a seeded point. One harness serves
@@ -989,9 +984,16 @@ def solver(
             result = bracketed_root(
                 node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm
             )
-        else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
+        else:
+            # A single-variable minimiser — golden-section or brent-parabolic.
+            # One harness serves them both (33.25), picking the bracket loop by algorithm,
+            # so a new minimiser needs no branch here. This is the fall-through because
+            # the default engine (golden-section) is one of them, and the only family that
+            # serves every objective. _resolve_unknowns guaranteed exactly one unknown.
             name, lo, hi = unknowns[0]
-            result = search(node, name, lo, hi, selected, floor, resolved_objective)
+            result = minimise(
+                node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm
+            )
     except SolverError as exc:
         return _solver_error(exc.message)
     except EvalError as exc:  # a constant the program never set (structural, 31.7)

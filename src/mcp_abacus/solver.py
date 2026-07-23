@@ -296,8 +296,9 @@ def autodetect_variable(node: Node) -> str:
 # (fold_objective(), 32.1), so they need not know the objective beyond that fold. They
 # are derivative-free and drive the abacus engine in the active mode — each candidate is
 # materialised as a mode-faithful Value, the program evaluated, and its Value reduced
-# back to a float to compare. Golden-section and Brent shrink a 1-D bracket; Nelder-Mead
-# walks an n-vertex simplex over n unknowns.
+# back to a float to compare. Golden-section and Brent-parabolic shrink a 1-D bracket
+# and share one harness (`minimise`); Nelder-Mead walks an n-vertex simplex over n
+# unknowns and keeps its own (it is multivariate).
 # The BRACKETERS — bisection (33.1), Ridders (33.5), Brent-Dekker (33.2), Chandrupatla
 # (33.7) and secant (33.3) — do NOT minimise: they bracket a SIGN CHANGE of the raw signed
 # expression, so all five are find-root only. They share one harness (`bracketed_root`,
@@ -503,71 +504,64 @@ def _polish_best(
         )
 
 
-def search(
-    node: Node,
-    variable: str,
-    lower: float,
-    upper: float,
-    mode: Mode,
-    floor: int,
-    objective: Objective,
-) -> SolverResult:
-    """Golden-section search for the unknown over ``[lower, upper]`` (31.7).
+# --- The single-variable minimisers: one harness, two bracket loops (33.25) ---
+# Two engines answer the same question the same way: shrink the caller's interval
+# toward the LEAST of the folded objective (fold_objective(), 32.1) — ``|expr|`` for a
+# find-root, ``±expr`` for an extremum — evaluating the program at points of their own
+# choosing until the bracket is narrower than the mode can resolve. Because they order a
+# folded quantity rather than compare SIGNS, they are the only single-variable engines
+# that serve every objective, and the only ones that reach a root which merely touches
+# zero (no sign change for the bracketers to straddle).
+#
+# Everything around the loop — the candidate materialisation and best-tracking, the
+# scale / tolerance / deadline setup, the polish and the error paths and the
+# SolverResult — lives once, in :func:`minimise`. An engine is therefore ONLY its loop:
+# a `_loop_*` function that shrinks ``[a, b]``, registered in MINIMISER_ENGINES. This is
+# the same split 33.25 made for the bracketers (`bracketed_root`) and `tangent_root` made
+# for the derivative engines. 33.25 deliberately deferred it, because the minimisers differ
+# from the bracketers in the one place that matters — what the evaluator RETURNS, the
+# folded objective rather than the signed value — and so could not share THAT harness.
+# They can share one of their own, and a new minimiser is now just its loop.
+#
+# Nelder-Mead (33.14) stays outside: it is multivariate, so its bracket, its polish and
+# its result are all n-dimensional and nothing here fits it.
 
-    Minimises the objective (fold_objective(), 32.1) — ``|expr|`` for find-root,
-    ``±expr`` for an extremum — by repeatedly evaluating the program with the unknown
-    bound to a candidate and shrinking the bracket toward the smaller end. Each candidate is
-    materialised in ``mode`` at the working scale, bound into a fresh seeded store,
-    and the program evaluated; the resulting Value is reduced to a float to drive the
-    search. A candidate that raises a DOMAIN error (e.g. sqrt of a negative) is
-    penalised with +inf so the search steers away, but a STRUCTURAL failure — a
-    constant the program never sets — propagates as an EvalError (it fails at every
-    point, and is the user's to fix, not a region to avoid).
+# The candidate evaluator a minimiser loop is handed: returns the FOLDED objective at x.
+# A DOMAIN error there yields ``+inf`` — the point simply looks maximally bad, so the loop
+# steers away from a region the program cannot evaluate without needing to know why.
+# Tracking the best seen is its side effect. Contrast the bracketers' `_Evaluate`, which
+# returns the SIGNED value and ``None``: a sign is what THEY compare, and ``+inf`` has no
+# sign to offer.
+_MinimiseEvaluate = Callable[[float], float]
 
-    The search is also bounded by a hard wall-clock limit of ``_TIME_LIMIT_SECONDS``
-    (2s): the iteration cap bounds the NUMBER of evaluations, but a single pathological
-    candidate can be slow, so the elapsed time is checked each step and the search
-    stops once the limit is passed, reporting the best candidate reached so far.
+# A loop: shrink ``[a, b]`` toward the objective's least, evaluating through the callable,
+# and return ``(iterations, timed_out)``. It owns its whole convergence — the ``x_tol``
+# width stop, the ``_MAX_ITERATIONS`` cap, and the ``deadline`` check that sets
+# ``timed_out`` — and returns nothing about the best point, which reaches the harness
+# through the evaluator's side effect instead.
+_MinimiseLoop = Callable[[float, float, _MinimiseEvaluate, float, float], tuple[int, bool]]
 
-    Returns the best candidate found as a SolverResult. Raises SolverError when the
-    expression evaluates nowhere in the bracket, or when a solve cannot drive |expr|
-    within ``residual_tol`` of zero (reporting the closest it reached) — including
-    when the time limit cut the search short before it could.
+
+def _loop_golden_section(
+    a: float,
+    b: float,
+    evaluate: _MinimiseEvaluate,
+    x_tol: float,
+    deadline: float,
+) -> tuple[int, bool]:
+    """Shrink the bracket by the golden ratio (31.7) — the default engine.
+
+    Hold two interior points at the golden fractions of ``[a, b]``, drop the end beyond
+    whichever is worse, and repeat. The golden ratio is what makes it cost ONE new
+    evaluation per step rather than two: the surviving interior point sits at exactly the
+    right fraction of the new, narrower interval to serve as one of ITS two probes. So the
+    interval falls to 0.618 of itself per evaluation, and on a unimodal objective the
+    minimum can never escape the bracket.
     """
-    scale = _search_scale(node, mode, floor)
-    x_tol, residual_tol = _tolerances(mode, scale)
-    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
-    # The smallest objective seen and the candidate/value that produced it. Tracking
-    # the best across ALL evaluations (not just the final midpoint) keeps the answer
-    # honest even if quantisation makes the very last point a hair worse.
-    best_obj = math.inf
-    best_solution: Value | None = None
-    best_value: Value | None = None
-
-    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float:
-        nonlocal best_obj, best_solution, best_value
-        candidate = Value.from_real(x, mode, scale)
-        store = VariableStore()
-        store.set(variable, candidate)
-        try:
-            raw = node.evaluate(mode, floor, variables=store)
-        except EvalError as exc:
-            if isinstance(exc.__cause__, UndefinedVariableError):
-                raise  # a constant the program never set — structural, surface it
-            return math.inf  # a domain error at THIS candidate — steer the search away
-        obj = fold_objective(raw, objective).to_float()
-        # The search loop keeps the strict best; snap polish passes accept_ties so a clean
-        # rounding that merely TIES (a flat optimum the drifted point already reached to the
-        # last ULP) still replaces it with the tidier value.
-        if (obj <= best_obj) if accept_ties else (obj < best_obj):
-            best_obj, best_solution, best_value = obj, candidate, raw
-        return obj
-
-    a, b = lower, upper
     c = b - _INV_PHI * (b - a)
     d = a + _INV_PHI * (b - a)
-    fc = evaluate_objective(c)
-    fd = evaluate_objective(d)
+    fc = evaluate(c)
+    fd = evaluate(d)
     iterations = 0
     timed_out = False
     while (b - a) > x_tol and iterations < _MAX_ITERATIONS:
@@ -577,117 +571,43 @@ def search(
         if fc <= fd:
             b, d, fd = d, c, fc  # minimum is left of d; reuse c as the new d
             c = b - _INV_PHI * (b - a)
-            fc = evaluate_objective(c)
+            fc = evaluate(c)
         else:
             a, c, fc = c, d, fd  # minimum is right of c; reuse d as the new c
             d = a + _INV_PHI * (b - a)
-            fd = evaluate_objective(d)
+            fd = evaluate(d)
         iterations += 1
     if not timed_out:
-        evaluate_objective((a + b) / 2)  # the converged midpoint, folded into the best
-
-    # Grid / float-snap polish around the best point (33.25) — the shared tail every
-    # single-unknown engine runs, so a root that is exactly representable is not missed
-    # by a quantised hair and a drifted float lands on its clean value.
-    _polish_best(best_solution, mode, scale, timed_out, evaluate_objective, (lower, upper))
-
-    if best_solution is None or best_value is None:
-        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
-        raise SolverError(
-            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
-            f"{limit} (every candidate for {variable!r} raised a domain error)."
-        )
-    if objective is Objective.FIND_ROOT and best_obj > residual_tol:
-        limit = (
-            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
-        )
-        raise SolverError(
-            f"No solution: the expression does not reach zero for {variable!r} in "
-            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
-            f"at {variable} = {best_solution.to_string()}.{limit}"
-        )
-    return SolverResult(
-        variable,
-        objective,
-        Algorithm.GOLDEN_SECTION.value,
-        best_solution,
-        best_value,
-        iterations,
-        ((variable, best_solution),),
-    )
+        evaluate((a + b) / 2)  # the converged midpoint, folded into the best
+    return iterations, timed_out
 
 
-# --- Brent's parabolic minimiser (33.12) --------------------------------------
-# The single-variable peer of golden-section, usually faster: instead of always
-# trisecting the bracket by the golden ratio it fits a parabola through the best
-# three points seen and leaps near its vertex, dropping back to a golden step only
-# when the parabola is unhelpful (vertex outside the bracket, or too large a move).
-# Everything around the core — candidate materialisation, best-tracking, grid polish,
-# the time / iteration caps, and the error paths — is the same as golden-section, so
-# the two engines differ only in how they pick the next point to evaluate.
+def _loop_brent_parabolic(
+    a: float,
+    b: float,
+    evaluate: _MinimiseEvaluate,
+    x_tol: float,
+    deadline: float,
+) -> tuple[int, bool]:
+    """Shrink the bracket by parabolic interpolation, golden-section on distrust (33.12).
 
-
-def brent_parabolic(
-    node: Node,
-    variable: str,
-    lower: float,
-    upper: float,
-    mode: Mode,
-    floor: int,
-    objective: Objective,
-) -> SolverResult:
-    """Brent's parabolic minimiser for the unknown over ``[lower, upper]`` (33.12).
-
-    A faster-converging sibling of :func:`search`: it minimises the SAME folded
-    objective (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an
-    extremum — and shares :func:`search`'s machinery exactly (candidate eval in the
-    active mode, best-across-all tracking, grid polish, the 2-second wall-clock and
-    iteration caps, and the no-evaluation / no-solution error paths). The two differ
-    only in HOW the next point is chosen: Brent fits a parabola through the best three
-    points and jumps near its vertex, so on a smooth extremum it converges in far fewer
-    evaluations than golden-section's fixed trisection.
-
-    The loop is the textbook bounded Brent (Numerical Recipes ``brent`` / SciPy
-    ``fminbound``), kept inside ``[a, b]``: the parabolic step is accepted only when
-    its vertex lands inside the current bracket and the move is below half the
-    step-before-last (the ``e`` bookkeeping); otherwise a golden-section step
-    (``_GOLDEN`` of the larger sub-bracket) is taken. A non-smooth objective — the
-    kinked ``|expr|`` of a find-root — simply triggers the golden fallback more often,
-    so it still converges. Returns the best candidate as a SolverResult; raises
-    SolverError on the same conditions as :func:`search`.
+    The fast one: instead of splitting the bracket at a fixed fraction, fit a parabola
+    through the best three points seen and leap near its VERTEX, which on a smooth
+    extremum is close to the answer after very few steps. The loop is the textbook bounded
+    Brent (Numerical Recipes ``brent`` / SciPy ``fminbound``), kept inside ``[a, b]``: the
+    parabolic step is accepted only when its vertex lands inside the current bracket and
+    the move is below half the step-before-last (the ``e`` bookkeeping); otherwise a
+    golden-section step (``_GOLDEN`` of the larger sub-bracket) is taken. A non-smooth
+    objective — the kinked ``|expr|`` of a find-root — simply triggers that fallback more
+    often, so it still converges. Same "trust the fancy step only inside its safe region"
+    fence Brent-Dekker puts around its interpolation on the root side.
     """
-    scale = _search_scale(node, mode, floor)
-    x_tol, residual_tol = _tolerances(mode, scale)
-    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
-    best_obj = math.inf
-    best_solution: Value | None = None
-    best_value: Value | None = None
-
-    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float:
-        nonlocal best_obj, best_solution, best_value
-        candidate = Value.from_real(x, mode, scale)
-        store = VariableStore()
-        store.set(variable, candidate)
-        try:
-            raw = node.evaluate(mode, floor, variables=store)
-        except EvalError as exc:
-            if isinstance(exc.__cause__, UndefinedVariableError):
-                raise  # a constant the program never set — structural, surface it
-            return math.inf  # a domain error at THIS candidate — steer the search away
-        obj = fold_objective(raw, objective).to_float()
-        # accept_ties: snap polish replaces the best on a tie with the tidier rounding; the
-        # search loop (accept_ties=False) keeps its strict best. See search() for the why.
-        if (obj <= best_obj) if accept_ties else (obj < best_obj):
-            best_obj, best_solution, best_value = obj, candidate, raw
-        return obj
-
     # x is the best point so far, w the second best, v the previous w; the parabola is
     # fitted through the three. d is the last step, e the step before it (the parabola
     # is only trusted when it asks for less than half of e). Seed all three at one
     # interior point, a golden fraction in from the lower end.
-    a, b = lower, upper
     x = w = v = a + _GOLDEN * (b - a)
-    fx = fw = fv = evaluate_objective(x)
+    fx = fw = fv = evaluate(x)
     d = e = 0.0
     iterations = 0
     timed_out = False
@@ -724,7 +644,7 @@ def brent_parabolic(
         if abs(d) < x_tol:
             d = x_tol if d > 0 else -x_tol
         u = min(max(x + d, a), b)
-        fu = evaluate_objective(u)
+        fu = evaluate(u)
         if fu <= fx:  # new best — it brackets one side; x slides to u
             if u < x:
                 b = x
@@ -743,9 +663,92 @@ def brent_parabolic(
             elif fu <= fv or v == x or v == w:
                 v, fv = u, fu
         iterations += 1
+    return iterations, timed_out
 
-    # Grid / float-snap polish around the best point (33.25), identical to
-    # golden-section's — the shared tail of every single-unknown engine.
+
+# Every single-variable minimiser this build has, by the Algorithm the caller names (32.3).
+# Membership doubles as the "is this a 1-D minimiser?" test the server dispatches on, so
+# registering an engine here is all it takes to expose it.
+MINIMISER_ENGINES: dict[Algorithm, _MinimiseLoop] = {
+    Algorithm.GOLDEN_SECTION: _loop_golden_section,
+    Algorithm.BRENT_PARABOLIC: _loop_brent_parabolic,
+}
+
+
+def minimise(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+    algorithm: Algorithm,
+) -> SolverResult:
+    """Drive the unknown to the objective's least over ``[lower, upper]`` (31.7 / 33.25).
+
+    The shared harness behind golden-section (31.7) and Brent-parabolic (33.12):
+    ``algorithm`` selects the loop from ``MINIMISER_ENGINES`` and is echoed in the result,
+    everything around it is here. Unlike :func:`bracketed_root` and
+    :func:`tangent_root` this family serves EVERY objective, because it works on the
+    folded quantity (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an
+    extremum — whose least is the answer either way.
+
+    Each candidate is materialised in ``mode`` at the working scale, bound into a fresh
+    seeded store, and the program evaluated; the resulting Value is reduced to a float to
+    drive the loop. A candidate that raises a DOMAIN error (e.g. sqrt of a negative) is
+    penalised with ``+inf`` so the loop steers away, but a STRUCTURAL failure — a constant
+    the program never sets — propagates as an EvalError (it fails at every point, and is
+    the user's to fix, not a region to avoid). The best objective across ALL evaluations is
+    tracked, not just the loop's final point, so quantisation making the very last
+    candidate a hair worse cannot cost the answer.
+
+    The search is bounded by ``_MAX_ITERATIONS`` and by a hard wall-clock limit of
+    ``_TIME_LIMIT_SECONDS`` (2s): the iteration cap bounds the NUMBER of evaluations, but a
+    single pathological candidate can be slow, so the loop checks the deadline each step
+    and stops with the best candidate reached so far. The same grid / float-snap polish
+    (:func:`_polish_best`) the root engines run then lands an exactly representable answer.
+
+    Returns the best candidate found as a SolverResult. Raises SolverError when the
+    expression evaluates nowhere in the bracket, or when a find-root cannot drive |expr|
+    within ``residual_tol`` of zero (reporting the closest it reached) — including when the
+    time limit cut the search short before it could.
+    """
+    loop = MINIMISER_ENGINES[algorithm]
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    # The smallest objective seen and the candidate/value that produced it. Tracking
+    # the best across ALL evaluations (not just the final midpoint) keeps the answer
+    # honest even if quantisation makes the very last point a hair worse.
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float:
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return math.inf  # a domain error at THIS candidate — steer the search away
+        obj = fold_objective(raw, objective).to_float()
+        # The search loop keeps the strict best; snap polish passes accept_ties so a clean
+        # rounding that merely TIES (a flat optimum the drifted point already reached to the
+        # last ULP) still replaces it with the tidier value.
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return obj
+
+    iterations, timed_out = loop(lower, upper, evaluate_objective, x_tol, deadline)
+
+    # Grid / float-snap polish around the best point (33.25) — the shared tail every
+    # single-unknown engine runs, so a root that is exactly representable is not missed
+    # by a quantised hair and a drifted float lands on its clean value.
     _polish_best(best_solution, mode, scale, timed_out, evaluate_objective, (lower, upper))
 
     if best_solution is None or best_value is None:
@@ -766,7 +769,7 @@ def brent_parabolic(
     return SolverResult(
         variable,
         objective,
-        Algorithm.BRENT_PARABOLIC.value,
+        algorithm.value,
         best_solution,
         best_value,
         iterations,
