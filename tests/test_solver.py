@@ -116,6 +116,7 @@ def test_algorithm_defaults_to_golden_section_when_omitted():
 def test_canonical_algorithms_resolve():
     assert resolve_algorithm("golden-section-search") is Algorithm.GOLDEN_SECTION
     assert resolve_algorithm("brent-parabolic") is Algorithm.BRENT_PARABOLIC
+    assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
 
 
@@ -126,6 +127,18 @@ def test_algorithm_aliases_resolve():
     assert resolve_algorithm("parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("simplex") is Algorithm.NELDER_MEAD
     assert resolve_algorithm("nelder mead") is Algorithm.NELDER_MEAD
+
+
+def test_the_two_brents_stay_distinct():
+    # 33.2: the root finder is spelled out as brent-dekker, and bare `brent` KEEPS naming
+    # the parabolic minimiser it always named — so no pre-33.2 call changes meaning. The
+    # root method takes the spellings a caller would otherwise reach for with `brent`.
+    assert resolve_algorithm("brent") is Algorithm.BRENT_PARABOLIC
+    assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
+    assert resolve_algorithm("brent-root") is Algorithm.BRENT_DEKKER
+    assert resolve_algorithm("brent-method") is Algorithm.BRENT_DEKKER
+    assert resolve_algorithm("dekker") is Algorithm.BRENT_DEKKER
+    assert resolve_algorithm("zbrent") is Algorithm.BRENT_DEKKER
 
 
 def test_unknown_algorithm_lists_the_valid_algorithms():

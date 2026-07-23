@@ -789,6 +789,250 @@ def test_ridders_solves_keplers_equation():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+# --- Brent-Dekker: interpolate-or-bisect bracketed roots (33.2) ---------------
+# The third engine on the sign-change bracket, and the one most libraries default to:
+# inverse-quadratic interpolation through the three latest points (secant when two of
+# their values coincide), accepted only inside the trusted quarter-interval and while the
+# steps keep halving — otherwise a plain bisection. Same scan, same find-root-only rule,
+# and the same distinct "no sign change" error as bisection / Ridders. Distinct from
+# brent-parabolic (33.12), which MINIMISES; bare `brent` still names that one.
+
+
+def test_brent_dekker_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Brent-Dekker (endpoints straddle zero:\n"
+        "f(0) = -2, f(2) = 2); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "brent-dekker"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    assert payload["iterations"] > 0
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_brent_dekker_converges_in_few_iterations():
+    # The point of Brent-Dekker over bisection: the interpolation is superlinear, so a
+    # smooth root is pinned to full double precision in a handful of steps rather than
+    # the ~50 bisection's linear halving would take.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Brent-Dekker; converges in a few steps\n"
+        "(superlinear interpolation), not the ~50 of bisection's linear halving",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert payload["iterations"] <= 10
+
+
+def test_brent_dekker_scans_when_endpoints_share_a_sign():
+    # Like its two siblings, Brent-Dekker scans for the sign change, so same-sign
+    # endpoints (here f(-2) = f(2) = 2) are no obstacle: it brackets the leftmost root.
+    program = _annotated(
+        "find-root of x**2 - 2 over [-2, 2] via Brent-Dekker; both endpoints are +2,\n"
+        "so the scan hunts the sign change. Leftmost root is x = -sqrt(2) ~ -1.41421",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(-(2**0.5), abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_brent_dekker_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies here exactly as to bisection: the refined
+    # bracket lands within one grid step of x = 1.5, and the neighbour probes pin it to
+    # an EXACT zero on the grid.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via Brent-Dekker in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        mode="fixed-point",
+        floor=1,
+        algorithm="brent-dekker",
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_brent_dekker_reports_no_sign_change():
+    # x**2 + 1 never crosses zero, so the scan finds no sign-changing cell: the distinct
+    # "no sign change" error, naming the engine and pointing at the alternatives.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via Brent-Dekker\n"
+        "never crosses zero, so there is no sign change to bracket",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="brent-dekker")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No sign change" in payload["error"]
+    assert "brent-dekker" in payload["error"]
+    assert "find-minimum" in payload["error"]
+
+
+def test_brent_dekker_rejects_a_non_root_objective():
+    # Brent-Dekker brackets a sign change, which only locates a ROOT; find-minimum is
+    # refused with a pointer to the engines that do minimise — brent-PARABOLIC among them.
+    program = _annotated(
+        "Brent-Dekker asked to find-minimum — refused, it only finds roots\n"
+        "(an extremum has no sign change to bracket; brent-parabolic is the minimiser)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="brent-dekker",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "brent-parabolic" in payload["error"]
+
+
+def test_brent_dekker_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "Brent-Dekker asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="brent-dekker")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_brent_dekker_skips_domain_failures_in_the_scan():
+    # The left half raises a domain error (sqrt of a negative); those cells carry no
+    # signed value and are skipped, yet the crossing at x = 1 is still bracketed.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via Brent-Dekker (the bracket dips below 0)\n"
+        "the negative side has no real value and is skipped; expect x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_brent_dekker_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails everywhere and must
+    # surface as a line-tagged eval error, not be mistaken for a domain gap to skip.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via Brent-Dekker; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-dekker")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_brent_dekker_root_snaps_to_an_integer():
+    # The float snap polish applies here too: a crossing a few ULPs off a clean integer
+    # is re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via Brent-Dekker in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-dekker"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_brent_dekker_alias_resolves_to_canonical():
+    # The `brent-root` spelling resolves to the canonical engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `brent-root` alias\n"
+        "the reply reports the canonical 'brent-dekker'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-root")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-dekker"
+
+
+def test_bare_brent_still_names_the_parabolic_minimiser():
+    # 33.2's naming contract, over the wire: adding Brent's ROOT method did NOT repoint
+    # bare `brent`. It still reaches brent-parabolic, which serves find-minimum — a
+    # find-root-only engine would have refused this call outright.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via the bare `brent` alias\n"
+        "it still names the PARABOLIC MINIMISER, so find-minimum works: expect x = 3",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program, variable="x", lower=0, upper=5, objective="find-minimum", algorithm="brent"
+    )
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-6)
+
+
+def test_brent_dekker_solves_keplers_equation():
+    # The transcendental-root benchmark via Brent-Dekker: Kepler's equation is smooth and
+    # monotone in [0, pi], so the interpolation pins the eccentric anomaly fast.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via Brent-Dekker\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "brent-dekker"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_brent_dekker_handles_a_pathological_root():
+    # Where the fallback earns its keep: a steeply decaying pole-adjacent curve over a
+    # very wide bracket, on which pure interpolation overshoots. The step guard rejects
+    # those proposals and bisection carries the search, so the root is still found.
+    program = _annotated(
+        "find-root of 1/(x - 0.5) - 4 over [0.6, 40] via Brent-Dekker\n"
+        "a steeply decaying curve over a wide bracket; the interpolation is rejected\n"
+        "often and bisection carries it. Expect x = 0.75, where 1/0.25 = 4",
+        "1/(x - 0.5) - 4",
+    )
+    payload = _solve(program, variable="x", lower=0.6, upper=40, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(0.75, abs=1e-6)
+    # Still far inside the iteration cap despite the interpolation being little help.
+    assert payload["iterations"] < 40
+
+
+def test_brent_dekker_takes_a_root_sitting_on_a_scan_node():
+    # The degenerate bracket: x = 1 is exactly a scan node of [0, 2], so the scan hands
+    # the loop a zero-width interval. It must recognise the root immediately (no
+    # interpolation to attempt, no division by a zero-width bracket) and report it.
+    program = _annotated(
+        "find-root of x - 1 over [0, 2] via Brent-Dekker; x = 1 lands exactly on a\n"
+        "scan node, so there is no bracket to refine — the root is taken as found",
+        "x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="brent-dekker")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 1.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] == 0
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for

@@ -63,8 +63,10 @@ type; it calculates *using* that type.
   or *find-minimum* / *find-maximum*, in the same numeric type and expression
   language (constants come from `name = expr` assignment lines). One unknown uses
   *golden-section search* (or *Brent parabolic* via `algorithm="brent-parabolic"`,
-  usually faster on smooth extrema); pass `variables` (a name → `[lower, upper]` map)
-  with `algorithm="nelder-mead"` to solve several jointly with a *Nelder-Mead* simplex
+  usually faster on smooth extrema; or, for a root, the sign-change bracketers
+  `algorithm="bisection"`, `"ridders"` and `"brent-dekker"`); pass `variables`
+  (a name → `[lower, upper]` map) with `algorithm="nelder-mead"` to solve several
+  jointly with a *Nelder-Mead* simplex
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report
   each fitted equation with its error. Hand over the data and it estimates, for the
   straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`,

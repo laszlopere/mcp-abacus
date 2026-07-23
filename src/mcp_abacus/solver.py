@@ -9,9 +9,10 @@ looks for; the `algorithm` argument names HOW it searches. The engines (TODO 33)
 golden-section search and Brent's parabolic minimiser drive ONE unknown over a bracket;
 Nelder-Mead (33.14) walks a simplex over n unknowns — multivariate, bounds-clamped to
 each bracket; all three minimise the same folded objective, so every objective works on
-any of them. Bisection (33.1) and Ridders (33.5) are the odd ones out — find-root-only
-engines that bracket a sign change of the raw signed expression rather than minimising
-|expr| (bisection halves the bracket, Ridders takes an exponential-fit step).
+any of them. Bisection (33.1), Ridders (33.5) and Brent-Dekker (33.2) are the odd ones
+out — find-root-only engines that bracket a sign change of the raw signed expression
+rather than minimising |expr| (bisection halves the bracket, Ridders takes an
+exponential-fit step, Brent-Dekker interpolates and falls back to halving).
 """
 
 import math
@@ -63,14 +64,18 @@ class Algorithm(Enum):
     finder (33.1) that brackets a sign change and halves it — robust, but find-root
     only (an extremum has no sign change to straddle); ``RIDDERS`` is its superlinear
     sibling (33.5), the same bracket but an exponential-fit step instead of the
-    midpoint; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The enum
-    value is the string reported in the reply's ``algorithm`` field (32.3).
+    midpoint; ``BRENT_DEKKER`` (33.2) is the third of that family, interpolating
+    inverse-quadratically with a bisection fallback — Brent's ROOT method, distinct
+    from the ``BRENT_PARABOLIC`` minimiser above; ``NELDER_MEAD`` is the multivariate
+    downhill simplex (33.14). The enum value is the string reported in the reply's
+    ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
     BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
     BISECTION = "bisection"  # one unknown, halve a sign-changing bracket (root only)
     RIDDERS = "ridders"  # one unknown, exponential-fit on a sign-changing bracket (root only)
+    BRENT_DEKKER = "brent-dekker"  # one unknown, interpolate + bisect a sign change (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -113,6 +118,10 @@ def resolve_objective(objective: str | None) -> Objective:
 
 # Never-surfaced spellings for the `algorithm` argument (the 23.6 alias rule): a short
 # / spaced form per engine resolving to one Algorithm. Mirrors _OBJECTIVE_ALIASES.
+# Note the deliberate split of the two Brents: bare ``brent`` keeps resolving to the
+# PARABOLIC MINIMISER it has always named (33.12), so no existing call changes meaning,
+# while the root finder (33.2) canonically spells out ``brent-dekker`` and takes the
+# ``brent-root`` / ``brent-method`` / ``dekker`` spellings a caller is likely to reach for.
 _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "golden-section": Algorithm.GOLDEN_SECTION,
     "golden": Algorithm.GOLDEN_SECTION,
@@ -122,6 +131,11 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "binary-search": Algorithm.BISECTION,
     "ridder": Algorithm.RIDDERS,
     "ridders-method": Algorithm.RIDDERS,
+    "brent-root": Algorithm.BRENT_DEKKER,
+    "brent-method": Algorithm.BRENT_DEKKER,
+    "brent-dekker-method": Algorithm.BRENT_DEKKER,
+    "dekker": Algorithm.BRENT_DEKKER,
+    "zbrent": Algorithm.BRENT_DEKKER,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -237,10 +251,11 @@ def autodetect_variable(node: Node) -> str:
 # the active mode — each candidate is materialised as a mode-faithful Value, the
 # program evaluated, and its Value reduced back to a float to compare. Golden-section
 # and Brent shrink a 1-D bracket; Nelder-Mead walks an n-vertex simplex over n unknowns.
-# Bisection (33.1) and Ridders (33.5) are the exceptions: they do NOT minimise but
-# bracket a SIGN CHANGE of the raw signed expression — bisection halves it, Ridders takes
-# an exponential-fit step — so both are find-root only. The reply names which ran
-# (Algorithm, 32.3) so the engines are distinguishable.
+# Bisection (33.1), Ridders (33.5) and Brent-Dekker (33.2) are the exceptions: they do
+# NOT minimise but bracket a SIGN CHANGE of the raw signed expression — bisection halves
+# it, Ridders takes an exponential-fit step, Brent-Dekker interpolates with a halving
+# fallback — so all three are find-root only. The reply names which ran (Algorithm, 32.3)
+# so the engines are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _GOLDEN = (3 - 5**0.5) / 2  # 0.382..., the complementary golden fraction — Brent's
@@ -253,6 +268,8 @@ _FLOAT_X_TOL = 1e-12  # float bracket-width stop — a double resolves no finer 
 _FLOAT_RESIDUAL_TOL = 1e-6  # float solve acceptance: |expr| this small counts as a root
 _RATIONAL_SEARCH_DECIMALS = 12  # rational has no scale of its own; search at this one
 _FLOAT_SNAP_DECIMALS = 6  # float snap-polish ladder: try clean roundings to 0..6 decimals
+_FLOAT_EPS = 2.0**-52  # a double's machine epsilon — Brent-Dekker's minimum-step floor
+# widens with |x| by this, since a double resolves no finer than a few ULPs out there
 
 
 @dataclass(frozen=True, slots=True)
@@ -1043,6 +1060,241 @@ def ridders(
         variable,
         objective,
         Algorithm.RIDDERS.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Brent-Dekker root finder (33.2) ------------------------------------------
+# The bracketed root finder most numerical libraries hand you by default, and the third
+# engine of the SIGN-CHANGE family (after bisection 33.1 and Ridders 33.5). It keeps the
+# root straddled at every step — so it can never diverge — while stepping by INVERSE
+# QUADRATIC INTERPOLATION through the three latest points (or by the secant when two of
+# their values coincide, which is Dekker's original hybrid), and falls back to a plain
+# bisection whenever that interpolated point is untrustworthy. The fallback discipline IS
+# the method: superlinear convergence on a smooth root, bisection's guarantee on a nasty
+# one, never worse than about twice bisection's step count.
+#
+# Not to be confused with brent-parabolic (33.12), Brent's OTHER method: that one
+# MINIMISES the folded objective over a bracket and serves every objective; this one
+# brackets a sign change of the raw signed expression and is find-root only. Hence the
+# canonical name ``brent-dekker`` — bare ``brent`` stays with the minimiser it has always
+# named. Everything around the core is shared with bisection / Ridders exactly: the
+# coarse sign-change scan (so the caller's endpoints need not already straddle), the
+# candidate eval and best-across-all tracking, the grid / float-snap polish, the
+# 2-second wall-clock and iteration caps, and the same three error paths.
+
+_BRENT_DEKKER_SCAN_CELLS = 64  # coarse grid the initial sign-change hunt samples across
+
+
+def brent_dekker(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Brent-Dekker root finder for the unknown over ``[lower, upper]`` (33.2).
+
+    Brent's ROOT method — the bracketed default of most numerical libraries (Numerical
+    Recipes ``zbrent``, SciPy ``brentq``) — and a peer of :func:`bisection` and
+    :func:`ridders` rather than of the similarly named :func:`brent_parabolic`, which
+    minimises instead. Like its two siblings it works on the RAW signed expression,
+    hunting an interval whose endpoints straddle zero and shrinking it while keeping the
+    straddle; it is therefore find-root ONLY and raises SolverError for any other
+    objective.
+
+    Each step proposes an INVERSE QUADRATIC interpolation through the three latest
+    points — or Dekker's secant when only two are distinct and the quadratic is
+    degenerate — and accepts it only if the move stays well inside the bracket AND is
+    under half the step before last; otherwise it takes a plain BISECTION step. That
+    guard is what makes the method both superlinear on smooth roots and never much worse
+    than bisection on awkward ones, which is why it beats Ridders often enough to be the
+    common default.
+
+    The caller's endpoints need NOT already straddle zero: a coarse scan across
+    ``[lower, upper]`` (``_BRENT_DEKKER_SCAN_CELLS`` cells) locates the FIRST
+    sign-changing cell and the refinement runs on that. A scan point or trial that raises
+    a DOMAIN error yields no signed value and is skipped / stops the refinement (a
+    structural failure — a constant the program never set — still propagates as an
+    EvalError); the 2-second wall-clock and iteration caps bound the search, and the same
+    grid / float-snap polish lands a grid-representable root exactly.
+
+    Returns the best candidate as a SolverResult. Raises SolverError on the same
+    conditions as :func:`bisection`: the program evaluates nowhere in the bracket, NO
+    sign change exists anywhere in it (the distinct message), or the straddled root is
+    not representable on the mode's grid.
+    """
+    if objective is not Objective.FIND_ROOT:
+        raise SolverError(
+            f"The brent-dekker algorithm only finds roots (it brackets a sign change), so "
+            f"objective {objective.value!r} is not supported. Use golden-section or "
+            f"brent-parabolic with that objective for an extremum."
+        )
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float | None:
+        # The SIGNED expression value at x (for the sign-change tests), or None on a
+        # DOMAIN error; tracks the best |expr| seen as a side effect. Identical to
+        # bisection's, so the polish and final result reuse its bookkeeping.
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return None  # a domain error at THIS candidate — no signed value here
+        signed = raw.to_float()
+        obj = abs(signed)  # = fold_objective(raw, FIND_ROOT).to_float(), the |expr| fold
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return signed
+
+    # Coarse scan for the first sign-changing cell, exactly as in ridders — both endpoint
+    # values are kept, since the interpolation needs the pair, not just the lower end.
+    timed_out = False
+    width = upper - lower
+    xs = [lower + width * k / _BRENT_DEKKER_SCAN_CELLS for k in range(_BRENT_DEKKER_SCAN_CELLS + 1)]
+    fxs: list[float | None] = []
+    for x in xs:
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        fxs.append(evaluate_objective(x))
+    a: float | None = None
+    b: float | None = None
+    fa = fb = 0.0
+    for i in range(len(fxs) - 1):
+        left, right = fxs[i], fxs[i + 1]
+        if left is None or right is None:
+            continue
+        if left == 0.0:  # an exact root sitting on a scan node — no bracket to refine
+            a = b = xs[i]
+            fa = fb = left
+            break
+        if (left < 0) != (right < 0):  # opposite signs straddle a root
+            a, b, fa, fb = xs[i], xs[i + 1], left, right
+            break
+
+    iterations = 0
+    if a is not None and b is not None and not timed_out:
+        # The textbook loop (Numerical Recipes ``zbrent``, the same shape as SciPy's
+        # ``brentq``): ``xb`` is the running estimate, ``xc`` the contrapoint on the far
+        # side of the root (so f(xb)·f(xc) <= 0 throughout), ``xa`` the PREVIOUS estimate
+        # that the interpolation reads as its third point. ``d`` is the step just taken
+        # and ``e`` the one before it — the interpolation is trusted only while it keeps
+        # moving less than ``e``, which is what forces a bisection whenever the
+        # interpolation stops making progress.
+        #
+        # The other formulation of this method (Wikipedia's, with the explicit mflag)
+        # guards the same way but keys its stall test on the raw tolerance, which stalls
+        # into near-pure bisection once the estimate has converged and only the far end of
+        # the bracket is left to close — measurably slower here, hence this form.
+        xa, xb, fxa, fxb = a, b, fa, fb
+        xc, fxc = xb, fxb
+        d = e = xb - xa
+        while iterations < _MAX_ITERATIONS:
+            if time.monotonic() >= deadline:
+                timed_out = True  # hard 2s cap reached — stop with the best seen so far
+                break
+            if (fxb > 0) == (fxc > 0):  # xc fell to xb's side — re-take xa as contrapoint
+                xc, fxc = xa, fxa
+                d = e = xb - xa
+            if abs(fxc) < abs(fxb):  # the contrapoint is the better estimate — rotate
+                xa, xb, xc = xb, xc, xb
+                fxa, fxb, fxc = fxb, fxc, fxb
+            # The smallest step worth taking: the mode's tolerance, widened near large |x|
+            # where a double resolves no finer than a few ULPs anyway.
+            tol1 = 2 * _FLOAT_EPS * abs(xb) + 0.5 * x_tol
+            xm = 0.5 * (xc - xb)  # a bisection step would move this far
+            if abs(xm) <= tol1 or fxb == 0.0:  # bracket closed, or exactly on the root
+                break
+            if abs(e) >= tol1 and abs(fxa) > abs(fxb):
+                s = fxb / fxa
+                if xa == xc:  # only two distinct points — Dekker's secant
+                    p, q = 2 * xm * s, 1 - s
+                else:  # three distinct points — inverse quadratic through them
+                    q, r = fxa / fxc, fxb / fxc
+                    p = s * (2 * xm * q * (q - r) - (xb - xa) * (r - 1))
+                    q = (q - 1) * (r - 1) * (s - 1)
+                if p > 0:
+                    q = -q
+                p = abs(p)
+                # Accept only a step that stays well inside the bracket AND is under half
+                # the step before last; otherwise fall back to bisection.
+                if 2 * p < min(3 * xm * q - abs(tol1 * q), abs(e * q)):
+                    e, d = d, p / q
+                else:
+                    d = e = xm
+            else:  # the last step was already at the tolerance — bisect
+                d = e = xm
+            xa, fxa = xb, fxb  # the old estimate becomes the interpolation's third point
+            # Never move less than tol1, or the search stalls short of the bracket.
+            xb += d if abs(d) > tol1 else (tol1 if xm > 0 else -tol1)
+            fs = evaluate_objective(xb)
+            if fs is None:  # a domain error opened up inside the bracket — stop here
+                break
+            fxb = fs
+            iterations += 1
+
+    # Grid polish (fixed-point / rational), identical to bisection's: re-test the grid
+    # neighbours of the best point so a root sitting exactly on the grid is found
+    # (residual 0). Skipped on float and timeout.
+    if best_solution is not None and mode is not Mode.FLOATING_POINT and not timed_out:
+        step = 10.0**-scale
+        centre = best_solution.to_float()
+        for k in (-2, -1, 1, 2):
+            evaluate_objective(centre + k * step)
+
+    # Float snap polish, identical to bisection's: snap a drifted crossing onto its clean
+    # rounding when no worse, so a root found at 1.999…97 lands on 2.
+    if best_solution is not None and mode is Mode.FLOATING_POINT and not timed_out:
+        _float_snap_polish(
+            [best_solution.to_float()],
+            lambda point: evaluate_objective(point[0], accept_ties=True),
+            [(lower, upper)],
+        )
+
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
+        )
+    if best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
+        )
+        if a is None:  # the scan found no sign change anywhere in the bracket
+            raise SolverError(
+                f"No sign change for {variable!r} in [{lower}, {upper}], so brent-dekker "
+                f"has no root to bracket. Widen or move the bracket — or, for a root "
+                f"that only touches zero without crossing (even multiplicity), use "
+                f"golden-section / brent-parabolic with objective='find-minimum' (or "
+                f"'find-maximum'). The closest is |expr| = {best_obj:.6g} at "
+                f"{variable} = {best_solution.to_string()}.{limit}"
+            )
+        raise SolverError(  # a straddle was found but the root is off the mode's grid
+            f"No solution: the expression does not reach zero for {variable!r} in "
+            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
+            f"at {variable} = {best_solution.to_string()}.{limit}"
+        )
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.BRENT_DEKKER.value,
         best_solution,
         best_value,
         iterations,
