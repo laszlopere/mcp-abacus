@@ -39,6 +39,7 @@ from mcp_abacus.solver import (
     bracketed_root,
     brent_parabolic,
     nelder_mead,
+    newton_raphson,
     resolve_algorithm,
     resolve_objective,
     search,
@@ -809,7 +810,9 @@ def solver(
                 "'brent-dekker', 'chandrupatla' or 'secant' (single-variable, find-root "
                 "only — bracket a sign change; the last four converge faster than "
                 "bisection, secant being the leanest on a simple root and chandrupatla "
-                "the fastest on a repeated one), or 'nelder-mead' "
+                "the fastest on a repeated one), 'newton-raphson' (single-variable, "
+                "find-root only — follows the expression's slope instead of bracketing, "
+                "so it also reaches a root that only TOUCHES zero), or 'nelder-mead' "
                 "(required for the `variables` form)."
             )
         ),
@@ -877,12 +880,18 @@ def solver(
     chandrupatla admits that same interpolation under a sharper test, which keeps it at
     bisection's speed on a repeated root where brent-dekker slows to about a third of it,
     and secant simply chases the chord through the last two points: the leanest of the
-    five on a simple root, but the slowest on a repeated one), or "nelder-mead"
-    (multivariate, a bounds-clamped downhill simplex). The seven single-variable engines
+    five on a simple root, but the slowest on a repeated one), "newton-raphson"
+    (single-variable, find-root ONLY as well, but the one root engine that brackets
+    NOTHING: it steps along the expression's own slope, x - f(x)/f'(x), from the best
+    point of a coarse scan of the bracket, with f' taken as a numerical derivative and
+    every step fenced back into `[lower, upper]` — fastest of all on a smooth root, and
+    the only one that reaches a root which merely TOUCHES zero without crossing, where
+    the sign-change engines report "no sign change"), or "nelder-mead"
+    (multivariate, a bounds-clamped downhill simplex). The eight single-variable engines
     solve only the SINGLE form; the `variables` form requires "nelder-mead". (`golden`,
-    `brent`, `bisect`, `ridder`, `brent-root`, `simplex` and a few other spellings are
-    accepted too — note bare `brent` names the PARABOLIC MINIMISER, while Brent's root
-    method is `brent-dekker`.)
+    `brent`, `bisect`, `ridder`, `brent-root`, `newton`, `simplex` and a few other
+    spellings are accepted too — note bare `brent` names the PARABOLIC MINIMISER, while
+    Brent's root method is `brent-dekker`.)
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
     in that numeric type and the found value is reported in it — with ONE solver-only
@@ -958,6 +967,12 @@ def solver(
             # single-variable, like golden-section — _resolve_unknowns guaranteed one
             name, lo, hi = unknowns[0]
             result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
+        elif resolved_algorithm is Algorithm.NEWTON_RAPHSON:
+            # Find-root like the bracketers below, but bracket-free (33.4): it follows a
+            # finite-difference tangent from a seeded point, so it has its own engine
+            # rather than a refinement step in the harness.
+            name, lo, hi = unknowns[0]
+            result = newton_raphson(node, name, lo, hi, selected, floor, resolved_objective)
         elif resolved_algorithm in BRACKETED_ROOT_ENGINES:
             # A single-variable sign-change root finder — bisection, ridders,
             # brent-dekker, chandrupatla or secant. One harness serves them all (33.25), picking

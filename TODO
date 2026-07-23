@@ -1025,7 +1025,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                solver.bisection.
     [x] 33.2.  Brent's method — root, bisection + secant/inverse-quad.
     [x] 33.3.  Secant — root, no derivative, superlinear.
-    [ ] 33.4.  Newton-Raphson — root via symbolic derivative.
+    [x] 33.4.  Newton-Raphson — root via symbolic derivative.
     [x] 33.5.  Ridders' — bracketed root, exponential fit. Bisection's sign-change
                bracket + scan, but an exponential-fit step (order ~1.84) instead of
                halving; find-root only. See solver.ridders.

@@ -434,18 +434,23 @@ def _residual_sum_squares(ctx: EvalContext, args: tuple[Node, ...]) -> Value:
     return total
 
 
-def _step(ctx: EvalContext, x: Value) -> Value:
-    """The finite-difference step ``h`` for ``diff`` at the point ``x`` (40.17).
+def finite_difference_step(mode: Mode, scale: int) -> Value:
+    """The finite-difference step ``h`` for a five-point stencil in ``mode`` (40.17).
 
     Balances the stencil's two competing errors — truncation (shrinks with ``h``) against
     round-off from cancellating nearby samples (grows as ``h`` shrinks), so ``h`` tracks each
     mode's working precision. Float and rational take a small fixed step (their grids are fine
     enough that the 4th-order truncation dominates and stays negligible); fixed-point scales
-    the step to the point's own decimal scale, roughly the 5th-root-of-ULP optimum for the
-    five-point rule, never finer than 0.1 of a unit so the differenced samples keep enough
-    significant digits — and exactly one unit at scale 0 (integers), the only step on that grid.
+    the step to the sample point's own decimal ``scale``, roughly the 5th-root-of-ULP optimum
+    for the five-point rule, never finer than 0.1 of a unit so the differenced samples keep
+    enough significant digits — and exactly one unit at scale 0 (integers), the only step on
+    that grid. ``scale`` is read in fixed-point only; the other modes ignore it.
+
+    Public because ``diff`` is no longer the only caller: the solver's Newton-Raphson engine
+    (33.4) differences the SAME stencil to get its tangent, and one definition of ``h`` keeps
+    the two from drifting apart.
     """
-    match ctx.mode:
+    match mode:
         case Mode.FLOATING_POINT:
             return Value.from_real(1e-5, Mode.FLOATING_POINT, 0)
         case Mode.RATIONAL:
@@ -454,11 +459,16 @@ def _step(ctx: EvalContext, x: Value) -> Value:
             # then stays an exact fraction the rational arithmetic carries losslessly.
             return Value.from_real(Fraction(1, 10**6), Mode.RATIONAL, 6)
         case Mode.FIXED_POINT:
-            scale = x.payload.decimals  # type: ignore[union-attr]
             k = max(1, round(scale / 5)) if scale >= 1 else 0
             return Value.from_real(Fraction(1, 10**k), Mode.FIXED_POINT, scale)
         case _:  # pragma: no cover - mirrors Value's mode exhaustiveness
-            raise ValueError(f"unsupported mode: {ctx.mode!r}")
+            raise ValueError(f"unsupported mode: {mode!r}")
+
+
+def _step(ctx: EvalContext, x: Value) -> Value:
+    """``diff``'s step at the point ``x`` — :func:`finite_difference_step` at ``x``'s scale."""
+    scale = x.payload.decimals if ctx.mode is Mode.FIXED_POINT else 0  # type: ignore[union-attr]
+    return finite_difference_step(ctx.mode, scale)
 
 
 def _tolerance(ctx: EvalContext, a: Value, b: Value) -> Value:

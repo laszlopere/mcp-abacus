@@ -119,6 +119,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("chandrupatla") is Algorithm.CHANDRUPATLA
     assert resolve_algorithm("secant") is Algorithm.SECANT
+    assert resolve_algorithm("newton-raphson") is Algorithm.NEWTON_RAPHSON
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
 
 
@@ -155,9 +156,19 @@ def test_secant_aliases_resolve():
     assert resolve_algorithm("chord") is Algorithm.SECANT
 
 
+def test_newton_aliases_resolve():
+    # 33.4: bare `newton` names the ROOT finder — the same first-come rule bare `brent`
+    # follows for the parabolic minimiser — plus the possessive / -method / spaced forms.
+    assert resolve_algorithm("newton") is Algorithm.NEWTON_RAPHSON
+    assert resolve_algorithm("newton-method") is Algorithm.NEWTON_RAPHSON
+    assert resolve_algorithm("newtons-method") is Algorithm.NEWTON_RAPHSON
+    assert resolve_algorithm("newton raphson") is Algorithm.NEWTON_RAPHSON
+    assert resolve_algorithm("raphson") is Algorithm.NEWTON_RAPHSON
+
+
 def test_unknown_algorithm_lists_the_valid_algorithms():
     with pytest.raises(SolverError) as excinfo:
-        resolve_algorithm("newton")  # not an engine this build has
+        resolve_algorithm("halley")  # not an engine this build has
     message = excinfo.value.message
     assert "Unknown algorithm" in message
     assert "golden-section-search" in message and "nelder-mead" in message

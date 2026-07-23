@@ -21,6 +21,13 @@ interpolation under a sharper criterion, and Secant (33.3) chases the chord thro
 last two points with a bisection safeguard. All five share ONE harness — `bracketed_root`,
 which owns the scan, the evaluation, the polish and every error path — so each engine is
 only its refinement step (`_refine_*`, registered in BRACKETED_ROOT_ENGINES). See 33.25.
+
+Newton-Raphson (33.4) is find-root only like them but belongs to NEITHER family: it holds
+no bracket at all, following the expression's own slope from a single seed point —
+`x - f(x)/f'(x)`, with f' differenced from the same five-point stencil the language's
+`diff` uses (40.17). That buys a root a sign change cannot bracket (an even-multiplicity
+one that only touches zero) at the price of a method that can wander, so the bracket the
+caller gives becomes a fence rather than a straddle.
 """
 
 import math
@@ -30,6 +37,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
+from mcp_abacus.expr.forms import finite_difference_step
 from mcp_abacus.expr.nodes import EvalError, Node
 from mcp_abacus.expr.value import Mode, UndefinedVariableError, Value, VariableStore
 from mcp_abacus.suggest import did_you_mean
@@ -79,8 +87,10 @@ class Algorithm(Enum):
     the same interpolation admitted by a sharper test that keeps it off multiple roots;
     ``SECANT`` (33.3) is the plainest of the five, stepping to where the chord through the
     last two points crosses zero, with a bisection safeguard whenever that leaves the
-    bracket; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The enum value
-    is the string reported in the reply's ``algorithm`` field (32.3).
+    bracket; ``NEWTON_RAPHSON`` (33.4) is the one root finder that needs NO sign change —
+    it follows the expression's own slope (a finite-difference tangent) to zero from a
+    single seed point; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The
+    enum value is the string reported in the reply's ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
@@ -90,6 +100,7 @@ class Algorithm(Enum):
     BRENT_DEKKER = "brent-dekker"  # one unknown, interpolate + bisect a sign change (root only)
     CHANDRUPATLA = "chandrupatla"  # one unknown, interpolate under a sharper test (root only)
     SECANT = "secant"  # one unknown, chord through the last two points (root only)
+    NEWTON_RAPHSON = "newton-raphson"  # one unknown, follow the tangent to zero (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -154,6 +165,14 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "chandrupatla-method": Algorithm.CHANDRUPATLA,
     "secant-method": Algorithm.SECANT,
     "chord": Algorithm.SECANT,
+    # Bare ``newton`` names the ROOT finder — the same first-come rule bare ``brent`` follows
+    # above. Should 33.13's gradient MINIMISER land it will spell itself out (newton-bfgs),
+    # so no existing call changes meaning.
+    "newton": Algorithm.NEWTON_RAPHSON,
+    "newton-method": Algorithm.NEWTON_RAPHSON,
+    "newtons-method": Algorithm.NEWTON_RAPHSON,
+    "newton raphson": Algorithm.NEWTON_RAPHSON,
+    "raphson": Algorithm.NEWTON_RAPHSON,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -269,10 +288,12 @@ def autodetect_variable(node: Node) -> str:
 # materialised as a mode-faithful Value, the program evaluated, and its Value reduced
 # back to a float to compare. Golden-section and Brent shrink a 1-D bracket; Nelder-Mead
 # walks an n-vertex simplex over n unknowns.
-# The BRACKETERS — bisection (33.1), Ridders (33.5), Brent-Dekker (33.2) and Chandrupatla
-# (33.7) — do NOT minimise: they bracket a SIGN CHANGE of the raw signed expression, so
-# all four are find-root only. They share one harness (`bracketed_root`, 33.25) and
-# differ only in their refinement step. The reply names which ran (Algorithm, 32.3) so
+# The BRACKETERS — bisection (33.1), Ridders (33.5), Brent-Dekker (33.2), Chandrupatla
+# (33.7) and secant (33.3) — do NOT minimise: they bracket a SIGN CHANGE of the raw signed
+# expression, so all five are find-root only. They share one harness (`bracketed_root`,
+# 33.25) and differ only in their refinement step. Newton-Raphson (33.4) is find-root only
+# too but holds no bracket at all — it follows a finite-difference TANGENT from a seed
+# point, fenced into the caller's interval. The reply names which ran (Algorithm, 32.3) so
 # the engines are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
@@ -1263,6 +1284,201 @@ def bracketed_root(
         variable,
         objective,
         algorithm.value,
+        best_solution,
+        best_value,
+        iterations,
+        ((variable, best_solution),),
+    )
+
+
+# --- Newton-Raphson: follow the tangent to zero (33.4) ------------------------
+# The third engine shape, and the only root finder here that holds no bracket: from a
+# single point it takes the tangent to the curve and steps to where that line crosses
+# zero, x <- x - f(x)/f'(x), doubling the correct digits each step on a simple root.
+#
+# The derivative is NOT symbolic — nothing in this build differentiates an AST. It is the
+# four-sample five-point central difference the language's own `diff` (40.17) uses, at the
+# same per-mode step h (`finite_difference_step`), so the two cannot drift apart: the
+# stencil is 4th-order (exact through quartics) and h tracks the active mode's working
+# precision, which is what keeps a fixed-point difference from cancelling itself away.
+#
+# Two consequences worth naming. It costs FIVE program evaluations per step (the point
+# plus the four stencil samples) where bisection costs one, so "fewer iterations" is not
+# automatically "less work" — it wins when the quadratic convergence outruns that factor,
+# which on a smooth simple root it does comfortably. And it needs no sign change, so it
+# reaches an even-multiplicity root that the whole bracketed family refuses (converging
+# linearly there, as Newton always does on a repeated root).
+_NEWTON_SEED_CELLS = _SCAN_CELLS  # the seed is the best of the same coarse scan the
+# bracketers run — see newton_raphson's docstring for why an unbracketed method still
+# starts from a scan of the caller's interval.
+
+
+def newton_raphson(
+    node: Node,
+    variable: str,
+    lower: float,
+    upper: float,
+    mode: Mode,
+    floor: int,
+    objective: Objective,
+) -> SolverResult:
+    """Newton-Raphson: step along the tangent to a root of the program (33.4).
+
+    Find-root only (the tangent construction locates a zero, not an extremum) but, unlike
+    :func:`bracketed_root`'s five engines, it brackets NOTHING: it iterates
+    ``x <- x - f(x)/f'(x)`` from one seed point, converging quadratically on a smooth
+    simple root — a handful of steps where bisection needs ~35. The slope is a numerical
+    derivative, the five-point central difference of the language's ``diff`` (40.17) at the
+    shared per-mode step ``h`` (``finite_difference_step``):
+    ``f'(x) ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h)``. So each step costs five
+    program evaluations, not one — the trade for the convergence rate.
+
+    THE SEED. Newton wants a starting guess; this tool's API gives a bracket. The engine
+    takes the best of a coarse scan over ``[lower, upper]`` (``_NEWTON_SEED_CELLS`` cells) —
+    the point of least ``|expr|`` — which is the same scan the bracketers pay for, spent on
+    a different question (they want the first SIGN CHANGE, this wants the closest approach).
+    That makes the seed as good as the interval allows and keeps the engine honest on a
+    bracket whose endpoints say nothing useful. ``iterations`` counts Newton steps only,
+    as with every other engine.
+
+    THE FENCE. Textbook Newton can leap anywhere — a near-flat tangent throws the next
+    point far away, and the iteration may diverge or cycle. Here ``[lower, upper]`` is a
+    fence rather than a straddle: every step is clamped back into it, and a step clamped
+    onto the point it started from ends the iteration (it is trying to leave the region the
+    caller asked about). A tangent that goes exactly flat, or a stencil sample that leaves
+    the expression's domain, ends it too — with the best point seen so far intact, since
+    every evaluation feeds the same best-tracking the other engines use.
+
+    WHAT IT BUYS. No sign change is required, so this is the one root engine that reaches
+    an even-multiplicity root — ``(x - 2)**2``, which only touches zero — where the whole
+    bracketed family reports "no sign change". Convergence there is linear, not quadratic
+    (f and f' vanish together), which is the classic Newton behaviour on a repeated root.
+
+    The 2-second wall-clock and ``_MAX_ITERATIONS`` caps bound it exactly as elsewhere, and
+    the same grid / float-snap polish (:func:`_polish_best`) lands a representable root
+    exactly. Raises SolverError for a non-root objective, when the program evaluates nowhere
+    in the bracket, or when the iteration does not reach zero (reporting the closest |expr|,
+    and naming a flat tangent when that is what stopped it).
+    """
+    if objective is not Objective.FIND_ROOT:
+        raise SolverError(
+            f"The {Algorithm.NEWTON_RAPHSON.value} algorithm only finds roots (it steps "
+            f"along the tangent to where the expression crosses zero), so objective "
+            f"{objective.value!r} is not supported. Use golden-section or brent-parabolic "
+            f"with that objective for an extremum."
+        )
+    scale = _search_scale(node, mode, floor)
+    x_tol, residual_tol = _tolerances(mode, scale)
+    deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    # The stencil's step, in the active mode's own grid — h must be representable there or
+    # x+h would quantise straight back to x and the difference would be identically zero.
+    h = finite_difference_step(mode, scale).to_float()
+    best_obj = math.inf
+    best_solution: Value | None = None
+    best_value: Value | None = None
+
+    def evaluate_objective(x: float, *, accept_ties: bool = False) -> float | None:
+        # The signed expression value at x — Newton needs the sign and magnitude both, and
+        # the stencil differences these — or None where x raises a DOMAIN error. Tracks the
+        # best |expr| seen as a side effect, exactly as in :func:`bracketed_root`.
+        nonlocal best_obj, best_solution, best_value
+        candidate = Value.from_real(x, mode, scale)
+        store = VariableStore()
+        store.set(variable, candidate)
+        try:
+            raw = node.evaluate(mode, floor, variables=store)
+        except EvalError as exc:
+            if isinstance(exc.__cause__, UndefinedVariableError):
+                raise  # a constant the program never set — structural, surface it
+            return None  # a domain error at THIS candidate — no signed value here
+        signed = raw.to_float()
+        obj = abs(signed)  # = fold_objective(raw, FIND_ROOT).to_float(), the |expr| fold
+        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+            best_obj, best_solution, best_value = obj, candidate, raw
+        return signed
+
+    def slope(x: float) -> float | None:
+        # diff's stencil (40.17), differenced in float from four mode-faithful samples:
+        # f'(x) ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h). None when any sample
+        # leaves the expression's domain — there is no tangent to follow from there.
+        fm2 = evaluate_objective(x - 2 * h)
+        fm1 = evaluate_objective(x - h)
+        fp1 = evaluate_objective(x + h)
+        fp2 = evaluate_objective(x + 2 * h)
+        if fm2 is None or fm1 is None or fp1 is None or fp2 is None:
+            return None
+        return (fm2 - fp2 + 8 * (fp1 - fm1)) / (12 * h)
+
+    # Seed: the coarse scan's point of least |expr|, which best-tracking already records.
+    timed_out = False
+    width = upper - lower
+    for k in range(_NEWTON_SEED_CELLS + 1):
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        evaluate_objective(lower + width * k / _NEWTON_SEED_CELLS)
+
+    iterations = 0
+    went_flat = False  # the tangent had no slope to follow — a distinct way to stop
+    if best_solution is not None and not timed_out:
+        x = best_solution.to_float()
+        fx = evaluate_objective(x)
+        while iterations < _MAX_ITERATIONS:
+            if time.monotonic() >= deadline:
+                timed_out = True  # hard 2s cap reached — stop with the best seen so far
+                break
+            if fx is None:
+                break  # a domain error where we stand — nowhere to take a tangent from
+            if fx == 0.0:
+                break  # an exact root: the step would be zero and every further one too
+            derivative = slope(x)
+            if derivative is None:
+                break  # the stencil left the domain — no tangent here either
+            if derivative == 0.0:
+                went_flat = True  # a horizontal tangent never meets zero
+                break
+            # The Newton step, fenced into the caller's interval. Clamping onto the point
+            # we started from means the iteration wants OUT of it — stop rather than spin.
+            x_next = min(max(x - fx / derivative, lower), upper)
+            if x_next == x:
+                break
+            converged = abs(x_next - x) <= x_tol
+            x = x_next
+            fx = evaluate_objective(x)
+            iterations += 1
+            if converged:  # the last step moved less than the mode resolves
+                break
+
+    # Grid / float-snap polish around the best point (33.25) — the shared single-unknown
+    # tail, so a root exactly on the mode's grid is found rather than missed by a hair.
+    _polish_best(best_solution, mode, scale, timed_out, evaluate_objective, (lower, upper))
+
+    if best_solution is None or best_value is None:
+        limit = f" within the {_TIME_LIMIT_SECONDS:g}s time limit" if timed_out else ""
+        raise SolverError(
+            f"The expression could not be evaluated anywhere in [{lower}, {upper}]"
+            f"{limit} (every candidate for {variable!r} raised a domain error)."
+        )
+    if best_obj > residual_tol:
+        limit = (
+            f" The search stopped at the {_TIME_LIMIT_SECONDS:g}s time limit." if timed_out else ""
+        )
+        flat = (
+            " The tangent went flat (zero slope) before a root was reached, so the "
+            "iteration had nowhere to step; try a bracket around the crossing itself, or "
+            "a sign-change engine (bisection / brent-dekker)."
+            if went_flat
+            else ""
+        )
+        raise SolverError(
+            f"No solution: the expression does not reach zero for {variable!r} in "
+            f"[{lower}, {upper}]. The closest is |expr| = {best_obj:.6g} "
+            f"at {variable} = {best_solution.to_string()}.{limit}{flat}"
+        )
+    return SolverResult(
+        variable,
+        objective,
+        Algorithm.NEWTON_RAPHSON.value,
         best_solution,
         best_value,
         iterations,

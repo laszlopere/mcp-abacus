@@ -1581,6 +1581,288 @@ def test_secant_solves_keplers_equation():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+# --- Newton-Raphson: follow the tangent to zero (33.4) ------------------------
+# The one root engine that brackets NOTHING. From a seed — the point of least |expr| in a
+# coarse scan of the caller's interval — it repeatedly steps to where the tangent crosses
+# zero, x - f(x)/f'(x), with f' differenced from the same five-point stencil the language's
+# `diff` uses (40.17). Quadratic on a smooth simple root (a handful of steps), linear on a
+# repeated one, and — because it never asks for a sign change — the only engine here that
+# finds a root which merely TOUCHES zero. The bracket is a fence: every step is clamped
+# back inside it, and a step that would leave stops the iteration.
+
+
+def test_newton_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Newton-Raphson (no straddle needed:\n"
+        "it follows the slope from a seed); expect x = sqrt(2) ~ 1.41421, expression ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "newton-raphson"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_newton_converges_in_few_iterations():
+    # Quadratic convergence on a smooth simple root: each step roughly doubles the correct
+    # digits, so a handful of steps against bisection's ~35 halvings.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Newton-Raphson; the tangent step\n"
+        "doubles the correct digits each time, so it lands in a few steps",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert payload["iterations"] <= 6
+
+
+def test_newton_beats_bisection_on_a_smooth_root():
+    # The trade 33.4 buys, in steps: far fewer of them than the robust baseline. (Each is
+    # dearer — five program evaluations against bisection's one — which is why the
+    # docstring puts the comparison in iterations, not in work.)
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] — Newton's tangent step against bisection's\n"
+        "halving: quadratic convergence needs a fraction of the iterations",
+        "x**2 - 2",
+    )
+    newton = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    bisect = _solve(program, variable="x", lower=0, upper=2, algorithm="bisection")
+    assert newton["error"] is None and bisect["error"] is None
+    assert _num(newton["solution"]) == pytest.approx(2**0.5, abs=1e-9)
+    assert newton["iterations"] < bisect["iterations"]
+
+
+def test_newton_finds_a_root_the_bracketers_refuse():
+    # WHY this engine earns its place. (x - pi)**2 only TOUCHES zero at x = pi — it never
+    # changes sign — so every sign-change engine reports "no sign change" and refuses.
+    # Newton needs no straddle: it follows the slope down to the root (linearly, since f
+    # and f' vanish together there) and lands it. The root is irrational on purpose: at a
+    # CLEAN touch root the float snap polish would hand bisection the answer anyway
+    # (rounding its closest scan point onto the root), hiding the difference.
+    program = _annotated(
+        "find-root of (x - pi)**2 over [0, 5]: a DOUBLE root at x = pi, which only touches\n"
+        "zero without crossing. Newton follows the slope to it; bisection has no sign\n"
+        "change to bracket and refuses",
+        "(x - pi)**2",
+    )
+    newton = _solve(program, variable="x", lower=0, upper=5, algorithm="newton-raphson")
+    bisect = _solve(program, variable="x", lower=0, upper=5, algorithm="bisection")
+    assert newton["error"] is None
+    assert _num(newton["solution"]) == pytest.approx(math.pi, abs=1e-6)
+    assert abs(_num(newton["value"])) < 1e-6
+    assert bisect["solution"] is None
+    assert "No sign change" in bisect["error"]
+
+
+def test_newton_slows_to_linear_on_a_repeated_root():
+    # The other side of that: quadratic convergence is a SIMPLE-root property. On the
+    # triple root of x**3 the tangent step shrinks the error by a constant factor instead
+    # of squaring it, so the same accuracy costs an order of magnitude more steps than the
+    # simple root above — pinned so the docstring's warning cannot rot.
+    simple = _solve(
+        _annotated("find-root of x**2 - 2 over [0, 2] — a SIMPLE root", "x**2 - 2"),
+        variable="x",
+        lower=0,
+        upper=2,
+        algorithm="newton-raphson",
+    )
+    repeated = _solve(
+        _annotated(
+            "find-root of x**3 over [-1, 2] — a TRIPLE root at x = 0, where f and f'\n"
+            "vanish together and Newton drops to linear convergence",
+            "x**3",
+        ),
+        variable="x",
+        lower=-1,
+        upper=2,
+        algorithm="newton-raphson",
+    )
+    assert simple["error"] is None and repeated["error"] is None
+    # Slower, but never less accurate — the root still comes out exactly.
+    assert _num(repeated["solution"]) == 0.0
+    assert repeated["iterations"] > 10 * simple["iterations"]
+
+
+def test_newton_fence_keeps_the_step_inside_the_bracket():
+    # Why the fence exists. ln(x) + 5 has its root at e**-5 ~ 0.006738, hard against the
+    # log's vertical asymptote: an unfenced tangent from out in the flat part of the curve
+    # aims far to the left, where the log has no real value at all. Every step is clamped
+    # back into [lower, upper], so the iteration stays where the expression is defined.
+    program = _annotated(
+        "find-root of ln(x) + 5 over [0.0001, 10] via Newton-Raphson; the root e**-5\n"
+        "~ 0.006738 sits against the log's asymptote, so the tangent repeatedly aims\n"
+        "outside the bracket — the fence clamps every such step back inside",
+        "ln(x) + 5",
+    )
+    payload = _solve(program, variable="x", lower=0.0001, upper=10, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(math.exp(-5), rel=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_newton_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies here exactly as to the bracketed family: the
+    # estimate lands within one grid step of x = 1.5 and the neighbour probes pin it to an
+    # EXACT zero on the grid.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via Newton-Raphson in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        mode="fixed-point",
+        floor=1,
+        algorithm="newton-raphson",
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_newton_reports_a_flat_tangent():
+    # x**2 + 1 never reaches zero, and its least |expr| — where the seed lands — is the
+    # vertex at x = 0, whose tangent is horizontal: there is no step to take. That is a
+    # named outcome, distinct from the bracketers' "no sign change", and it points at the
+    # engines to try instead.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via Newton-Raphson; it never reaches zero,\n"
+        "and the seed lands on the flat vertex — a horizontal tangent, nowhere to step",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="newton-raphson")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No solution" in payload["error"]
+    assert "tangent went flat" in payload["error"]
+    assert "bisection" in payload["error"]
+
+
+def test_newton_rejects_a_non_root_objective():
+    # The tangent construction locates a ZERO, not an extremum; find-minimum is refused
+    # with a pointer to the engines that do minimise.
+    program = _annotated(
+        "Newton-Raphson asked to find-minimum — refused, it only finds roots\n"
+        "(the tangent step crosses zero; an extremum is another question)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="newton-raphson",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "brent-parabolic" in payload["error"]
+
+
+def test_newton_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "Newton-Raphson asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="newton-raphson")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_newton_skips_domain_failures_in_the_seed_scan():
+    # The left half raises a domain error (sqrt of a negative); those scan points carry no
+    # value and cannot be seeds, so the seed comes from where the expression IS defined and
+    # the crossing at x = 1 is still found.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via Newton-Raphson (the bracket dips below\n"
+        "0); the negative side has no real value and is skipped, x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_newton_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails everywhere and must
+    # surface as a line-tagged eval error, not be mistaken for a domain gap to skip.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via Newton-Raphson; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_newton_root_snaps_to_an_integer():
+    # The float snap polish applies here too: an answer a few ULPs off a clean integer is
+    # re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via Newton-Raphson in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "newton-raphson"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_newton_takes_a_root_sitting_on_a_seed_scan_node():
+    # x = 1 is exactly a scan node of [0, 2], so the seed already HAS a zero residual: the
+    # f(x) == 0 test sees it before any tangent is drawn and the search ends in no steps.
+    program = _annotated(
+        "find-root of x - 1 over [0, 2] via Newton-Raphson; x = 1 lands exactly on a seed\n"
+        "scan node, so the zero residual is in hand and no tangent is ever drawn",
+        "x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 1.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] == 0
+
+
+def test_newton_alias_resolves_to_canonical():
+    # Bare `newton` — the spelling a caller reaches for first — resolves to the canonical
+    # engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the bare `newton` alias\n"
+        "the reply reports the canonical 'newton-raphson'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "newton-raphson"
+
+
+def test_newton_solves_keplers_equation():
+    # The transcendental-root benchmark via Newton: smooth and monotone in [0, pi], the
+    # case the tangent step was made for — the eccentric anomaly falls out in a few steps.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via Newton-Raphson\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "newton-raphson"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for
