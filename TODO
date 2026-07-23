@@ -1029,7 +1029,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 33.5.  Ridders' — bracketed root, exponential fit. Bisection's sign-change
                bracket + scan, but an exponential-fit step (order ~1.84) instead of
                halving; find-root only. See solver.ridders.
-    [ ] 33.6.  Ternary search — unimodal optimise alternative.
+    [x] 33.6.  Ternary search — unimodal optimise alternative.
     [x] 33.7.  Chandrupatla's — bracketed root, often beats Brent.
     [x] 33.8.  Halley's / Householder — root, cubic+ convergence.
     [ ] 33.9.  Durand-Kerner / Aberth — all polynomial roots at once.

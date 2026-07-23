@@ -806,7 +806,9 @@ def solver(
         Field(
             description=(
                 "Search engine: 'golden-section-search' (default, single-variable), "
-                "'brent-parabolic' (single-variable), 'bisection', 'ridders', "
+                "'brent-parabolic' or 'ternary-search' (single-variable — brent-parabolic "
+                "is usually the fastest on a smooth extremum, ternary-search the plainest "
+                "and slowest), 'bisection', 'ridders', "
                 "'brent-dekker', 'chandrupatla' or 'secant' (single-variable, find-root "
                 "only — bracket a sign change; the last four converge faster than "
                 "bisection, secant being the leanest on a simple root and chandrupatla "
@@ -985,8 +987,8 @@ def solver(
                 node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm
             )
         else:
-            # A single-variable minimiser — golden-section or brent-parabolic.
-            # One harness serves them both (33.25), picking the bracket loop by algorithm,
+            # A single-variable minimiser — golden-section, brent-parabolic or ternary.
+            # One harness serves them all (33.6), picking the bracket loop by algorithm,
             # so a new minimiser needs no branch here. This is the fall-through because
             # the default engine (golden-section) is one of them, and the only family that
             # serves every objective. _resolve_unknowns guaranteed exactly one unknown.

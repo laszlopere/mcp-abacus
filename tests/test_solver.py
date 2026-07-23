@@ -116,6 +116,7 @@ def test_algorithm_defaults_to_golden_section_when_omitted():
 def test_canonical_algorithms_resolve():
     assert resolve_algorithm("golden-section-search") is Algorithm.GOLDEN_SECTION
     assert resolve_algorithm("brent-parabolic") is Algorithm.BRENT_PARABOLIC
+    assert resolve_algorithm("ternary-search") is Algorithm.TERNARY
     assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("chandrupatla") is Algorithm.CHANDRUPATLA
     assert resolve_algorithm("secant") is Algorithm.SECANT
@@ -143,6 +144,13 @@ def test_the_two_brents_stay_distinct():
     assert resolve_algorithm("brent-method") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("zbrent") is Algorithm.BRENT_DEKKER
+
+
+def test_ternary_aliases_resolve():
+    # 33.6: the bare name plus `trisection`, the other textbook name for the same split.
+    assert resolve_algorithm("ternary") is Algorithm.TERNARY
+    assert resolve_algorithm("ternary-section") is Algorithm.TERNARY
+    assert resolve_algorithm("trisection") is Algorithm.TERNARY
 
 
 def test_chandrupatla_aliases_resolve():

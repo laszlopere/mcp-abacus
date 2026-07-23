@@ -448,6 +448,123 @@ def test_brent_parabolic_rejects_the_multiple_form():
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
 
 
+# --- ternary search: the plainest 1-D minimiser (33.6) ------------------------
+# The third member of the golden-section / brent-parabolic family, sharing their harness
+# (`minimise`): it cuts the bracket at its two TRISECTION points and drops the outer third
+# on the worse side. Same unimodal guarantee and the same objectives, but two evaluations
+# per step where golden-section reuses one, so it is the slowest of the three — the tests
+# below pin that trade-off as much as the answers.
+
+
+def test_ternary_finds_a_minimum():
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via ternary search\n"
+        "unimodal; expect x = 3, value 0 — the bracket closes on the low point by thirds",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="ternary-search",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "ternary-search"
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-5)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+    assert payload["iterations"] > 0
+
+
+def test_ternary_finds_a_maximum():
+    program = _annotated(
+        "find-maximum of 5 - (x - 1)**2 over [-2, 4] via trisection (it minimises -expr)\n"
+        "expect x = 1, value 5 (the peak)",
+        "5 - (x - 1)**2",
+    )
+    payload = _solve(
+        program, variable="x", lower=-2, upper=4, objective="find-maximum", algorithm="trisection"
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-maximum"
+    assert payload["algorithm"] == "ternary-search"  # the alias resolves to canonical
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(5.0, abs=1e-6)
+
+
+def test_ternary_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via ternary search (it minimises |expr|)\n"
+        "expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="ternary-search")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "ternary-search"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-5)
+    assert abs(_num(payload["value"])) < 1e-6
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_ternary_reaches_a_root_that_only_touches_zero():
+    # The minimisers' standing advantage over the whole bracketed family: (x - pi)**2 never
+    # CROSSES zero, so there is no sign change to straddle and bisection & co. refuse it.
+    # Ordering |expr| needs no crossing, so ternary walks straight in. The root is
+    # IRRATIONAL on purpose — an integer one would let bisection's snap polish round its
+    # closest scan point onto the root and succeed anyway, hiding the difference (the same
+    # reason the Newton and Halley twins of this test use pi).
+    program = _annotated(
+        "find-root of (x - pi)**2 over [0, 5] via ternary search — a DOUBLE root at\n"
+        "x = pi that only touches zero, so no bracketer has a sign change to work with",
+        "(x - pi)**2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=5, algorithm="ternary-search")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(math.pi, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    # The same request through a sign-change engine is refused, which is the point.
+    refused = _solve(program, variable="x", lower=0, upper=5, algorithm="bisection")
+    assert refused["solution"] is None
+    assert "No sign change" in refused["error"]
+
+
+def test_ternary_costs_more_than_golden_section_for_the_same_answer():
+    # The reason ternary is not the default, pinned so the docstring's claim cannot rot.
+    # Both close the same bracket to the same tolerance and land on the same answer, but
+    # ternary loses twice over: it shrinks the interval only to 2/3 per step where the
+    # golden split reaches 0.618, and it pays TWO program evaluations for that step where
+    # golden-section reuses a point and pays one. So it takes more ITERATIONS (asserted
+    # here, the only count the reply exposes) and ~2.4x the evaluations underneath.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] — the SAME search, two engines\n"
+        "ternary shrinks by thirds at two evaluations a step; golden-section reuses one",
+        "(x - 3)**2",
+    )
+    common = {"variable": "x", "lower": 0, "upper": 5, "objective": "find-minimum"}
+    ternary = _solve(program, algorithm="ternary-search", **common)
+    golden = _solve(program, algorithm="golden-section-search", **common)
+    assert ternary["error"] is None and golden["error"] is None
+    assert _num(ternary["solution"]) == pytest.approx(_num(golden["solution"]), abs=1e-4)
+    assert ternary["iterations"] > golden["iterations"]
+
+
+def test_ternary_rejects_the_multiple_form():
+    # Like the rest of its family, ternary is single-variable: the `variables` form needs
+    # Nelder-Mead, so the request is refused with a pointer to the right algorithm.
+    program = _annotated(
+        "ternary search asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="ternary-search")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
 # --- bisection: bracketed roots via a sign change (33.1) -----------------------
 # The robust single-variable ROOT finder, and the only engine that works on the raw
 # SIGNED expression rather than minimising |expr|: it scans the bracket for a cell
@@ -2106,6 +2223,18 @@ def test_brent_parabolic_root_snaps_to_an_integer():
     payload = _solve(program, variable="x", lower=0, upper=10, algorithm="brent-parabolic")
     assert payload["error"] is None
     assert payload["algorithm"] == "brent-parabolic"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_ternary_root_snaps_to_an_integer():
+    program = _annotated(
+        "find-root of x**2 - 25 over [0, 10] in floating-point via ternary search\n"
+        "the root in range is x = 5 exactly; snap polish returns a clean 5, not 4.999999999999984",
+        "x**2 - 25",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=10, algorithm="ternary-search")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "ternary-search"
     assert _num(payload["solution"]) == 5.0
 
 

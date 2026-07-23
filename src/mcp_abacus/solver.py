@@ -81,7 +81,9 @@ class Algorithm(Enum):
     reached by different methods. ``GOLDEN_SECTION`` is the single-variable bracket
     shrinker (31.7); ``BRENT_PARABOLIC`` is the single-variable parabolic minimiser
     (33.12), a faster sibling that fits a parabola through the best three points and
-    falls back to a golden-section step; ``BISECTION`` is the single-variable root
+    falls back to a golden-section step; ``TERNARY`` (33.6) is the third of that family,
+    shrinking the bracket by thirds instead of by the golden ratio — the plainest
+    unimodal minimiser, and the slowest of the three; ``BISECTION`` is the single-variable root
     finder (33.1) that brackets a sign change and halves it — robust, but find-root
     only (an extremum has no sign change to straddle); ``RIDDERS`` is its superlinear
     sibling (33.5), the same bracket but an exponential-fit step instead of the
@@ -101,6 +103,7 @@ class Algorithm(Enum):
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
     BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
+    TERNARY = "ternary-search"  # one unknown, shrink a bracket by thirds
     BISECTION = "bisection"  # one unknown, halve a sign-changing bracket (root only)
     RIDDERS = "ridders"  # one unknown, exponential-fit on a sign-changing bracket (root only)
     BRENT_DEKKER = "brent-dekker"  # one unknown, interpolate + bisect a sign change (root only)
@@ -159,6 +162,9 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "golden": Algorithm.GOLDEN_SECTION,
     "brent": Algorithm.BRENT_PARABOLIC,
     "parabolic": Algorithm.BRENT_PARABOLIC,
+    "ternary": Algorithm.TERNARY,
+    "ternary-section": Algorithm.TERNARY,
+    "trisection": Algorithm.TERNARY,
     "bisect": Algorithm.BISECTION,
     "binary-search": Algorithm.BISECTION,
     "ridder": Algorithm.RIDDERS,
@@ -296,9 +302,9 @@ def autodetect_variable(node: Node) -> str:
 # (fold_objective(), 32.1), so they need not know the objective beyond that fold. They
 # are derivative-free and drive the abacus engine in the active mode — each candidate is
 # materialised as a mode-faithful Value, the program evaluated, and its Value reduced
-# back to a float to compare. Golden-section and Brent-parabolic shrink a 1-D bracket
-# and share one harness (`minimise`); Nelder-Mead walks an n-vertex simplex over n
-# unknowns and keeps its own (it is multivariate).
+# back to a float to compare. Golden-section, Brent-parabolic and ternary shrink a 1-D
+# bracket and share one harness (`minimise`, 33.6); Nelder-Mead walks an n-vertex
+# simplex over n unknowns and keeps its own (it is multivariate).
 # The BRACKETERS — bisection (33.1), Ridders (33.5), Brent-Dekker (33.2), Chandrupatla
 # (33.7) and secant (33.3) — do NOT minimise: they bracket a SIGN CHANGE of the raw signed
 # expression, so all five are find-root only. They share one harness (`bracketed_root`,
@@ -504,8 +510,8 @@ def _polish_best(
         )
 
 
-# --- The single-variable minimisers: one harness, two bracket loops (33.25) ---
-# Two engines answer the same question the same way: shrink the caller's interval
+# --- The single-variable minimisers: one harness, three bracket loops (33.6) --
+# Three engines answer the same question the same way: shrink the caller's interval
 # toward the LEAST of the folded objective (fold_objective(), 32.1) — ``|expr|`` for a
 # find-root, ``±expr`` for an extremum — evaluating the program at points of their own
 # choosing until the bracket is narrower than the mode can resolve. Because they order a
@@ -518,10 +524,10 @@ def _polish_best(
 # SolverResult — lives once, in :func:`minimise`. An engine is therefore ONLY its loop:
 # a `_loop_*` function that shrinks ``[a, b]``, registered in MINIMISER_ENGINES. This is
 # the same split 33.25 made for the bracketers (`bracketed_root`) and `tangent_root` made
-# for the derivative engines. 33.25 deliberately deferred it, because the minimisers differ
-# from the bracketers in the one place that matters — what the evaluator RETURNS, the
-# folded objective rather than the signed value — and so could not share THAT harness.
-# They can share one of their own, and a new minimiser is now just its loop.
+# for the derivative engines, deliberately deferred at the time because the minimisers
+# differ from the bracketers in the one place that matters — what the evaluator RETURNS —
+# and so could not share THAT harness. Ternary (33.6) was the engine whose arrival made a
+# third hand-rolled copy the alternative; it landed as just its ~20-line loop.
 #
 # Nelder-Mead (33.14) stays outside: it is multivariate, so its bracket, its polish and
 # its result are all n-dimensional and nothing here fits it.
@@ -556,7 +562,8 @@ def _loop_golden_section(
     evaluation per step rather than two: the surviving interior point sits at exactly the
     right fraction of the new, narrower interval to serve as one of ITS two probes. So the
     interval falls to 0.618 of itself per evaluation, and on a unimodal objective the
-    minimum can never escape the bracket.
+    minimum can never escape the bracket. Contrast :func:`_loop_ternary`, which is this
+    idea with the fractions chosen so that reuse does NOT happen.
     """
     c = b - _INV_PHI * (b - a)
     d = a + _INV_PHI * (b - a)
@@ -576,6 +583,52 @@ def _loop_golden_section(
             a, c, fc = c, d, fd  # minimum is right of c; reuse d as the new c
             d = a + _INV_PHI * (b - a)
             fd = evaluate(d)
+        iterations += 1
+    if not timed_out:
+        evaluate((a + b) / 2)  # the converged midpoint, folded into the best
+    return iterations, timed_out
+
+
+def _loop_ternary(
+    a: float,
+    b: float,
+    evaluate: _MinimiseEvaluate,
+    x_tol: float,
+    deadline: float,
+) -> tuple[int, bool]:
+    """Shrink the bracket by thirds (33.6) — the plainest unimodal minimiser.
+
+    Cut ``[a, b]`` at its two TRISECTION points ``m1 = a + w/3`` and ``m2 = b - w/3`` and
+    discard the outer third on the worse side: if ``f(m1) <= f(m2)`` the minimum of a
+    unimodal objective cannot lie beyond ``m2``, so ``b`` moves to ``m2``, and
+    symmetrically otherwise. Same guarantee as golden-section — on a unimodal objective
+    the minimum stays inside the bracket — reached by the most obvious possible split, and
+    it is the textbook companion to the bisection of a sign change: where bisection asks a
+    SIGN at one point, ternary must ask an ORDER between two, which is precisely why one
+    probe will not do.
+
+    It is the SLOWEST of the three minimisers, and knowing why is the reason to have it.
+    It loses to golden-section TWICE over. Per step it shrinks the interval only to 2/3,
+    where the golden split reaches 0.618; and each of its steps costs TWO evaluations,
+    because neither trisection point of ``[a, b]`` is a trisection point of the survivor,
+    so nothing carries over. That is ``(2/3)**0.5 ~ 0.816`` of the interval per evaluation
+    against golden-section's 0.618, and closing the same bracket therefore costs about
+    ``ln(0.618)/ln(0.816) ~ 2.4x`` the program evaluations (measured: 147 against 64 on a
+    unit-scale float minimum). It is offered because it is the method a caller is most
+    likely to reach for by name, not because it wins.
+    """
+    iterations = 0
+    timed_out = False
+    while (b - a) > x_tol and iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        third = (b - a) / 3
+        m1, m2 = a + third, b - third
+        if evaluate(m1) <= evaluate(m2):
+            b = m2  # the minimum is left of m2 — drop the upper third
+        else:
+            a = m1  # the minimum is right of m1 — drop the lower third
         iterations += 1
     if not timed_out:
         evaluate((a + b) / 2)  # the converged midpoint, folded into the best
@@ -672,6 +725,7 @@ def _loop_brent_parabolic(
 MINIMISER_ENGINES: dict[Algorithm, _MinimiseLoop] = {
     Algorithm.GOLDEN_SECTION: _loop_golden_section,
     Algorithm.BRENT_PARABOLIC: _loop_brent_parabolic,
+    Algorithm.TERNARY: _loop_ternary,
 }
 
 
@@ -685,11 +739,11 @@ def minimise(
     objective: Objective,
     algorithm: Algorithm,
 ) -> SolverResult:
-    """Drive the unknown to the objective's least over ``[lower, upper]`` (31.7 / 33.25).
+    """Drive the unknown to the objective's least over ``[lower, upper]`` (31.7 / 33.6).
 
-    The shared harness behind golden-section (31.7) and Brent-parabolic (33.12):
-    ``algorithm`` selects the loop from ``MINIMISER_ENGINES`` and is echoed in the result,
-    everything around it is here. Unlike :func:`bracketed_root` and
+    The shared harness behind golden-section (31.7), Brent-parabolic (33.12) and ternary
+    (33.6): ``algorithm`` selects the loop from ``MINIMISER_ENGINES`` and is echoed in the
+    result, everything around it is here. Unlike :func:`bracketed_root` and
     :func:`tangent_root` this family serves EVERY objective, because it works on the
     folded quantity (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an
     extremum — whose least is the answer either way.
