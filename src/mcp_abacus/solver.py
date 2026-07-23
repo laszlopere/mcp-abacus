@@ -16,8 +16,9 @@ unknowns — multivariate, bounds-clamped to each bracket.
 The BRACKETERS are find-root only: rather than minimising |expr| they hunt a SIGN CHANGE
 of the raw signed expression and shrink the straddling interval. Bisection (33.1) halves
 it, Ridders (33.5) takes an exponential-fit step, Brent-Dekker (33.2) interpolates
-inverse-quadratically with a halving fallback, and Chandrupatla (33.7) admits that same
-interpolation under a sharper criterion. All four share ONE harness — `bracketed_root`,
+inverse-quadratically with a halving fallback, Chandrupatla (33.7) admits that same
+interpolation under a sharper criterion, and Secant (33.3) chases the chord through the
+last two points with a bisection safeguard. All five share ONE harness — `bracketed_root`,
 which owns the scan, the evaluation, the polish and every error path — so each engine is
 only its refinement step (`_refine_*`, registered in BRACKETED_ROOT_ENGINES). See 33.25.
 """
@@ -76,8 +77,10 @@ class Algorithm(Enum):
     inverse-quadratically with a bisection fallback — Brent's ROOT method, distinct
     from the ``BRENT_PARABOLIC`` minimiser above; ``CHANDRUPATLA`` (33.7) is the fourth,
     the same interpolation admitted by a sharper test that keeps it off multiple roots;
-    ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The enum value is the
-    string reported in the reply's ``algorithm`` field (32.3).
+    ``SECANT`` (33.3) is the plainest of the five, stepping to where the chord through the
+    last two points crosses zero, with a bisection safeguard whenever that leaves the
+    bracket; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The enum value
+    is the string reported in the reply's ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
@@ -86,6 +89,7 @@ class Algorithm(Enum):
     RIDDERS = "ridders"  # one unknown, exponential-fit on a sign-changing bracket (root only)
     BRENT_DEKKER = "brent-dekker"  # one unknown, interpolate + bisect a sign change (root only)
     CHANDRUPATLA = "chandrupatla"  # one unknown, interpolate under a sharper test (root only)
+    SECANT = "secant"  # one unknown, chord through the last two points (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -148,6 +152,8 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "zbrent": Algorithm.BRENT_DEKKER,
     "chandrupatlas": Algorithm.CHANDRUPATLA,
     "chandrupatla-method": Algorithm.CHANDRUPATLA,
+    "secant-method": Algorithm.SECANT,
+    "chord": Algorithm.SECANT,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -736,8 +742,8 @@ def brent_parabolic(
     )
 
 
-# --- The sign-change bracketers: one harness, four refinement steps (33.7 / 33.25) ---
-# Four engines find a root the same way: hunt an interval whose endpoints straddle zero
+# --- The sign-change bracketers: one harness, five refinement steps (33.7 / 33.25) ---
+# Five engines find a root the same way: hunt an interval whose endpoints straddle zero
 # (opposite signs => a root between them, by the intermediate value theorem) and shrink
 # it while keeping the straddle. Because they need a straddle they are find-root ONLY —
 # an extremum has no sign change to bracket — and because the caller's endpoints need not
@@ -750,9 +756,10 @@ def brent_parabolic(
 # scan, the polish, the error paths and the SolverResult — lives once, in
 # :func:`bracketed_root`. An engine is therefore ONLY its refinement step: a `_refine_*`
 # function that shrinks a straddling bracket, registered in BRACKETED_ROOT_ENGINES.
-# Adding a fifth bracketer is a `_refine_*` plus one registry line, with no change here
-# and none in server.py. That was the point of 33.25, which collapsed four hand-rolled
-# copies (~86 identical lines apiece) into this.
+# Adding a bracketer is a `_refine_*` plus one registry line, with no change here and none
+# in server.py. That was the point of 33.25, which collapsed four hand-rolled copies (~86
+# identical lines apiece) into this; secant (33.3) was the first engine to arrive as just
+# its ~30-line step.
 
 # The candidate evaluator a refinement step is handed: returns the SIGNED expression
 # value at x so the step can compare signs, or None where x raises a DOMAIN error (no
@@ -1024,6 +1031,89 @@ def _refine_chandrupatla(
     return iterations, timed_out
 
 
+def _refine_secant(
+    a: float,
+    b: float,
+    fa: float,
+    fb: float,
+    evaluate: _Evaluate,
+    x_tol: float,
+    deadline: float,
+) -> tuple[int, bool]:
+    """Step to where the chord through the last two points crosses zero (33.3).
+
+    The plainest superlinear root finder there is, and the one the fancier members of this
+    family fall back on: draw the straight line through the two latest iterates and take
+    its zero, ``x2 = x1 - f1·(x1 - x0)/(f1 - f0)``. That is Newton's step with the
+    derivative replaced by a finite difference over the points already paid for, so it
+    needs NO derivative and costs ONE evaluation per step — converging at order φ ≈ 1.618,
+    slower than Newton's 2 but at half the work per step.
+
+    Textbook secant keeps the last two iterates whatever their signs, which is what makes
+    it fast and also what lets it wander off — a near-flat chord throws the next point far
+    outside the interval, and the iteration can diverge or cycle. Here the harness has
+    already handed over a straddling cell, so that failure is simply fenced off: ``lo`` /
+    ``hi`` track the sign change alongside the iteration, and any step landing outside them
+    (or a degenerate ``f1 == f0`` chord with no zero to take) is replaced by a bisection of
+    the safeguard bracket. The iteration itself is untouched — the safeguard only fires
+    where plain secant would have failed, so the ~1.618 order stands on well-behaved roots.
+
+    Note what this is NOT: false position / regula falsi, which keeps whichever OLD point
+    preserves the straddle and thereby stalls to linear convergence on a convex curve. This
+    discards the older point unconditionally, and the bracket exists only as a fence.
+
+    On a SIMPLE root this is the leanest engine of the five — 4 steps on ``x**2 - 2``,
+    3 on ``sin(x)`` near pi, where Brent-Dekker needs 4 and bisection 35. The weakness is
+    the textbook one: on a REPEATED root, where f and f' vanish together, the chord's
+    slope collapses with the function and the order drops to linear (rate 1 - 1/m for
+    multiplicity m) — 81 steps on the triple root of ``x**3`` against Chandrupatla's 35,
+    and the ``_MAX_ITERATIONS`` cap on ``x**15``. Chandrupatla is the one to reach for
+    there; it detects exactly that case and bisects instead.
+
+    Two termination tests, and both are needed. The bracket width covers the safeguarded
+    path (each bisection halves it), but on the fast path the far end of the bracket may
+    never move at all — secant converging from one side pins the root to full precision
+    with ``hi`` still where the scan left it. So the chord's own step ``|x2 - x1|`` ends
+    the search once it drops below what the mode resolves, and it is tested BEFORE the
+    safeguard: the converged iterate has by then become an endpoint, so the chord aims at
+    that endpoint, fails the strictly-interior test, and would otherwise hand a solved
+    problem to ~20 bisections of the leftover interval.
+    """
+    iterations = 0
+    timed_out = False
+    lo, hi, flo = a, b, fa  # the safeguard bracket: straddles throughout
+    x0, f0 = a, fa
+    x1, f1 = b, fb
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        if f1 == 0.0 or abs(hi - lo) <= x_tol:  # exactly on the root, or bracket closed
+            break
+        # The smallest step worth taking: the mode's tolerance, widened near large |x|
+        # where a double resolves no finer than a few ULPs anyway.
+        tol1 = 2 * _FLOAT_EPS * abs(x1) + 0.5 * x_tol
+        denom = f1 - f0
+        # inf for a flat chord: no zero to step to, so the safeguard below takes over.
+        x2 = x1 - f1 * (x1 - x0) / denom if denom != 0.0 else math.inf
+        if abs(x2 - x1) <= tol1:  # the chord no longer moves — converged, x1 IS the root
+            break
+        if not lo < x2 < hi:  # the chord aimed outside the straddle (or had no zero)
+            x2 = 0.5 * (lo + hi)  # safeguard: bisect instead
+        f2 = evaluate(x2)
+        if f2 is None:  # a domain error opened up inside the bracket — stop here
+            break
+        iterations += 1
+        x0, f0 = x1, f1
+        x1, f1 = x2, f2
+        # Keep the safeguard straddling: x2 replaces whichever end shares its sign.
+        if (f2 < 0) == (flo < 0):
+            lo, flo = x2, f2
+        else:
+            hi = x2
+    return iterations, timed_out
+
+
 # Every sign-change engine this build has, by the Algorithm the caller names (32.3).
 # Membership doubles as the "is this a bracketed root finder?" test the server dispatches
 # on, so registering an engine here is all it takes to expose it.
@@ -1032,6 +1122,7 @@ BRACKETED_ROOT_ENGINES: dict[Algorithm, _RefineStep] = {
     Algorithm.RIDDERS: _refine_ridders,
     Algorithm.BRENT_DEKKER: _refine_brent_dekker,
     Algorithm.CHANDRUPATLA: _refine_chandrupatla,
+    Algorithm.SECANT: _refine_secant,
 }
 
 
@@ -1047,8 +1138,8 @@ def bracketed_root(
 ) -> SolverResult:
     """Find a root of the program by bracketing a sign change over ``[lower, upper]``.
 
-    The shared harness behind bisection (33.1), Ridders (33.5), Brent-Dekker (33.2) and
-    Chandrupatla (33.7): ``algorithm`` selects the refinement step from
+    The shared harness behind bisection (33.1), Ridders (33.5), Brent-Dekker (33.2),
+    Chandrupatla (33.7) and secant (33.3): ``algorithm`` selects the refinement step from
     ``BRACKETED_ROOT_ENGINES`` and is echoed in the result, everything around it is here
     (33.25). The counterpart to :func:`search` / :func:`brent_parabolic`: instead of
     minimising the folded ``|expr|`` it works on the RAW signed expression, hunting an

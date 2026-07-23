@@ -806,9 +806,10 @@ def solver(
             description=(
                 "Search engine: 'golden-section-search' (default, single-variable), "
                 "'brent-parabolic' (single-variable), 'bisection', 'ridders', "
-                "'brent-dekker' or 'chandrupatla' (single-variable, find-root only — "
-                "bracket a sign change; the last three converge faster than bisection, "
-                "and chandrupatla stays fastest on a repeated root), or 'nelder-mead' "
+                "'brent-dekker', 'chandrupatla' or 'secant' (single-variable, find-root "
+                "only — bracket a sign change; the last four converge faster than "
+                "bisection, secant being the leanest on a simple root and chandrupatla "
+                "the fastest on a repeated one), or 'nelder-mead' "
                 "(required for the `variables` form)."
             )
         ),
@@ -868,18 +869,20 @@ def solver(
     `algorithm` (optional) names the search engine — "golden-section-search" (the
     default, single-variable), "brent-parabolic" (single-variable too, parabolic
     interpolation with a golden-section fallback — usually faster on smooth extrema),
-    "bisection", "ridders", "brent-dekker" or "chandrupatla" (single-variable, find-root
-    ONLY — all four bracket a sign change and need not have straddling endpoints, since
-    they scan the bracket for one; bisection halves the bracket, ridders takes a faster
-    exponential-fit step, brent-dekker interpolates inverse-quadratically with a
-    bisection fallback — the usual library default for a bracketed root — and
+    "bisection", "ridders", "brent-dekker", "chandrupatla" or "secant" (single-variable,
+    find-root ONLY — all five bracket a sign change and need not have straddling
+    endpoints, since they scan the bracket for one; bisection halves the bracket, ridders
+    takes a faster exponential-fit step, brent-dekker interpolates inverse-quadratically
+    with a bisection fallback — the usual library default for a bracketed root —
     chandrupatla admits that same interpolation under a sharper test, which keeps it at
-    bisection's speed on a repeated root where brent-dekker slows to about a third of
-    it), or "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The six
-    single-variable engines solve only the SINGLE form; the `variables` form requires
-    "nelder-mead". (`golden`, `brent`, `bisect`, `ridder`, `brent-root`, `simplex` and a
-    few other spellings are accepted too — note bare `brent` names the PARABOLIC
-    MINIMISER, while Brent's root method is `brent-dekker`.)
+    bisection's speed on a repeated root where brent-dekker slows to about a third of it,
+    and secant simply chases the chord through the last two points: the leanest of the
+    five on a simple root, but the slowest on a repeated one), or "nelder-mead"
+    (multivariate, a bounds-clamped downhill simplex). The seven single-variable engines
+    solve only the SINGLE form; the `variables` form requires "nelder-mead". (`golden`,
+    `brent`, `bisect`, `ridder`, `brent-root`, `simplex` and a few other spellings are
+    accepted too — note bare `brent` names the PARABOLIC MINIMISER, while Brent's root
+    method is `brent-dekker`.)
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
     in that numeric type and the found value is reported in it — with ONE solver-only
@@ -957,7 +960,7 @@ def solver(
             result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
         elif resolved_algorithm in BRACKETED_ROOT_ENGINES:
             # A single-variable sign-change root finder — bisection, ridders,
-            # brent-dekker or chandrupatla. One harness serves them all (33.25), picking
+            # brent-dekker, chandrupatla or secant. One harness serves them all (33.25), picking
             # the refinement step by algorithm, so a new bracketer needs no branch here.
             # _resolve_unknowns guaranteed exactly one unknown.
             name, lo, hi = unknowns[0]

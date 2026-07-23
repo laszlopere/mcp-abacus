@@ -1278,6 +1278,285 @@ def test_chandrupatla_solves_keplers_equation():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+# --- Secant: the chord through the last two points (33.3) ---------------------
+# The fifth engine on the sign-change bracket and the plainest of them: no interpolation,
+# no criterion — just the zero of the straight line through the two latest iterates,
+# x2 = x1 - f1*(x1 - x0)/(f1 - f0). Newton's step with a finite difference in place of the
+# derivative, so one evaluation per step and order ~1.618. Textbook secant can wander out
+# of the interval; here lo/hi track the sign change and any escaping step is replaced by a
+# bisection of that safeguard bracket, which costs nothing when the chord behaves.
+
+
+def test_secant_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the secant method (endpoints straddle\n"
+        "zero: f(0) = -2, f(2) = 2); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "secant"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    assert payload["iterations"] > 0
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_secant_converges_in_few_iterations():
+    # Order ~1.618 on a smooth simple root, so a handful of steps rather than the ~35
+    # bisection's halving would take.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via secant; converges in a few steps\n"
+        "(the chord through the last two points is superlinear on a smooth root)",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    assert payload["error"] is None
+    assert payload["iterations"] <= 10
+
+
+def test_secant_beats_chandrupatla_on_a_simple_root():
+    # The trade 33.3 buys, one side of it: on a smooth simple root the bare chord needs
+    # FEWER evaluations than the interpolators, because it spends none of them on the
+    # third point their fit requires.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] — a smooth SIMPLE root, where the plain\n"
+        "chord is the leanest step of the family: fewer evaluations than Chandrupatla",
+        "x**2 - 2",
+    )
+    secant = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    chand = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert secant["error"] is None and chand["error"] is None
+    assert _num(secant["solution"]) == pytest.approx(2**0.5, abs=1e-9)
+    assert secant["iterations"] < chand["iterations"]
+
+
+def test_secant_loses_to_chandrupatla_on_a_repeated_root():
+    # The other side of the trade, pinned so the docstring's warning cannot rot: on the
+    # triple root of x**3 the chord's slope collapses with the function and convergence
+    # drops to linear, while Chandrupatla detects the case and runs at bisection's rate.
+    program = _annotated(
+        "find-root of x**3 over [-1, 2] — a TRIPLE root at x = 0. The chord's slope\n"
+        "vanishes with the function, so secant degrades to linear convergence and needs\n"
+        "far more steps than Chandrupatla, which bisects instead",
+        "x**3",
+    )
+    secant = _solve(program, variable="x", lower=-1, upper=2, algorithm="secant")
+    chand = _solve(program, variable="x", lower=-1, upper=2, algorithm="chandrupatla")
+    assert secant["error"] is None and chand["error"] is None
+    # Slower, but never less accurate — both still land the root exactly.
+    assert _num(secant["solution"]) == 0.0
+    assert _num(chand["solution"]) == 0.0
+    assert secant["iterations"] > chand["iterations"]
+
+
+def test_secant_safeguard_keeps_the_chord_inside_the_bracket():
+    # Why the fence exists. ln(x) + 5 has its root at e**-5 ~ 0.006738, hard against the
+    # log's vertical asymptote: the chord across that cell aims WELL left of the bracket
+    # (unfenced, the second step lands at x ~ -0.22, where the log has no real value and
+    # the search dies with no solution). The safeguard replaces exactly those steps with a
+    # bisection, so the root is still found.
+    program = _annotated(
+        "find-root of ln(x) + 5 over [0.0001, 10] via secant; the root e**-5 ~ 0.006738\n"
+        "sits against the log's asymptote, so the chord repeatedly aims outside the\n"
+        "bracket — the bisection safeguard catches every such step",
+        "ln(x) + 5",
+    )
+    payload = _solve(program, variable="x", lower=0.0001, upper=10, algorithm="secant")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(math.exp(-5), rel=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_secant_scans_when_endpoints_share_a_sign():
+    # Like the rest of the family, secant scans for the sign change, so same-sign
+    # endpoints (here f(-2) = f(2) = 2) are no obstacle: it brackets the leftmost root.
+    program = _annotated(
+        "find-root of x**2 - 2 over [-2, 2] via secant; both endpoints are +2,\n"
+        "so the scan hunts the sign change. Leftmost root is x = -sqrt(2) ~ -1.41421",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="secant")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(-(2**0.5), abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_secant_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies here exactly as to the rest of the family: the
+    # refined estimate lands within one grid step of x = 1.5, and the neighbour probes pin
+    # it to an EXACT zero on the grid.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via secant in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        mode="fixed-point",
+        floor=1,
+        algorithm="secant",
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_secant_reports_no_sign_change():
+    # x**2 + 1 never crosses zero, so the scan finds no sign-changing cell: the distinct
+    # "no sign change" error, naming the engine and pointing at the alternatives.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via secant\n"
+        "never crosses zero, so there is no sign change to bracket",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="secant")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No sign change" in payload["error"]
+    assert "secant" in payload["error"]
+    assert "find-minimum" in payload["error"]
+
+
+def test_secant_rejects_a_non_root_objective():
+    # It needs a straddle to fence the chord, which only locates a ROOT; find-minimum is
+    # refused with a pointer to the engines that do minimise.
+    program = _annotated(
+        "secant asked to find-minimum — refused, it only finds roots\n"
+        "(an extremum has no sign change to bracket)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="secant",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "brent-parabolic" in payload["error"]
+
+
+def test_secant_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "secant asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="secant")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_secant_skips_domain_failures_in_the_scan():
+    # The left half raises a domain error (sqrt of a negative); those cells carry no
+    # signed value and are skipped, yet the crossing at x = 1 is still bracketed.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via secant (the bracket dips below 0)\n"
+        "the negative side has no real value and is skipped; expect x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="secant")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_secant_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails everywhere and must
+    # surface as a line-tagged eval error, not be mistaken for a domain gap to skip.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via secant; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_secant_root_snaps_to_an_integer():
+    # The float snap polish applies here too: a crossing a few ULPs off a clean integer
+    # is re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via secant in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="secant")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "secant"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_secant_takes_a_root_sitting_on_a_scan_node():
+    # x = 1 is exactly a scan node of [0, 2], so the cell before it straddles with an
+    # endpoint value of precisely zero — which IS the moving end here. The f1 == 0 test
+    # sees it before any chord is drawn, so the search ends without a single step.
+    program = _annotated(
+        "find-root of x - 1 over [0, 2] via secant; x = 1 lands exactly on a scan node,\n"
+        "so the zero residual is already in hand and no chord is ever drawn",
+        "x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 1.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] == 0
+
+
+def test_secant_handles_a_zero_width_bracket():
+    # The truly degenerate case: the root IS the first scan node, so the scan hands the
+    # loop a == b — a zero-width bracket, which the width test recognises immediately
+    # rather than dividing by a chord through one repeated point.
+    program = _annotated(
+        "find-root of x over [0, 2] via secant; the root x = 0 is the FIRST scan node,\n"
+        "so the bracket handed to the loop has zero width — it must stop, not divide",
+        "x",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="secant")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 0.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] == 0
+
+
+def test_secant_alias_resolves_to_canonical():
+    # The `chord` spelling — the other textbook name for the step — resolves to the
+    # canonical engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `chord` alias\n"
+        "the reply reports the canonical 'secant'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chord")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "secant"
+
+
+def test_secant_solves_keplers_equation():
+    # The transcendental-root benchmark via secant: smooth and monotone in [0, pi], so
+    # the chord tracks the curve closely and the eccentric anomaly falls out in a few steps.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via secant\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="secant")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "secant"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for

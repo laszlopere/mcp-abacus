@@ -118,6 +118,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("brent-parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("chandrupatla") is Algorithm.CHANDRUPATLA
+    assert resolve_algorithm("secant") is Algorithm.SECANT
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
 
 
@@ -146,6 +147,12 @@ def test_chandrupatla_aliases_resolve():
     # 33.7: the possessive and -method spellings of an awkward-to-type name.
     assert resolve_algorithm("chandrupatlas") is Algorithm.CHANDRUPATLA
     assert resolve_algorithm("chandrupatla-method") is Algorithm.CHANDRUPATLA
+
+
+def test_secant_aliases_resolve():
+    # 33.3: the -method spelling, and `chord` — the other textbook name for the same step.
+    assert resolve_algorithm("secant-method") is Algorithm.SECANT
+    assert resolve_algorithm("chord") is Algorithm.SECANT
 
 
 def test_unknown_algorithm_lists_the_valid_algorithms():
