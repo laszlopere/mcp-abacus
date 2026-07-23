@@ -1863,6 +1863,199 @@ def test_newton_solves_keplers_equation():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+# --- Halley: Newton's step with the curvature in it (33.8) --------------------
+# The second tangent engine, sharing every part of Newton's harness but the step: where
+# Newton fits the curve by its tangent LINE, Halley fits a hyperbola matching the value,
+# the slope and the curvature, x - 2ff'/(2f'**2 - ff''). One order up (the error is cubed
+# each step, not squared) for exactly the same five program evaluations, because both
+# derivatives come out of the SAME five-point stencil. The curvature term is trusted only
+# while it keeps the denominator at half of 2f'**2 or better; outside that it takes
+# Newton's step, so Halley is never much worse than the engine it extends.
+
+
+def test_halley_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Halley (Newton's tangent step with the\n"
+        "curvature added); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="halley")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "halley"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_halley_beats_newton_on_a_smooth_root():
+    # The trade 33.8 buys: cubic against quadratic convergence, for the same number of
+    # program evaluations per step (the curvature is differenced from samples Newton
+    # already pays for). So on a smooth root it is strictly the better step.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] — Halley's cubic step against Newton's\n"
+        "quadratic one: the same five evaluations per step, fewer steps",
+        "x**2 - 2",
+    )
+    halley = _solve(program, variable="x", lower=0, upper=2, algorithm="halley")
+    newton = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-raphson")
+    assert halley["error"] is None and newton["error"] is None
+    assert _num(halley["solution"]) == pytest.approx(2**0.5, abs=1e-9)
+    assert halley["iterations"] < newton["iterations"]
+
+
+def test_halley_matches_newton_where_the_curve_is_straight():
+    # The other end of the same statement: Halley's step is Newton's scaled by the
+    # curvature factor 1/(1 - f*f''/(2*f'**2)), so on a LINEAR expression (f'' = 0) the
+    # factor is exactly 1 and the two engines are the same iteration, step for step.
+    program = _annotated(
+        "find-root of 3*x - 7 over [0, 8]: a straight line, so there is no curvature for\n"
+        "Halley to add — it must take Newton's step exactly, and land the same 7/3",
+        "3*x - 7",
+    )
+    halley = _solve(program, variable="x", lower=0, upper=8, algorithm="halley")
+    newton = _solve(program, variable="x", lower=0, upper=8, algorithm="newton-raphson")
+    assert halley["error"] is None and newton["error"] is None
+    assert _num(halley["solution"]) == _num(newton["solution"]) == pytest.approx(7 / 3, abs=1e-9)
+    assert halley["iterations"] == newton["iterations"]
+
+
+def test_halley_falls_back_to_newtons_step_at_an_asymptote():
+    # REGRESSION on the safeguard's SIGN test. ln(x) + 5 has its root at e**-5 ~ 0.006738,
+    # hard against the log's vertical asymptote, where the curvature is enormous: f*f''
+    # overwhelms 2*f'**2 and turns the Halley denominator NEGATIVE, which would reverse the
+    # step and walk the iteration out of the bracket (an unguarded version fails here while
+    # Newton succeeds). Requiring the denominator to keep at least half of 2*f'**2 — a
+    # signed test, not a magnitude one — falls back to the Newton step exactly there.
+    program = _annotated(
+        "find-root of ln(x) + 5 over [0.0001, 10] via Halley; at the log's asymptote the\n"
+        "curvature term flips the step's sign, so the safeguard falls back to Newton's\n"
+        "step and the root e**-5 ~ 0.006738 is still found",
+        "ln(x) + 5",
+    )
+    payload = _solve(program, variable="x", lower=0.0001, upper=10, algorithm="halley")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(math.exp(-5), rel=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_halley_finds_a_root_the_bracketers_refuse():
+    # The tangent family's shared payoff, on the second engine: (x - pi)**2 only TOUCHES
+    # zero, so no sign change exists to bracket, but a derivative step walks straight down
+    # to it. (Irrational root on purpose — see the Newton twin of this test.)
+    program = _annotated(
+        "find-root of (x - pi)**2 over [0, 5] via Halley: a DOUBLE root at x = pi that\n"
+        "only touches zero. No sign change exists, and the bracketed engines refuse it",
+        "(x - pi)**2",
+    )
+    halley = _solve(program, variable="x", lower=0, upper=5, algorithm="halley")
+    brent = _solve(program, variable="x", lower=0, upper=5, algorithm="brent-dekker")
+    assert halley["error"] is None
+    assert _num(halley["solution"]) == pytest.approx(math.pi, abs=1e-6)
+    assert abs(_num(halley["value"])) < 1e-6
+    assert brent["solution"] is None
+    assert "No sign change" in brent["error"]
+
+
+def test_halley_finds_an_exact_root_on_the_fixed_point_grid():
+    # The grid polish applies to this engine as to every other single-unknown one.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via Halley in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        mode="fixed-point",
+        floor=1,
+        algorithm="halley",
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_halley_reports_a_flat_tangent():
+    # The shared stop of the tangent family: x**2 + 1 never reaches zero and its least
+    # |expr| is the vertex at x = 0, where the slope is zero. Halley's own denominator is
+    # not what fails — a zero f' leaves no step for either engine — so the same named
+    # outcome is reported.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via Halley; it never reaches zero, and the\n"
+        "seed lands on the flat vertex — a horizontal tangent, nowhere to step",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="halley")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No solution" in payload["error"]
+    assert "tangent went flat" in payload["error"]
+    assert "bisection" in payload["error"]
+
+
+def test_halley_rejects_a_non_root_objective():
+    # A derivative step locates a ZERO, not an extremum — refused, like its Newton sibling.
+    program = _annotated(
+        "Halley asked to find-minimum — refused, it only finds roots\n"
+        "(the step crosses zero; an extremum is another question)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="halley",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "brent-parabolic" in payload["error"]
+
+
+def test_halley_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "Halley asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="halley")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_halley_alias_resolves_to_canonical():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `halleys-method` alias\n"
+        "the reply reports the canonical 'halley'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="halleys-method")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "halley"
+
+
+def test_halley_solves_keplers_equation():
+    # The transcendental-root benchmark on the fastest engine here: smooth and monotone in
+    # [0, pi], so the cubic step lands the eccentric anomaly in a couple of iterations.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via Halley\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="halley")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "halley"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for

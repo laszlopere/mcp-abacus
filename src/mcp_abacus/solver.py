@@ -22,12 +22,16 @@ last two points with a bisection safeguard. All five share ONE harness — `brac
 which owns the scan, the evaluation, the polish and every error path — so each engine is
 only its refinement step (`_refine_*`, registered in BRACKETED_ROOT_ENGINES). See 33.25.
 
-Newton-Raphson (33.4) is find-root only like them but belongs to NEITHER family: it holds
-no bracket at all, following the expression's own slope from a single seed point —
-`x - f(x)/f'(x)`, with f' differenced from the same five-point stencil the language's
-`diff` uses (40.17). That buys a root a sign change cannot bracket (an even-multiplicity
-one that only touches zero) at the price of a method that can wander, so the bracket the
-caller gives becomes a fence rather than a straddle.
+The TANGENT engines — Newton-Raphson (33.4) and Halley (33.8) — are find-root only like
+the bracketers but belong to NEITHER family: they hold no bracket at all, following the
+expression's own derivatives from a single seed point. Newton steps along the tangent line
+(`x - f/f'`), Halley along a tangent hyperbola that carries the curvature as well
+(`x - 2ff'/(2f'^2 - ff'')`), both differenced from the same five-point stencil the
+language's `diff` uses (40.17) — one set of samples, so Halley's higher order is free.
+That buys a root a sign change cannot bracket (an even-multiplicity one that only touches
+zero) at the price of a method that can wander, so the bracket the caller gives becomes a
+fence rather than a straddle. They too share ONE harness (`tangent_root`), each engine
+being only its step function (`_step_*`, registered in TANGENT_ROOT_ENGINES).
 """
 
 import math
@@ -87,10 +91,12 @@ class Algorithm(Enum):
     the same interpolation admitted by a sharper test that keeps it off multiple roots;
     ``SECANT`` (33.3) is the plainest of the five, stepping to where the chord through the
     last two points crosses zero, with a bisection safeguard whenever that leaves the
-    bracket; ``NEWTON_RAPHSON`` (33.4) is the one root finder that needs NO sign change —
-    it follows the expression's own slope (a finite-difference tangent) to zero from a
-    single seed point; ``NELDER_MEAD`` is the multivariate downhill simplex (33.14). The
-    enum value is the string reported in the reply's ``algorithm`` field (32.3).
+    bracket; ``NEWTON_RAPHSON`` (33.4) and ``HALLEY`` (33.8) are the root finders that need
+    NO sign change — they follow the expression's own derivatives to zero from a single seed
+    point, Newton along the tangent LINE and Halley along a tangent hyperbola carrying the
+    curvature too (cubic convergence, for the same evaluation budget); ``NELDER_MEAD`` is
+    the multivariate downhill simplex (33.14). The enum value is the string reported in the
+    reply's ``algorithm`` field (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
@@ -101,6 +107,7 @@ class Algorithm(Enum):
     CHANDRUPATLA = "chandrupatla"  # one unknown, interpolate under a sharper test (root only)
     SECANT = "secant"  # one unknown, chord through the last two points (root only)
     NEWTON_RAPHSON = "newton-raphson"  # one unknown, follow the tangent to zero (root only)
+    HALLEY = "halley"  # one unknown, tangent hyperbola — Newton plus curvature (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
 
 
@@ -173,6 +180,9 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "newtons-method": Algorithm.NEWTON_RAPHSON,
     "newton raphson": Algorithm.NEWTON_RAPHSON,
     "raphson": Algorithm.NEWTON_RAPHSON,
+    "halleys": Algorithm.HALLEY,
+    "halley-method": Algorithm.HALLEY,
+    "halleys-method": Algorithm.HALLEY,
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
@@ -291,10 +301,11 @@ def autodetect_variable(node: Node) -> str:
 # The BRACKETERS — bisection (33.1), Ridders (33.5), Brent-Dekker (33.2), Chandrupatla
 # (33.7) and secant (33.3) — do NOT minimise: they bracket a SIGN CHANGE of the raw signed
 # expression, so all five are find-root only. They share one harness (`bracketed_root`,
-# 33.25) and differ only in their refinement step. Newton-Raphson (33.4) is find-root only
-# too but holds no bracket at all — it follows a finite-difference TANGENT from a seed
-# point, fenced into the caller's interval. The reply names which ran (Algorithm, 32.3) so
-# the engines are distinguishable.
+# 33.25) and differ only in their refinement step. The TANGENT engines — Newton-Raphson
+# (33.4) and Halley (33.8) — are find-root only too but hold no bracket at all: they follow
+# finite-difference DERIVATIVES from a seed point, fenced into the caller's interval, and
+# share a harness of their own (`tangent_root`). The reply names which ran (Algorithm, 32.3)
+# so the engines are distinguishable.
 
 _INV_PHI = (5**0.5 - 1) / 2  # 0.618..., 1/golden-ratio — the interval shrink factor
 _GOLDEN = (3 - 5**0.5) / 2  # 0.382..., the complementary golden fraction — Brent's
@@ -1291,29 +1302,92 @@ def bracketed_root(
     )
 
 
-# --- Newton-Raphson: follow the tangent to zero (33.4) ------------------------
-# The third engine shape, and the only root finder here that holds no bracket: from a
-# single point it takes the tangent to the curve and steps to where that line crosses
-# zero, x <- x - f(x)/f'(x), doubling the correct digits each step on a simple root.
+# --- The tangent engines: one harness, two derivative steps (33.4 / 33.8) -----
+# The third engine shape, and the only root finders here that hold no bracket: from a
+# single point they take a local polynomial fit of the curve and step to where THAT crosses
+# zero. Newton-Raphson (33.4) fits the tangent line, x <- x - f/f'; Halley (33.8) fits a
+# hyperbola through the same point using the curvature as well, x <- x - 2ff'/(2f'^2 - ff'').
 #
-# The derivative is NOT symbolic — nothing in this build differentiates an AST. It is the
-# four-sample five-point central difference the language's own `diff` (40.17) uses, at the
-# same per-mode step h (`finite_difference_step`), so the two cannot drift apart: the
-# stencil is 4th-order (exact through quartics) and h tracks the active mode's working
-# precision, which is what keeps a fixed-point difference from cancelling itself away.
+# The derivatives are NOT symbolic — nothing in this build differentiates an AST. They come
+# from the five-point central stencil the language's own `diff` (40.17) uses, at the same
+# per-mode step h (`finite_difference_step`), so the two cannot drift apart: the stencil is
+# 4th-order (exact through quartics) and h tracks the active mode's working precision, which
+# is what keeps a fixed-point difference from cancelling itself away. The SAME five samples
+# (the point, x+-h, x+-2h) yield both f' and f'', so Halley's extra derivative is free —
+# cubic convergence for exactly the evaluation budget Newton's quadratic costs.
 #
-# Two consequences worth naming. It costs FIVE program evaluations per step (the point
-# plus the four stencil samples) where bisection costs one, so "fewer iterations" is not
-# automatically "less work" — it wins when the quadratic convergence outruns that factor,
-# which on a smooth simple root it does comfortably. And it needs no sign change, so it
-# reaches an even-multiplicity root that the whole bracketed family refuses (converging
-# linearly there, as Newton always does on a repeated root).
-_NEWTON_SEED_CELLS = _SCAN_CELLS  # the seed is the best of the same coarse scan the
-# bracketers run — see newton_raphson's docstring for why an unbracketed method still
+# Two consequences worth naming. A step costs FIVE program evaluations (the point plus the
+# four stencil samples) where bisection costs one, so "fewer iterations" is not automatically
+# "less work" — it wins when the convergence order outruns that factor, which on a smooth
+# simple root it does comfortably. And no sign change is required, so these reach an
+# even-multiplicity root that the whole bracketed family refuses (converging linearly there,
+# as every derivative method does on a repeated root).
+#
+# Everything but the step — the objective guard, the evaluation and best-tracking, the seed
+# scan, the derivative stencil, the fence, the polish, the error paths and the SolverResult —
+# lives once, in :func:`tangent_root`. An engine is therefore ONLY its step function,
+# registered in TANGENT_ROOT_ENGINES; the same split 33.25 made for the bracketers.
+_TANGENT_SEED_CELLS = _SCAN_CELLS  # the seed is the best of the same coarse scan the
+# bracketers run — see tangent_root's docstring for why an unbracketed method still
 # starts from a scan of the caller's interval.
 
+# A step: given the expression value and its first two derivatives at the current point,
+# return the DISTANCE to move back toward the root (the iteration takes x - step). It may
+# assume ``d1`` is non-zero — the harness stops on a flat tangent before ever calling it —
+# so a step function never divides by zero and never fails.
+_TangentStep = Callable[[float, float, float], float]
 
-def newton_raphson(
+
+def _step_newton(fx: float, d1: float, d2: float) -> float:
+    """Newton's step: the tangent line's own zero, ``f / f'`` (33.4).
+
+    Fit the curve at the current point by its TANGENT and go to where that line crosses
+    zero. The error is squared each step (quadratic convergence) on a smooth simple root, so
+    the correct digits double. ``d2`` is unused: a straight line has no curvature to carry —
+    that is exactly what :func:`_step_halley` adds.
+    """
+    return fx / d1
+
+
+def _step_halley(fx: float, d1: float, d2: float) -> float:
+    """Halley's step: the tangent HYPERBOLA's zero, ``2ff' / (2f'^2 - ff'')`` (33.8).
+
+    One order up from Newton for the same five evaluations. Newton's line ignores that the
+    curve bends away from it; Halley fits a hyperbola matching the value, the slope AND the
+    curvature, which lands nearer the root — the error is CUBED each step rather than
+    squared. Equivalently it is Newton's step scaled by ``1 / (1 - f·f''/(2f'^2))``, the
+    curvature correction; where the curve is locally straight (``f'' = 0``) the factor is 1
+    and the two engines coincide exactly.
+
+    The correction is trusted only while it stays a correction. ``2f'^2 - f·f''`` starts at
+    ``2f'^2`` and the curvature term can shrink it to zero, or drive it NEGATIVE — far from
+    the root, or when a low-precision fixed-point grid leaves the differenced ``f''`` mostly
+    noise. A vanishing denominator explodes the step; a negative one reverses it, sending
+    the iteration away from the root. So the step is taken only while the denominator keeps
+    at least HALF of the ``2f'^2`` it started from (``>= f'^2``, a signed test that rules out
+    both), which bounds the Halley step at twice Newton's and never flips its direction;
+    outside that region it falls back to Newton's step. Same "trust the fancy step only
+    inside its safe region" fence Brent-Dekker puts around its interpolation — it is what
+    keeps Halley from failing where Newton walks in, as on a root pinned against a log's
+    asymptote. Halley therefore never does much worse than Newton, and the harness's
+    flat-tangent stop (``f' = 0``) remains the only way either engine runs out of step.
+    """
+    denominator = 2.0 * d1 * d1 - fx * d2
+    if denominator < d1 * d1:  # the curvature term has eaten half the denominator, or
+        return fx / d1  # turned it over — either way it is no longer a correction
+    return 2.0 * fx * d1 / denominator
+
+
+# Every derivative-driven engine this build has, by the Algorithm the caller names (32.3).
+# Membership doubles as the "is this a tangent root finder?" test the server dispatches on,
+# so registering an engine here is all it takes to expose it.
+TANGENT_ROOT_ENGINES: dict[Algorithm, _TangentStep] = {
+    Algorithm.NEWTON_RAPHSON: _step_newton,
+    Algorithm.HALLEY: _step_halley,
+}
+
+
+def tangent_root(
     node: Node,
     variable: str,
     lower: float,
@@ -1321,38 +1395,45 @@ def newton_raphson(
     mode: Mode,
     floor: int,
     objective: Objective,
+    algorithm: Algorithm,
 ) -> SolverResult:
-    """Newton-Raphson: step along the tangent to a root of the program (33.4).
+    """Find a root by stepping along the program's own derivatives (33.4 / 33.8).
 
-    Find-root only (the tangent construction locates a zero, not an extremum) but, unlike
-    :func:`bracketed_root`'s five engines, it brackets NOTHING: it iterates
-    ``x <- x - f(x)/f'(x)`` from one seed point, converging quadratically on a smooth
-    simple root — a handful of steps where bisection needs ~35. The slope is a numerical
-    derivative, the five-point central difference of the language's ``diff`` (40.17) at the
-    shared per-mode step ``h`` (``finite_difference_step``):
-    ``f'(x) ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h)``. So each step costs five
-    program evaluations, not one — the trade for the convergence rate.
+    The shared harness behind Newton-Raphson (33.4) and Halley (33.8): ``algorithm`` selects
+    the step from ``TANGENT_ROOT_ENGINES`` and is echoed in the result, everything else is
+    here. Find-root only (a derivative step locates a zero, not an extremum) but, unlike
+    :func:`bracketed_root`'s five engines, it brackets NOTHING: it iterates from one seed
+    point, converging quadratically (Newton) or cubically (Halley) on a smooth simple root —
+    a handful of steps where bisection needs ~35.
 
-    THE SEED. Newton wants a starting guess; this tool's API gives a bracket. The engine
-    takes the best of a coarse scan over ``[lower, upper]`` (``_NEWTON_SEED_CELLS`` cells) —
-    the point of least ``|expr|`` — which is the same scan the bracketers pay for, spent on
-    a different question (they want the first SIGN CHANGE, this wants the closest approach).
-    That makes the seed as good as the interval allows and keeps the engine honest on a
-    bracket whose endpoints say nothing useful. ``iterations`` counts Newton steps only,
-    as with every other engine.
+    THE DERIVATIVES. Numerical, from the five-point central stencil of the language's
+    ``diff`` (40.17) at the shared per-mode step ``h`` (``finite_difference_step``):
+    ``f'(x) ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h)`` and
+    ``f''(x) ~ (-f(x-2h) + 16f(x-h) - 30f(x) + 16f(x+h) - f(x+2h)) / (12h^2)``, both 4th
+    order. They share their samples, so a step costs five program evaluations whichever
+    engine is running — Halley's higher order is free.
 
-    THE FENCE. Textbook Newton can leap anywhere — a near-flat tangent throws the next
-    point far away, and the iteration may diverge or cycle. Here ``[lower, upper]`` is a
-    fence rather than a straddle: every step is clamped back into it, and a step clamped
-    onto the point it started from ends the iteration (it is trying to leave the region the
-    caller asked about). A tangent that goes exactly flat, or a stencil sample that leaves
-    the expression's domain, ends it too — with the best point seen so far intact, since
-    every evaluation feeds the same best-tracking the other engines use.
+    THE SEED. A derivative method wants a starting guess; this tool's API gives a bracket.
+    The engine takes the best of a coarse scan over ``[lower, upper]``
+    (``_TANGENT_SEED_CELLS`` cells) — the point of least ``|expr|`` — which is the same scan
+    the bracketers pay for, spent on a different question (they want the first SIGN CHANGE,
+    this wants the closest approach). That makes the seed as good as the interval allows and
+    keeps the engine honest on a bracket whose endpoints say nothing useful. ``iterations``
+    counts steps only, as with every other engine.
 
-    WHAT IT BUYS. No sign change is required, so this is the one root engine that reaches
-    an even-multiplicity root — ``(x - 2)**2``, which only touches zero — where the whole
-    bracketed family reports "no sign change". Convergence there is linear, not quadratic
-    (f and f' vanish together), which is the classic Newton behaviour on a repeated root.
+    THE FENCE. Textbook Newton can leap anywhere — a near-flat tangent throws the next point
+    far away, and the iteration may diverge or cycle. Here ``[lower, upper]`` is a fence
+    rather than a straddle: every step is clamped back into it, and a step clamped onto the
+    point it started from ends the iteration (it is trying to leave the region the caller
+    asked about). A tangent that goes exactly flat, or a stencil sample that leaves the
+    expression's domain, ends it too — with the best point seen so far intact, since every
+    evaluation feeds the same best-tracking the other engines use.
+
+    WHAT IT BUYS. No sign change is required, so these are the root engines that reach an
+    even-multiplicity root — ``(x - pi)**2``, which only touches zero — where the whole
+    bracketed family reports "no sign change". Convergence there is linear rather than
+    quadratic/cubic (f and f' vanish together), the classic behaviour of a derivative method
+    on a repeated root.
 
     The 2-second wall-clock and ``_MAX_ITERATIONS`` caps bound it exactly as elsewhere, and
     the same grid / float-snap polish (:func:`_polish_best`) lands a representable root
@@ -1362,11 +1443,12 @@ def newton_raphson(
     """
     if objective is not Objective.FIND_ROOT:
         raise SolverError(
-            f"The {Algorithm.NEWTON_RAPHSON.value} algorithm only finds roots (it steps "
-            f"along the tangent to where the expression crosses zero), so objective "
+            f"The {algorithm.value} algorithm only finds roots (it steps along the "
+            f"expression's own derivatives to where it crosses zero), so objective "
             f"{objective.value!r} is not supported. Use golden-section or brent-parabolic "
             f"with that objective for an extremum."
         )
+    step_from = TANGENT_ROOT_ENGINES[algorithm]
     scale = _search_scale(node, mode, floor)
     x_tol, residual_tol = _tolerances(mode, scale)
     deadline = time.monotonic() + _TIME_LIMIT_SECONDS
@@ -1378,7 +1460,7 @@ def newton_raphson(
     best_value: Value | None = None
 
     def evaluate_objective(x: float, *, accept_ties: bool = False) -> float | None:
-        # The signed expression value at x — Newton needs the sign and magnitude both, and
+        # The signed expression value at x — the step needs the sign and magnitude both, and
         # the stencil differences these — or None where x raises a DOMAIN error. Tracks the
         # best |expr| seen as a side effect, exactly as in :func:`bracketed_root`.
         nonlocal best_obj, best_solution, best_value
@@ -1397,26 +1479,31 @@ def newton_raphson(
             best_obj, best_solution, best_value = obj, candidate, raw
         return signed
 
-    def slope(x: float) -> float | None:
-        # diff's stencil (40.17), differenced in float from four mode-faithful samples:
-        # f'(x) ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h). None when any sample
-        # leaves the expression's domain — there is no tangent to follow from there.
+    def derivatives(x: float, fx: float) -> tuple[float, float] | None:
+        # diff's stencil (40.17) in float, from four mode-faithful samples plus the value
+        # the loop already holds — BOTH derivatives out of the same five points:
+        #   f'  ~ (f(x-2h) - f(x+2h) + 8*(f(x+h) - f(x-h))) / (12h)
+        #   f'' ~ (-f(x-2h) + 16f(x-h) - 30f(x) + 16f(x+h) - f(x+2h)) / (12h^2)
+        # so Halley's curvature costs no evaluation Newton does not already spend. None when
+        # any sample leaves the expression's domain — no local fit to step along from there.
         fm2 = evaluate_objective(x - 2 * h)
         fm1 = evaluate_objective(x - h)
         fp1 = evaluate_objective(x + h)
         fp2 = evaluate_objective(x + 2 * h)
         if fm2 is None or fm1 is None or fp1 is None or fp2 is None:
             return None
-        return (fm2 - fp2 + 8 * (fp1 - fm1)) / (12 * h)
+        first = (fm2 - fp2 + 8 * (fp1 - fm1)) / (12 * h)
+        second = (-fm2 + 16 * fm1 - 30 * fx + 16 * fp1 - fp2) / (12 * h * h)
+        return first, second
 
     # Seed: the coarse scan's point of least |expr|, which best-tracking already records.
     timed_out = False
     width = upper - lower
-    for k in range(_NEWTON_SEED_CELLS + 1):
+    for k in range(_TANGENT_SEED_CELLS + 1):
         if time.monotonic() >= deadline:
             timed_out = True
             break
-        evaluate_objective(lower + width * k / _NEWTON_SEED_CELLS)
+        evaluate_objective(lower + width * k / _TANGENT_SEED_CELLS)
 
     iterations = 0
     went_flat = False  # the tangent had no slope to follow — a distinct way to stop
@@ -1431,15 +1518,16 @@ def newton_raphson(
                 break  # a domain error where we stand — nowhere to take a tangent from
             if fx == 0.0:
                 break  # an exact root: the step would be zero and every further one too
-            derivative = slope(x)
-            if derivative is None:
-                break  # the stencil left the domain — no tangent here either
-            if derivative == 0.0:
+            local_fit = derivatives(x, fx)
+            if local_fit is None:
+                break  # the stencil left the domain — no local fit here either
+            first, second = local_fit
+            if first == 0.0:
                 went_flat = True  # a horizontal tangent never meets zero
                 break
-            # The Newton step, fenced into the caller's interval. Clamping onto the point
+            # The engine's step, fenced into the caller's interval. Clamping onto the point
             # we started from means the iteration wants OUT of it — stop rather than spin.
-            x_next = min(max(x - fx / derivative, lower), upper)
+            x_next = min(max(x - step_from(fx, first, second), lower), upper)
             if x_next == x:
                 break
             converged = abs(x_next - x) <= x_tol
@@ -1478,7 +1566,7 @@ def newton_raphson(
     return SolverResult(
         variable,
         objective,
-        Algorithm.NEWTON_RAPHSON.value,
+        algorithm.value,
         best_solution,
         best_value,
         iterations,

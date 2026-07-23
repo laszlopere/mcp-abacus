@@ -65,8 +65,9 @@ type; it calculates *using* that type.
   *golden-section search* (or *Brent parabolic* via `algorithm="brent-parabolic"`,
   usually faster on smooth extrema; or, for a root, the sign-change bracketers
   `algorithm="bisection"`, `"ridders"`, `"brent-dekker"`, `"chandrupatla"` and `"secant"`,
-  or the bracket-free `algorithm="newton-raphson"`, which follows the expression's slope
-  and so also reaches a root that only *touches* zero); pass `variables`
+  or the bracket-free `algorithm="newton-raphson"` / `"halley"`, which follow the
+  expression's own derivatives and so also reach a root that only *touches* zero); pass
+  `variables`
   (a name → `[lower, upper]` map) with `algorithm="nelder-mead"` to solve several
   jointly with a *Nelder-Mead* simplex
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report

@@ -120,6 +120,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("chandrupatla") is Algorithm.CHANDRUPATLA
     assert resolve_algorithm("secant") is Algorithm.SECANT
     assert resolve_algorithm("newton-raphson") is Algorithm.NEWTON_RAPHSON
+    assert resolve_algorithm("halley") is Algorithm.HALLEY
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
 
 
@@ -166,9 +167,16 @@ def test_newton_aliases_resolve():
     assert resolve_algorithm("raphson") is Algorithm.NEWTON_RAPHSON
 
 
+def test_halley_aliases_resolve():
+    # 33.8: the possessive and -method spellings, as for the other named methods.
+    assert resolve_algorithm("halleys") is Algorithm.HALLEY
+    assert resolve_algorithm("halley-method") is Algorithm.HALLEY
+    assert resolve_algorithm("halleys-method") is Algorithm.HALLEY
+
+
 def test_unknown_algorithm_lists_the_valid_algorithms():
     with pytest.raises(SolverError) as excinfo:
-        resolve_algorithm("halley")  # not an engine this build has
+        resolve_algorithm("householder")  # not an engine this build has
     message = excinfo.value.message
     assert "Unknown algorithm" in message
     assert "golden-section-search" in message and "nelder-mead" in message
