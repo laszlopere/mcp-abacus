@@ -31,18 +31,16 @@ from mcp_abacus.expr.value import (
 )
 from mcp_abacus.fit import FitError, FitResult, fit_all
 from mcp_abacus.solver import (
+    BRACKETED_ROOT_ENGINES,
     Algorithm,
     SolverError,
     SolverResult,
     autodetect_variable,
-    bisection,
-    brent_dekker,
+    bracketed_root,
     brent_parabolic,
-    chandrupatla,
     nelder_mead,
     resolve_algorithm,
     resolve_objective,
-    ridders,
     search,
     validate_bracket,
     validate_unknown,
@@ -957,22 +955,15 @@ def solver(
             # single-variable, like golden-section — _resolve_unknowns guaranteed one
             name, lo, hi = unknowns[0]
             result = brent_parabolic(node, name, lo, hi, selected, floor, resolved_objective)
-        elif resolved_algorithm is Algorithm.BISECTION:
-            # single-variable root finder — _resolve_unknowns guaranteed one unknown
+        elif resolved_algorithm in BRACKETED_ROOT_ENGINES:
+            # A single-variable sign-change root finder — bisection, ridders,
+            # brent-dekker or chandrupatla. One harness serves them all (33.25), picking
+            # the refinement step by algorithm, so a new bracketer needs no branch here.
+            # _resolve_unknowns guaranteed exactly one unknown.
             name, lo, hi = unknowns[0]
-            result = bisection(node, name, lo, hi, selected, floor, resolved_objective)
-        elif resolved_algorithm is Algorithm.RIDDERS:
-            # single-variable root finder — _resolve_unknowns guaranteed one unknown
-            name, lo, hi = unknowns[0]
-            result = ridders(node, name, lo, hi, selected, floor, resolved_objective)
-        elif resolved_algorithm is Algorithm.BRENT_DEKKER:
-            # single-variable root finder — _resolve_unknowns guaranteed one unknown
-            name, lo, hi = unknowns[0]
-            result = brent_dekker(node, name, lo, hi, selected, floor, resolved_objective)
-        elif resolved_algorithm is Algorithm.CHANDRUPATLA:
-            # single-variable root finder — _resolve_unknowns guaranteed one unknown
-            name, lo, hi = unknowns[0]
-            result = chandrupatla(node, name, lo, hi, selected, floor, resolved_objective)
+            result = bracketed_root(
+                node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm
+            )
         else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
             name, lo, hi = unknowns[0]
             result = search(node, name, lo, hi, selected, floor, resolved_objective)

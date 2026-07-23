@@ -1066,6 +1066,31 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.22. Trust-region (dogleg / Newton-CG) — robust step control.
     [ ] 33.23. SLSQP / interior-point — constrained optimise.
     [ ] 33.24. CMA-ES / particle swarm — global, derivative-free.
+    [x] 33.25. Share ONE sign-change bracketing harness across the find-root engines,
+               so a new bracketer is only its refinement step. Four engines now
+               hand-roll the same ~120 lines around a ~25-line core: bisection
+               (solver.py:717), ridders (:898), brent_dekker (:1096) and chandrupatla
+               (:1333). Identical in all four: the find-root-only objective guard (only
+               the engine name differs in the message), the scale / tolerance / deadline
+               setup, the `evaluate_objective` closure returning the SIGNED value with
+               None on a domain error and |expr| best-tracking as a side effect, the
+               coarse 64-cell scan for the first sign-changing cell (bisection keeps only
+               the lower endpoint value, the other three keep both), the fixed-point /
+               rational grid polish, the float snap polish, and all three error paths
+               (evaluates nowhere / no sign change / off-grid) plus the SolverResult
+               construction. Four copies of `_*_SCAN_CELLS = 64` go with them. Shape:
+               the harness takes the engine's Algorithm and a refine callback
+               `(a, b, fa, fb, evaluate, x_tol, deadline) -> iterations` and owns
+               everything else. Verify by iteration-count parity on the existing e2e
+               suites — the refactor must not move a single reported count.
+               NOTE the minimisers are a NEAR miss, not a match: search (:400) and
+               brent_parabolic (:541) share the polish / error tail but their
+               `evaluate_objective` returns the FOLDED objective with +inf on a domain
+               error (not the signed value with None) and they do no scan, and
+               nelder_mead (:1554) is multivariate. So either factor the tail out
+               separately for those, or accept that this harness covers the four
+               bracketers only — DECIDE which when doing it, and do NOT contort the
+               minimisers to fit.
 
 
 [ ] 34.  ROUNDING MODES  (web research 2026-06-14: explicit rounding is a named
