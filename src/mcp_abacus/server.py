@@ -38,6 +38,7 @@ from mcp_abacus.solver import (
     bisection,
     brent_dekker,
     brent_parabolic,
+    chandrupatla,
     nelder_mead,
     resolve_algorithm,
     resolve_objective,
@@ -806,10 +807,11 @@ def solver(
         Field(
             description=(
                 "Search engine: 'golden-section-search' (default, single-variable), "
-                "'brent-parabolic' (single-variable), 'bisection', 'ridders' or "
-                "'brent-dekker' (single-variable, find-root only — bracket a sign "
-                "change; ridders and brent-dekker converge faster than bisection), or "
-                "'nelder-mead' (required for the `variables` form)."
+                "'brent-parabolic' (single-variable), 'bisection', 'ridders', "
+                "'brent-dekker' or 'chandrupatla' (single-variable, find-root only — "
+                "bracket a sign change; the last three converge faster than bisection, "
+                "and chandrupatla stays fastest on a repeated root), or 'nelder-mead' "
+                "(required for the `variables` form)."
             )
         ),
     ] = None,
@@ -868,12 +870,14 @@ def solver(
     `algorithm` (optional) names the search engine — "golden-section-search" (the
     default, single-variable), "brent-parabolic" (single-variable too, parabolic
     interpolation with a golden-section fallback — usually faster on smooth extrema),
-    "bisection", "ridders" or "brent-dekker" (single-variable, find-root ONLY — all
-    three bracket a sign change and need not have straddling endpoints, since they scan
-    the bracket for one; bisection halves the bracket, ridders takes a faster
-    exponential-fit step, and brent-dekker interpolates inverse-quadratically with a
-    bisection fallback — the usual library default for a bracketed root), or
-    "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The five
+    "bisection", "ridders", "brent-dekker" or "chandrupatla" (single-variable, find-root
+    ONLY — all four bracket a sign change and need not have straddling endpoints, since
+    they scan the bracket for one; bisection halves the bracket, ridders takes a faster
+    exponential-fit step, brent-dekker interpolates inverse-quadratically with a
+    bisection fallback — the usual library default for a bracketed root — and
+    chandrupatla admits that same interpolation under a sharper test, which keeps it at
+    bisection's speed on a repeated root where brent-dekker slows to about a third of
+    it), or "nelder-mead" (multivariate, a bounds-clamped downhill simplex). The six
     single-variable engines solve only the SINGLE form; the `variables` form requires
     "nelder-mead". (`golden`, `brent`, `bisect`, `ridder`, `brent-root`, `simplex` and a
     few other spellings are accepted too — note bare `brent` names the PARABOLIC
@@ -965,6 +969,10 @@ def solver(
             # single-variable root finder — _resolve_unknowns guaranteed one unknown
             name, lo, hi = unknowns[0]
             result = brent_dekker(node, name, lo, hi, selected, floor, resolved_objective)
+        elif resolved_algorithm is Algorithm.CHANDRUPATLA:
+            # single-variable root finder — _resolve_unknowns guaranteed one unknown
+            name, lo, hi = unknowns[0]
+            result = chandrupatla(node, name, lo, hi, selected, floor, resolved_objective)
         else:  # golden-section — _resolve_unknowns guaranteed exactly one unknown
             name, lo, hi = unknowns[0]
             result = search(node, name, lo, hi, selected, floor, resolved_objective)

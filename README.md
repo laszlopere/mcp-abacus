@@ -64,7 +64,7 @@ type; it calculates *using* that type.
   language (constants come from `name = expr` assignment lines). One unknown uses
   *golden-section search* (or *Brent parabolic* via `algorithm="brent-parabolic"`,
   usually faster on smooth extrema; or, for a root, the sign-change bracketers
-  `algorithm="bisection"`, `"ridders"` and `"brent-dekker"`); pass `variables`
+  `algorithm="bisection"`, `"ridders"`, `"brent-dekker"` and `"chandrupatla"`); pass `variables`
   (a name → `[lower, upper]` map) with `algorithm="nelder-mead"` to solve several
   jointly with a *Nelder-Mead* simplex
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report

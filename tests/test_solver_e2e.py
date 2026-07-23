@@ -1033,6 +1033,251 @@ def test_brent_dekker_takes_a_root_sitting_on_a_scan_node():
     assert payload["iterations"] == 0
 
 
+# --- Chandrupatla: interpolation under a sharper criterion (33.7) -------------
+# The fourth engine on the sign-change bracket and Brent-Dekker's direct rival: the same
+# inverse quadratic interpolation, but admitted by ONE geometric test on the three points
+# (1 - sqrt(1-xi) < phi < sqrt(xi)) rather than Brent's chain of heuristics. Level with it
+# on a simple root; markedly better on a repeated one, where the test rejects the useless
+# interpolation outright and the search runs at bisection's own rate.
+
+
+def test_chandrupatla_finds_a_root():
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Chandrupatla (endpoints straddle zero:\n"
+        "f(0) = -2, f(2) = 2); expect x = sqrt(2) ~ 1.41421, where the expression is ~0",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    assert payload["algorithm"] == "chandrupatla"
+    assert _num(payload["solution"]) == pytest.approx(2**0.5, abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+    assert payload["iterations"] > 0
+    # The single-unknown convenience: the scalar fields echo the one solutions entry.
+    assert payload["variable"] == "x"
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_chandrupatla_converges_in_few_iterations():
+    # The interpolation is superlinear when the criterion admits it, so a smooth root is
+    # pinned in a handful of steps rather than the ~35 bisection's halving would take.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via Chandrupatla; converges in a few steps\n"
+        "(the criterion admits the interpolation on a smooth simple root)",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert payload["iterations"] <= 10
+
+
+def test_chandrupatla_beats_brent_dekker_on_a_repeated_root():
+    # 33.7's whole claim, pinned as a comparison rather than a magic number: on the triple
+    # root of x**3 the interpolation is worthless. Chandrupatla's criterion rejects it and
+    # the search falls back to bisection's own rate, while Brent-Dekker's looser
+    # heuristics keep accepting near-useless steps and it takes substantially longer.
+    program = _annotated(
+        "find-root of x**3 over [-1, 2] — a TRIPLE root at x = 0, where inverse\n"
+        "quadratic interpolation is worthless. Chandrupatla's criterion rejects it\n"
+        "and bisects; Brent-Dekker keeps trying and needs far more steps",
+        "x**3",
+    )
+    chand = _solve(program, variable="x", lower=-1, upper=2, algorithm="chandrupatla")
+    brent = _solve(program, variable="x", lower=-1, upper=2, algorithm="brent-dekker")
+    assert chand["error"] is None and brent["error"] is None
+    # Both must still land the root exactly — speed is never bought with accuracy.
+    assert _num(chand["solution"]) == 0.0
+    assert _num(brent["solution"]) == 0.0
+    assert chand["iterations"] < brent["iterations"]
+
+
+def test_chandrupatla_scans_when_endpoints_share_a_sign():
+    # Like the rest of the family, Chandrupatla scans for the sign change, so same-sign
+    # endpoints (here f(-2) = f(2) = 2) are no obstacle: it brackets the leftmost root.
+    program = _annotated(
+        "find-root of x**2 - 2 over [-2, 2] via Chandrupatla; both endpoints are +2,\n"
+        "so the scan hunts the sign change. Leftmost root is x = -sqrt(2) ~ -1.41421",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(-(2**0.5), abs=1e-6)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_chandrupatla_finds_an_exact_root_on_the_fixed_point_grid():
+    # The fixed-point grid polish applies here exactly as to bisection: the refined
+    # bracket lands within one grid step of x = 1.5, and the neighbour probes pin it to
+    # an EXACT zero on the grid.
+    program = _annotated(
+        "find-root of 2*x - 3 over [0, 3] via Chandrupatla in fixed-point (scale 1)\n"
+        "expect x = 1.5 exactly: it lands on the grid, an EXACT zero (grid polish)",
+        "2*x - 3",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        mode="fixed-point",
+        floor=1,
+        algorithm="chandrupatla",
+    )
+    assert payload["error"] is None
+    assert payload["solution"].split(" (")[0] == "1.5"
+    assert _num(payload["value"]) == 0.0
+    assert payload["exact"] is True
+
+
+def test_chandrupatla_reports_no_sign_change():
+    # x**2 + 1 never crosses zero, so the scan finds no sign-changing cell: the distinct
+    # "no sign change" error, naming the engine and pointing at the alternatives.
+    program = _annotated(
+        "find-root of x**2 + 1 over [-2, 2] via Chandrupatla\n"
+        "never crosses zero, so there is no sign change to bracket",
+        "x**2 + 1",
+    )
+    payload = _solve(program, variable="x", lower=-2, upper=2, algorithm="chandrupatla")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "No sign change" in payload["error"]
+    assert "chandrupatla" in payload["error"]
+    assert "find-minimum" in payload["error"]
+
+
+def test_chandrupatla_rejects_a_non_root_objective():
+    # It brackets a sign change, which only locates a ROOT; find-minimum is refused with
+    # a pointer to the engines that do minimise.
+    program = _annotated(
+        "Chandrupatla asked to find-minimum — refused, it only finds roots\n"
+        "(an extremum has no sign change to bracket)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="chandrupatla",
+    )
+    assert payload["solution"] is None
+    assert "only finds roots" in payload["error"]
+    assert "brent-parabolic" in payload["error"]
+
+
+def test_chandrupatla_rejects_the_multiple_form():
+    # Single-variable like the other 1-D engines: the `variables` form needs Nelder-Mead.
+    program = _annotated(
+        "Chandrupatla asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="chandrupatla")
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
+def test_chandrupatla_skips_domain_failures_in_the_scan():
+    # The left half raises a domain error (sqrt of a negative); those cells carry no
+    # signed value and are skipped, yet the crossing at x = 1 is still bracketed.
+    program = _annotated(
+        "find-root of sqrt(x) - 1 over [-1, 4] via Chandrupatla (the bracket dips below 0)\n"
+        "the negative side has no real value and is skipped; expect x = 1 is still found",
+        "sqrt(x) - 1",
+    )
+    payload = _solve(program, variable="x", lower=-1, upper=4, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_chandrupatla_unset_constant_surfaces_as_an_eval_error():
+    # A structural failure (a constant the program never sets) fails everywhere and must
+    # surface as a line-tagged eval error, not be mistaken for a domain gap to skip.
+    program = _annotated(
+        "find-root of a * x - 1 over [0, 2] via Chandrupatla; `a` is never set,\n"
+        "so it surfaces as an eval error, not a region to skip",
+        "a * x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert payload["solution"] is None
+    assert "undefined variable: a" in payload["error"]
+
+
+def test_chandrupatla_root_snaps_to_an_integer():
+    # The float snap polish applies here too: a crossing a few ULPs off a clean integer
+    # is re-snapped onto it (exact `==`, not approx).
+    program = _annotated(
+        "find-root of 2*x - 10 over [0, 8] via Chandrupatla in floating-point\n"
+        "the only root is x = 5 exactly; snap polish returns a clean 5",
+        "2*x - 10",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=8, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "chandrupatla"
+    assert _num(payload["solution"]) == 5.0
+
+
+def test_chandrupatla_takes_a_root_sitting_on_a_scan_node():
+    # x = 1 is exactly a scan node of [0, 2], so the cell before it straddles with an
+    # endpoint value of precisely zero. One step and the fm == 0 test ends the search.
+    # (Unlike brent-dekker's 0 here: this loop samples first and tests after, so a root
+    # already in hand still costs the one evaluation. A structural difference, not a miss.)
+    program = _annotated(
+        "find-root of x - 1 over [0, 2] via Chandrupatla; x = 1 lands exactly on a\n"
+        "scan node, so the search ends as soon as it sees the zero residual",
+        "x - 1",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 1.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] <= 2
+
+
+def test_chandrupatla_handles_a_zero_width_bracket():
+    # The truly degenerate case: the root IS the first scan node, so the scan hands the
+    # loop a == b — a zero-width bracket. The criterion divides by that width (the `tl`
+    # term), so the engine must bail out BEFORE dividing rather than raise ZeroDivisionError.
+    program = _annotated(
+        "find-root of x over [0, 2] via Chandrupatla; the root x = 0 is the FIRST\n"
+        "scan node, so the bracket handed to the loop has zero width — it must not divide by it",
+        "x",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 0.0
+    assert _num(payload["value"]) == 0.0
+    assert payload["iterations"] == 0
+
+
+def test_chandrupatla_alias_resolves_to_canonical():
+    # The `chandrupatlas` spelling resolves to the canonical engine name in the reply.
+    program = _annotated(
+        "find-root of x**2 - 2 over [0, 2] via the `chandrupatlas` alias\n"
+        "the reply reports the canonical 'chandrupatla'",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="chandrupatlas")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "chandrupatla"
+
+
+def test_chandrupatla_solves_keplers_equation():
+    # The transcendental-root benchmark via Chandrupatla: smooth and monotone in [0, pi],
+    # so the criterion admits the interpolation and the eccentric anomaly falls out fast.
+    program = _annotated(
+        "find-root of Kepler's equation E - 0.8*sin(E) - 1 over [0, pi] via Chandrupatla\n"
+        "eccentricity 0.8, mean anomaly 1 rad; expect eccentric anomaly E ~ 1.782191",
+        "E - 0.8*sin(E) - 1",
+    )
+    payload = _solve(program, variable="E", lower=0, upper=math.pi, algorithm="chandrupatla")
+    assert payload["error"] is None
+    assert payload["algorithm"] == "chandrupatla"
+    assert _num(payload["solution"]) == pytest.approx(1.7821913289379006, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-6
+
+
 # --- REGRESSION: floating-point answers snap onto their clean value -----------
 # The drift these tests once reproduced: on a problem whose true answer is a whole
 # number, the floating-point search settled a few ULPs away — 4.999999999999984 for
