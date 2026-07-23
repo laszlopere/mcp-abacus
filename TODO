@@ -1613,3 +1613,30 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                coordinates and map the parameters back. The sinusoid (44.2.9) is the lone
                form with no closed form — it keeps the solver's optimise engine.
 
+
+[x] 45.  FIXED-POINT `**`: the fractional-exponent path can hang the server on an
+         ordinary expression. `1.05 ** 14.2067` in fixed-point takes ~80 seconds;
+         at the solver's default floor of 9 (`1.05 ** 14.206699916`) it never
+         returns and eats memory until it is killed. Reachable from `calculate`,
+         not just the solver — found 2026-07-23 while smoke-testing a compound-
+         interest solve (`p*(1+r)**n - 2000` for n, fixed-point), where every
+         engine hangs alike, so it is not a solver bug. The 2s solver cap cannot
+         help: it is checked BETWEEN candidate evaluations and this is ONE of them.
+    [x] 45.1.  PATH A must not materialise `x**p` to decide whether the root is
+               exact (value.py, pow's fixed-point branch). A scale-9 exponent
+               reduces to p ~ 3.5e9 / q = 2.5e8, and `Fraction(105,100)**p` is a
+               4.7-BILLION-digit integer built before anything is tested — then
+               thrown away, since 1.05^14.2067 is irrational and the answer comes
+               from PATH B's exp(y*ln x) series anyway. Test the perfect q-th
+               power on the REDUCED BASE instead: p and q are coprime by
+               construction, so for u = prod(pi^ei), u**p is a perfect q-th power
+               iff q | p*ei for all i iff q | ei for all i iff u is one. Root the
+               small base, and raise to p only when both numerator and denominator
+               come out exact.
+    [x] 45.2.  `_iroot(n, q)` must shortcut `n.bit_length() <= q` (i.e. n < 2**q,
+               so the floor of the q-th root is 1). Needed BECAUSE of 45.1: the
+               test then runs with a huge q against a tiny radicand, and
+               `_iroot(21, 250000000)` costs 1.4s today — twice per pow, 65 times
+               over the bracketers' scan alone. Independently worth having: the
+               Newton loop computes `x**(q-1)` per step, which is absurd when the
+               answer is 1 by inspection.

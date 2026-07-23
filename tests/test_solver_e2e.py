@@ -20,6 +20,7 @@ call as a Code / Result block (the header is what makes it self-describing); und
 import asyncio
 import json
 import math
+import time
 
 import pytest
 
@@ -226,6 +227,29 @@ def test_find_root_with_constants_set_by_assignments():
     assert payload["error"] is None
     assert _num(payload["solution"]) == pytest.approx(14.2067, abs=1e-3)
     assert abs(_num(payload["value"])) < 1e-6
+
+
+def test_find_root_with_constants_set_by_assignments_in_fixed_point():
+    # REGRESSION (45): the same compound-interest solve in FIXED-POINT, which hung the
+    # server outright. At the solver's default floor of 9 each candidate n makes
+    # 1.05**n a fractional power whose exponent reduces to p ~ 3.5e9 over q = 2.5e8, and
+    # pow's Path A used to materialise 1.05**p — a 4.7-billion-digit integer — before
+    # testing whether the root was exact. Every engine hung alike, which is what showed
+    # the fault was in `**`, not the solver. Both guards are engine-independent, so this
+    # asserts on the default golden-section path.
+    program = _annotated(
+        "find-root for n in FIXED-POINT: compound-interest break-even over [0, 40]\n"
+        "1000 * 1.05**n == 2000  ->  n = ln2 / ln1.05 ~ 14.2067. Each candidate is a\n"
+        "scale-9 fractional exponent, the shape that used to hang pow's exact-root test",
+        "r = 0.05\np = 1000\np * (1 + r)**n - 2000",
+    )
+    start = time.monotonic()
+    payload = _solve(program, variable="n", lower=0, upper=40, mode="fixed-point")
+    assert time.monotonic() - start < 10.0  # the bug was unbounded; the budget is loose
+    assert payload["error"] is None
+    assert payload["mode"] == "fixed-point"
+    assert _num(payload["solution"]) == pytest.approx(14.2067, abs=1e-3)
+    assert abs(_num(payload["value"])) < 1e-3
 
 
 def test_find_root_reports_no_solution_when_zero_is_unreachable():

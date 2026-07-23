@@ -14,6 +14,7 @@ cases beside FLOATING_POINT's.
 import dataclasses
 import math
 import struct
+import time
 from enum import Enum
 from fractions import Fraction
 
@@ -27,6 +28,7 @@ from mcp_abacus.expr.value import (
     NotRepresentableError,
     Value,
     _fp_ln,
+    _iroot,
     _ln2_scaled,
     _ln10_scaled,
     _pi_scaled,
@@ -724,6 +726,41 @@ def test_fixed_point_fractional_power_negative_base_irrational_refuses():
     # cannot go through ln(x) — refuse rather than fabricate (the x < 0 rung).
     with pytest.raises(NotRepresentableError, match="negative base is irrational"):
         _fp("2").neg().pow(_fp("0.2"))
+
+
+def test_fixed_point_fractional_power_exact_root_survives_a_large_exponent():
+    # 45.1 moved Path A's test onto the reduced BASE, so the exact case must still
+    # fire when the EXPONENT is large: 4**(41/2) is the 41st power of sqrt(4) == 2**41.
+    r = _fp("4").pow(_fp("20.5"))
+    assert r.to_string() == "2199023255552.0"  # 2**41, exactly on the grid
+    assert r.exact is True
+
+
+def test_fixed_point_fractional_power_with_a_deep_exponent_scale_is_fast():
+    # REGRESSION (45): a scale-9 exponent reduces to p ~ 3.5e9 over q = 2.5e8, and Path A
+    # used to build x**p — a 4.7-BILLION-digit integer — merely to discover the root is
+    # irrational. This never returned; the solver's compound-interest case hung on it for
+    # every engine. Path A now tests the two-digit base instead, and Path B's series
+    # answers in microseconds. The budget is deliberately loose: the bug was unbounded.
+    start = time.monotonic()
+    r = _fp("1.05").pow(_fp("14.206699916"))
+    assert time.monotonic() - start < 2.0
+    assert r.to_string() == "2.000000081"  # 1.05**14.2067 ~ 2, via exp(y*ln x)
+    assert r.exact is False
+
+
+def test_iroot_shortcuts_a_small_radicand_under_a_huge_q():
+    # 45.2: the Newton step computes x**(q-1), so a q in the hundreds of millions costs
+    # megabytes of intermediate to reach a 1 that n < 2**q settles by inspection. Path A
+    # asks exactly this — the q-th root of a two-digit base, q the exponent's denominator.
+    start = time.monotonic()
+    assert _iroot(21, 250_000_000) == 1
+    assert time.monotonic() - start < 1.0  # 1.4s of Newton before the shortcut
+    # The shortcut must not disturb the roots it does not cover.
+    assert _iroot(1, 7) == 1 and _iroot(0, 7) == 0
+    assert _iroot(2**7, 7) == 2  # n == 2**q exactly: the first radicand past the cutoff
+    assert _iroot(2**7 - 1, 7) == 1  # one below it, where the floor really is 1
+    assert _iroot(1024, 10) == 2 and _iroot(1023, 10) == 1
 
 
 def test_fixed_point_negative_integer_exponent():

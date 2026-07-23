@@ -963,9 +963,18 @@ def _iroot(n: int, q: int) -> int:
     the result is the exact floor regardless of any rounding drift. The bignum
     generalization of ``math.isqrt`` (which only does q = 2); pow's Path A uses it
     to test whether a q-th root lands exactly on the grid.
+
+    A large ``q`` against a small ``n`` is answered by inspection (45.2): the Newton
+    step computes ``x**(q-1)``, so entering the loop with q in the millions costs a
+    multi-megabyte intermediate to reach a result that ``n < 2**q`` already pins at 1.
+    Path A reaches exactly that shape — the q-th root of a two-digit base with q the
+    exponent's denominator (a scale-9 exponent gives q = 2.5e8, 1.4s of Newton per
+    call before this shortcut).
     """
     if n in (0, 1) or q == 1:
         return n
+    if n.bit_length() <= q:  # 1 < n < 2**q, so the floor of the q-th root is 1
+        return 1
     x = 1 << -(-n.bit_length() // q)  # 2**ceil(bits/q) >= n**(1/q)
     while True:
         t = ((q - 1) * x + n // x ** (q - 1)) // q
@@ -1557,11 +1566,13 @@ class Value:
             A FRACTIONAL exponent (28.20.1) is ``x**(p/q)``, the q-th root of
             ``x**p`` (a fixed-point exponent reduces to ``p/q`` with ``q`` a product
             of 2s and 5s), handled on a ladder:
-              PATH A — exact-or-refuse: if the q-th root lands exactly on the grid
-                (numerator AND denominator of ``x**p`` are perfect q-th powers), the
-                result is that exact rational, quantized to the covering scale. This
-                also reaches ODD roots of NEGATIVE bases ((-32)**0.2 == -2); an EVEN
-                root of a negative base is complex -> NotRepresentableError.
+              PATH A — exact-or-refuse: if the q-th root lands exactly on the grid,
+                the result is that exact rational, quantized to the covering scale.
+                The test is on the REDUCED BASE, not on ``x**p`` (45.1) — p and q are
+                coprime, so ``u**p`` is a perfect q-th power exactly when ``u`` is —
+                and ``x**(1/q)`` is raised to p only once the answer is known exact.
+                This also reaches ODD roots of NEGATIVE bases ((-32)**0.2 == -2); an
+                EVEN root of a negative base is complex -> NotRepresentableError.
               PATH B — inexact series: otherwise the root is irrational. For a
                 POSITIVE base, ``x**y == exp(y*ln x)`` via the _fp_ln core (28.17)
                 and an exp series, range-reduced by ln(2), quantized half-to-even
@@ -1596,17 +1607,26 @@ class Value:
                     if p < 0:
                         raise ZeroDivisionError("fixed-point zero to a negative power")
                     return Value(Mode.FIXED_POINT, FixedPoint(0, scale), exact=exact)
-                # PATH A — an EXACT perfect q-th root stays on the grid.
-                xp = Fraction(a.mantissa, 10**a.decimals) ** p  # x**p, exact rational
-                num, den = xp.numerator, xp.denominator  # den > 0, lowest terms
+                # PATH A — an EXACT perfect q-th root stays on the grid. Tested on the
+                # REDUCED BASE, never on x**p (45.1): p is the exponent's numerator, so a
+                # scale-9 exponent makes x**p a multi-billion-digit integer built only to
+                # be discarded. The test transfers because p and q are coprime here — for
+                # u = prod(pi**ei), u**p is a perfect q-th power iff q divides every p*ei,
+                # iff q divides every ei, iff u itself is one.
+                base = Fraction(a.mantissa, 10**a.decimals)  # x in lowest terms
+                u, v = base.numerator, base.denominator  # v > 0; u carries the sign
                 sign = 1
-                if num < 0:  # only when base < 0 and p is odd
+                if u < 0:  # a negative base
                     if q % 2 == 0:  # an even root of a negative is complex
                         raise NotRepresentableError("even root of a negative value")
-                    sign, num = -1, -num
-                root_num, root_den = _perfect_root(num, q), _perfect_root(den, q)
-                if root_num is not None and root_den is not None:
-                    return _fp_value(sign * root_num, root_den, a, b, exact)
+                    sign, u = -1, -u
+                root_u, root_v = _perfect_root(u, q), _perfect_root(v, q)
+                if root_u is not None and root_v is not None:
+                    # x**(1/q) is on the grid, so raise THAT to p — the only place the
+                    # exponent's magnitude is paid for, and only when the answer is exact.
+                    num, den = (root_u**p, root_v**p) if p >= 0 else (root_v**-p, root_u**-p)
+                    # An odd root of a negative base stays negative for odd p only.
+                    return _fp_value((sign if p % 2 else 1) * num, den, a, b, exact)
                 # PATH B — irrational root via exp(y*ln x); needs a positive base.
                 if a.mantissa < 0:
                     raise NotRepresentableError("fractional power of a negative base is irrational")
