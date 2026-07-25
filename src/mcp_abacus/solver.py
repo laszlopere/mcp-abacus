@@ -1693,7 +1693,19 @@ def tangent_root(
             return None  # a domain error at THIS candidate — no signed value here
         signed = raw.to_float()
         obj = abs(signed)  # = fold_objective(raw, FIND_ROOT).to_float(), the |expr| fold
-        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+        # Record the best only for points INSIDE the caller's bracket. The derivative
+        # stencil probes x +- h and x +- 2h, which near an endpoint fall OUTSIDE [lower,
+        # upper]; being real evaluations they would otherwise feed best-tracking, and one
+        # landing on a root just past the endpoint would be RETURNED as the answer — how a
+        # find-root of `x + 0.00001` over [0, 5] once reported x = -1e-5. Gating the record
+        # (not the evaluation) keeps every probe available to the derivative while pinning
+        # the reported root to the interval; an in-bracket root within 2h of an endpoint is
+        # still reached, since the iteration point itself stays fenced. Contrast
+        # newton-optimise (33.13), which refuses to PROBE outside its fence at all — a
+        # minimiser can stop at an endpoint the seed scan already sampled, but a root finder
+        # wants to keep stepping toward a near-endpoint crossing.
+        in_bracket = lower <= x <= upper
+        if in_bracket and ((obj <= best_obj) if accept_ties else (obj < best_obj)):
             best_obj, best_solution, best_value = obj, candidate, raw
         return signed
 

@@ -2024,6 +2024,40 @@ def test_newton_fence_keeps_the_step_inside_the_bracket():
     assert abs(_num(payload["value"])) < 1e-6
 
 
+def test_newton_keeps_its_answer_inside_the_bracket():
+    # The derivative stencil probes x +- h and x +- 2h, which near an endpoint fall OUTSIDE
+    # the caller's bracket; being real evaluations they used to feed best-tracking, so a
+    # probe landing on a root just past the endpoint was RETURNED as the answer. x + 0.00001
+    # has its only root at -1e-5, just below the bracket, and a stencil probe from the seed
+    # at x = 0 lands on it exactly — the case that exposed the leak. The answer must stay in
+    # [0, 5], so the engine reports no in-bracket solution, exactly as the bracketers do.
+    program = _annotated(
+        "find-root of x + 0.00001 over [0, 5] via Newton-Raphson — the only root is at\n"
+        "-1e-5, OUTSIDE the bracket; a stencil probe must not leak it back as the answer",
+        "x + 0.00001",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=5, algorithm="newton-raphson")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "does not reach zero" in payload["error"]
+    assert "[0.0, 5.0]" in payload["error"]  # the interval reported, never a point outside it
+
+
+def test_newton_still_reaches_a_root_within_a_stencil_step_of_the_endpoint():
+    # The other side of that fix: gating the RECORD (not the evaluation) means an in-bracket
+    # root very close to an endpoint is still found — the iteration point stays fenced and
+    # converges onto it, where a cruder "never probe past the endpoint" rule would give up.
+    # x - 0.000001 has its root at 1e-6, just inside the lower endpoint.
+    program = _annotated(
+        "find-root of x - 0.000001 over [0, 5] via Newton-Raphson — root at 1e-6, a hair\n"
+        "INSIDE the lower endpoint; it must still be found, not abandoned near the edge",
+        "x - 0.000001",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=5, algorithm="newton-raphson")
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(1e-6, abs=1e-9)
+    assert _num(payload["solution"]) >= 0.0  # inside the bracket, never below `lower`
+
+
 def test_newton_finds_an_exact_root_on_the_fixed_point_grid():
     # The fixed-point grid polish applies here exactly as to the bracketed family: the
     # estimate lands within one grid step of x = 1.5 and the neighbour probes pin it to an
@@ -2298,6 +2332,22 @@ def test_halley_finds_an_exact_root_on_the_fixed_point_grid():
     assert payload["solution"].split(" (")[0] == "1.5"
     assert _num(payload["value"]) == 0.0
     assert payload["exact"] is True
+
+
+def test_halley_keeps_its_answer_inside_the_bracket():
+    # The same stencil-leak fix as its Newton twin, on the second tangent engine: an
+    # out-of-bracket derivative probe must never be returned. x + 0.00001's only root is at
+    # -1e-5, below the bracket, so the answer must stay inside [0, 5] and report no
+    # in-bracket solution.
+    program = _annotated(
+        "find-root of x + 0.00001 over [0, 5] via Halley — the only root is at -1e-5,\n"
+        "OUTSIDE the bracket; a stencil probe must not leak it back as the answer",
+        "x + 0.00001",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=5, algorithm="halley")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "does not reach zero" in payload["error"]
+    assert "[0.0, 5.0]" in payload["error"]
 
 
 def test_halley_reports_a_flat_tangent():
