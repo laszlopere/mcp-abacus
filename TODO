@@ -1532,7 +1532,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                calculate. An explicit null still hits the 39 refusal.
 
 
-[ ] 44.  CURVE FITTING TOOL  (a new MCP tool, solver-adjacent like diff/integral
+[x] 44.  CURVE FITTING TOOL  (a new MCP tool, solver-adjacent like diff/integral
          40.17-40.19: the caller passes paired x/y data, the tool tries every
          curve form it knows, and returns the best-fitting few with their fitted
          equation and error. Reuses the parser/evaluator and the solver's
@@ -1540,7 +1540,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [x] 44.1.  New MCP tool `fit(x, y, mode="fixed-point", ...)`. `x` and `y` are
                equal-length numeric arrays (the observations); reuse calculate's
                mode / min_fixed_point_precision front-end (the 31.3 shared helper).
-    [ ] 44.2.  Curve library — a registry of candidate model forms, each a named
+    [x] 44.2.  Curve library — a registry of candidate model forms, each a named
                template with free parameters. Extensible the way _FUNCS is; each
                entry knows its parameter names, its objective, and any domain limits
                (power/log need x>0, etc.). The variants:
