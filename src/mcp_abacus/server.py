@@ -808,7 +808,9 @@ def solver(
                 "Search engine: 'golden-section-search' (default, single-variable), "
                 "'brent-parabolic' or 'ternary-search' (single-variable — brent-parabolic "
                 "is usually the fastest on a smooth extremum, ternary-search the plainest "
-                "and slowest), 'bisection', 'ridders', "
+                "and slowest), 'newton-optimise' (single-variable, find-minimum / "
+                "find-maximum ONLY — steps to the zero of the objective's own slope, so it "
+                "lands a smooth extremum in very few steps), 'bisection', 'ridders', "
                 "'brent-dekker', 'chandrupatla' or 'secant' (single-variable, find-root "
                 "only — bracket a sign change; the last four converge faster than "
                 "bisection, secant being the leanest on a simple root and chandrupatla "
@@ -987,11 +989,11 @@ def solver(
                 node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm
             )
         else:
-            # A single-variable minimiser — golden-section, brent-parabolic or ternary.
-            # One harness serves them all (33.6), picking the bracket loop by algorithm,
-            # so a new minimiser needs no branch here. This is the fall-through because
-            # the default engine (golden-section) is one of them, and the only family that
-            # serves every objective. _resolve_unknowns guaranteed exactly one unknown.
+            # A single-variable minimiser — golden-section, brent-parabolic, ternary or
+            # newton-optimise. One harness serves them all (33.6/33.13), picking the search
+            # loop by algorithm, so a new minimiser needs no branch here. This is the
+            # fall-through because the default engine (golden-section) is one of them.
+            # _resolve_unknowns guaranteed exactly one unknown.
             name, lo, hi = unknowns[0]
             result = minimise(
                 node, name, lo, hi, selected, floor, resolved_objective, resolved_algorithm

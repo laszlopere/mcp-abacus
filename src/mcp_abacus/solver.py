@@ -83,7 +83,10 @@ class Algorithm(Enum):
     (33.12), a faster sibling that fits a parabola through the best three points and
     falls back to a golden-section step; ``TERNARY`` (33.6) is the third of that family,
     shrinking the bracket by thirds instead of by the golden ratio — the plainest
-    unimodal minimiser, and the slowest of the three; ``BISECTION`` is the single-variable root
+    unimodal minimiser, and the slowest of the three; ``NEWTON_OPTIMISE`` (33.13) is the
+    fourth and the only one of them that is not derivative-free — it steps to the zero of
+    the objective's own SLOPE, ``x - g'/g''``, and so finds an extremum rather than a root
+    (the only engine in the family restricted that way); ``BISECTION`` is the single-variable root
     finder (33.1) that brackets a sign change and halves it — robust, but find-root
     only (an extremum has no sign change to straddle); ``RIDDERS`` is its superlinear
     sibling (33.5), the same bracket but an exponential-fit step instead of the
@@ -104,6 +107,7 @@ class Algorithm(Enum):
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
     BRENT_PARABOLIC = "brent-parabolic"  # one unknown, parabola + golden fallback
     TERNARY = "ternary-search"  # one unknown, shrink a bracket by thirds
+    NEWTON_OPTIMISE = "newton-optimise"  # one unknown, step to the slope's zero (extrema only)
     BISECTION = "bisection"  # one unknown, halve a sign-changing bracket (root only)
     RIDDERS = "ridders"  # one unknown, exponential-fit on a sign-changing bracket (root only)
     BRENT_DEKKER = "brent-dekker"  # one unknown, interpolate + bisect a sign change (root only)
@@ -179,13 +183,18 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "secant-method": Algorithm.SECANT,
     "chord": Algorithm.SECANT,
     # Bare ``newton`` names the ROOT finder — the same first-come rule bare ``brent`` follows
-    # above. Should 33.13's gradient MINIMISER land it will spell itself out (newton-bfgs),
-    # so no existing call changes meaning.
+    # above. 33.13's gradient minimiser duly spells itself out as ``newton-optimise``, so no
+    # existing call changed meaning when it landed.
     "newton": Algorithm.NEWTON_RAPHSON,
     "newton-method": Algorithm.NEWTON_RAPHSON,
     "newtons-method": Algorithm.NEWTON_RAPHSON,
     "newton raphson": Algorithm.NEWTON_RAPHSON,
     "raphson": Algorithm.NEWTON_RAPHSON,
+    # 33.13: the American spelling, and the spaced forms. Every one of them keeps the
+    # ``-optimise`` half — a bare ``newton`` must stay the root finder it has always named.
+    "newton-optimize": Algorithm.NEWTON_OPTIMISE,
+    "newton optimise": Algorithm.NEWTON_OPTIMISE,
+    "newton optimize": Algorithm.NEWTON_OPTIMISE,
     "halleys": Algorithm.HALLEY,
     "halley-method": Algorithm.HALLEY,
     "halleys-method": Algorithm.HALLEY,
@@ -510,19 +519,25 @@ def _polish_best(
         )
 
 
-# --- The single-variable minimisers: one harness, three bracket loops (33.6) --
-# Three engines answer the same question the same way: shrink the caller's interval
+# --- The single-variable minimisers: one harness, four search loops (33.6 / 33.13) ---
+# Four engines answer the same question the same way: drive the caller's interval
 # toward the LEAST of the folded objective (fold_objective(), 32.1) — ``|expr|`` for a
 # find-root, ``±expr`` for an extremum — evaluating the program at points of their own
-# choosing until the bracket is narrower than the mode can resolve. Because they order a
-# folded quantity rather than compare SIGNS, they are the only single-variable engines
-# that serve every objective, and the only ones that reach a root which merely touches
-# zero (no sign change for the bracketers to straddle).
+# choosing until the answer settles below what the mode can resolve. Because they order a
+# folded quantity rather than compare SIGNS, they are the single-variable engines that
+# serve every objective, and the ones that reach a root which merely touches zero (no sign
+# change for the bracketers to straddle).
+#
+# Three of them SHRINK the interval and are derivative-free (golden-section, ternary,
+# brent-parabolic). The fourth, newton-optimise (33.13), instead uses it as a FENCE and
+# steps along the objective's own derivatives to the zero of its slope — so it is the one
+# engine here that cannot serve find-root, whose ``|expr|`` fold has a kink exactly where
+# it would be aiming (see _OPTIMISE_ONLY).
 #
 # Everything around the loop — the candidate materialisation and best-tracking, the
-# scale / tolerance / deadline setup, the polish and the error paths and the
+# scale / tolerance / deadline / step setup, the polish and the error paths and the
 # SolverResult — lives once, in :func:`minimise`. An engine is therefore ONLY its loop:
-# a `_loop_*` function that shrinks ``[a, b]``, registered in MINIMISER_ENGINES. This is
+# a `_loop_*` function driving ``[a, b]``, registered in MINIMISER_ENGINES. This is
 # the same split 33.25 made for the bracketers (`bracketed_root`) and `tangent_root` made
 # for the derivative engines, deliberately deferred at the time because the minimisers
 # differ from the bracketers in the one place that matters — what the evaluator RETURNS —
@@ -540,12 +555,17 @@ def _polish_best(
 # sign to offer.
 _MinimiseEvaluate = Callable[[float], float]
 
-# A loop: shrink ``[a, b]`` toward the objective's least, evaluating through the callable,
+# A loop: drive ``[a, b]`` toward the objective's least, evaluating through the callable,
 # and return ``(iterations, timed_out)``. It owns its whole convergence — the ``x_tol``
-# width stop, the ``_MAX_ITERATIONS`` cap, and the ``deadline`` check that sets
-# ``timed_out`` — and returns nothing about the best point, which reaches the harness
-# through the evaluator's side effect instead.
-_MinimiseLoop = Callable[[float, float, _MinimiseEvaluate, float, float], tuple[int, bool]]
+# stop, the ``_MAX_ITERATIONS`` cap, and the ``deadline`` check that sets ``timed_out`` —
+# and returns nothing about the best point, which reaches the harness through the
+# evaluator's side effect instead.
+#
+# The trailing ``h`` is the mode's finite-difference step (``finite_difference_step``),
+# which only a DERIVATIVE loop needs; the three bracket-shrinking loops accept and ignore
+# it. It is passed rather than recomputed because deriving it needs the mode and working
+# scale, which the harness resolves and a loop never sees.
+_MinimiseLoop = Callable[[float, float, _MinimiseEvaluate, float, float, float], tuple[int, bool]]
 
 
 def _loop_golden_section(
@@ -554,6 +574,7 @@ def _loop_golden_section(
     evaluate: _MinimiseEvaluate,
     x_tol: float,
     deadline: float,
+    h: float,  # unused: this loop is derivative-free
 ) -> tuple[int, bool]:
     """Shrink the bracket by the golden ratio (31.7) — the default engine.
 
@@ -595,6 +616,7 @@ def _loop_ternary(
     evaluate: _MinimiseEvaluate,
     x_tol: float,
     deadline: float,
+    h: float,  # unused: this loop is derivative-free
 ) -> tuple[int, bool]:
     """Shrink the bracket by thirds (33.6) — the plainest unimodal minimiser.
 
@@ -641,6 +663,7 @@ def _loop_brent_parabolic(
     evaluate: _MinimiseEvaluate,
     x_tol: float,
     deadline: float,
+    h: float,  # unused: this loop is derivative-free
 ) -> tuple[int, bool]:
     """Shrink the bracket by parabolic interpolation, golden-section on distrust (33.12).
 
@@ -719,6 +742,121 @@ def _loop_brent_parabolic(
     return iterations, timed_out
 
 
+_NEWTON_OPTIMISE_SEED_CELLS = _SCAN_CELLS  # the seed is the best of the same coarse scan
+# the bracketers run — see _loop_newton_optimise for why a fenced method still scans first.
+
+
+def _loop_newton_optimise(
+    a: float,
+    b: float,
+    evaluate: _MinimiseEvaluate,
+    x_tol: float,
+    deadline: float,
+    h: float,
+) -> tuple[int, bool]:
+    """Step to the zero of the objective's own SLOPE, ``x - g'/g''`` (33.13).
+
+    Newton's method applied not to the objective but to its DERIVATIVE, which is what turns
+    a root finder into an optimiser: a stationary point of ``g`` is a zero of ``g'``, so the
+    tangent-line step that :func:`_step_newton` takes on ``f`` becomes ``x - g'/g''`` here.
+    Equivalently it fits a PARABOLA through the local value, slope and curvature and jumps
+    straight to that parabola's vertex — which is why it lands an exactly quadratic
+    objective on the answer in a SINGLE step, where brent-parabolic needs several to build
+    its three-point fit and golden-section needs dozens of interval halvings.
+
+    THE DERIVATIVES. Numerical, from the same five-point central stencil of the language's
+    ``diff`` (40.17) that :func:`tangent_root` uses, at the shared per-mode step ``h``
+    (``finite_difference_step``) — so the two engines cannot drift apart:
+    ``g'(x) ~ (g(x-2h) - g(x+2h) + 8*(g(x+h) - g(x-h))) / (12h)`` and
+    ``g''(x) ~ (-g(x-2h) + 16g(x-h) - 30g(x) + 16g(x+h) - g(x+2h)) / (12h^2)``, both 4th
+    order. They share their samples and the centre value is the one already in hand, so a
+    step costs FOUR program evaluations. Note ``h`` is deliberately coarse (1e-5 in float,
+    ~10**-(scale/5) in fixed-point) precisely so the second difference — which divides by
+    ``12h**2`` — keeps its significant digits instead of dissolving into quantisation noise.
+
+    THE SEED. Like :func:`tangent_root`, a derivative method wants a starting guess where
+    the API gives an interval, so it takes the best of a coarse scan over ``[a, b]``
+    (``_NEWTON_OPTIMISE_SEED_CELLS`` cells): the point of LEAST objective. That both seeds
+    the iteration near the extremum — where ``g'' > 0`` and the parabola fit is trustworthy
+    — and guarantees the engine never reports worse than a 64-point sampling of the
+    interval, whatever the iteration then does.
+
+    THE FENCE AND THE STOPS. ``[a, b]`` bounds rather than brackets: every step is clamped
+    back into it, and a step clamped onto the point it started from ends the iteration (it
+    wants out of the region the caller asked about). Three more stops, each a place where
+    the parabola fit stops meaning anything: a stencil sample that leaves the expression's
+    domain (``+inf`` from the harness's evaluator), a slope already exactly zero (standing
+    on the stationary point), and — the one peculiar to optimisation — ``g'' <= 0``, where
+    the curve is locally flat or CONCAVE. Stepping on a non-positive curvature would head
+    for a maximum, or leap arbitrarily far on a vanishing denominator; since the seed is
+    already the scan's best point, stopping there and keeping it is strictly safer. Every
+    evaluation feeds the harness's best-tracking, so each of these stops leaves the best
+    point found intact and the polish still runs.
+    """
+    # Seed: the coarse scan's point of least objective. The harness tracks the best VALUE
+    # for the result; the loop needs the POINT to start stepping from, so it keeps its own.
+    seed: float | None = None
+    seed_obj = math.inf
+    timed_out = False
+    for k in range(_NEWTON_OPTIMISE_SEED_CELLS + 1):
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        x = a + (b - a) * k / _NEWTON_OPTIMISE_SEED_CELLS
+        obj = evaluate(x)
+        if obj < seed_obj:
+            seed_obj, seed = obj, x
+
+    iterations = 0
+    if seed is None or timed_out:
+        return iterations, timed_out
+    x, gx = seed, seed_obj
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        if not math.isfinite(gx):
+            break  # a domain error where we stand — no parabola to fit here
+        if x - 2 * h < a or x + 2 * h > b:
+            # No room for a CENTRED stencil without sampling outside the caller's
+            # interval. Clamping the samples would skew the differences and give a wrong
+            # slope; taking them anyway would evaluate — and, through best-tracking, let
+            # the engine RETURN — a point the caller never asked about, which is how a
+            # find-minimum of `x` over [0, 5] once answered -2e-05. So stop instead: the
+            # seed scan has already sampled both endpoints, so an optimum sitting on one
+            # is held by best-tracking regardless.
+            break
+        gm2, gm1 = evaluate(x - 2 * h), evaluate(x - h)
+        gp1, gp2 = evaluate(x + h), evaluate(x + 2 * h)
+        if not all(map(math.isfinite, (gm2, gm1, gp1, gp2))):
+            break  # the stencil left the domain — no local fit to step along
+        slope = (gm2 - gp2 + 8 * (gp1 - gm1)) / (12 * h)
+        curvature = (-gm2 + 16 * gm1 - 30 * gx + 16 * gp1 - gp2) / (12 * h * h)
+        if slope == 0.0:
+            break  # already standing on the stationary point
+        if curvature <= 0.0:
+            break  # flat or concave here — the step would climb, or explode
+        x_next = min(max(x - slope / curvature, a), b)
+        if x_next == x:
+            break
+        converged = abs(x_next - x) <= x_tol
+        g_next = evaluate(x_next)
+        iterations += 1
+        # An extremum is FLAT, which bounds how well any method can locate it: near the
+        # optimum g changes quadratically, so the objective stops distinguishing points
+        # about a square-root-of-precision away — 1e-8 in float, where ``x_tol`` asks for
+        # 1e-12. The slope driving the step is by then mostly stencil round-off, and the
+        # step-size test alone would let the iteration wander around the optimum until the
+        # iteration cap. So stop the moment a step fails to IMPROVE the objective: the
+        # harness's best-tracking already holds the better point, making this free.
+        if not g_next < gx:
+            break
+        x, gx = x_next, g_next
+        if converged:  # the last step moved less than the mode resolves
+            break
+    return iterations, timed_out
+
+
 # Every single-variable minimiser this build has, by the Algorithm the caller names (32.3).
 # Membership doubles as the "is this a 1-D minimiser?" test the server dispatches on, so
 # registering an engine here is all it takes to expose it.
@@ -726,7 +864,17 @@ MINIMISER_ENGINES: dict[Algorithm, _MinimiseLoop] = {
     Algorithm.GOLDEN_SECTION: _loop_golden_section,
     Algorithm.BRENT_PARABOLIC: _loop_brent_parabolic,
     Algorithm.TERNARY: _loop_ternary,
+    Algorithm.NEWTON_OPTIMISE: _loop_newton_optimise,
 }
+
+# The minimisers that serve EXTREMA only. Every other engine in this family takes any
+# objective, because the fold (32.1) turns a root hunt into just another minimisation of
+# |expr|. A DERIVATIVE engine cannot follow it there: |expr| has a KINK exactly at the root
+# it would be aiming for — the slope jumps sign across it and the curvature the step
+# divides by is meaningless — so newton-optimise refuses find-root and names the engines
+# built for it instead. The mirror image of the find-root-only guards in
+# :func:`bracketed_root` and :func:`tangent_root`.
+_OPTIMISE_ONLY: frozenset[Algorithm] = frozenset({Algorithm.NEWTON_OPTIMISE})
 
 
 def minimise(
@@ -741,12 +889,14 @@ def minimise(
 ) -> SolverResult:
     """Drive the unknown to the objective's least over ``[lower, upper]`` (31.7 / 33.6).
 
-    The shared harness behind golden-section (31.7), Brent-parabolic (33.12) and ternary
-    (33.6): ``algorithm`` selects the loop from ``MINIMISER_ENGINES`` and is echoed in the
-    result, everything around it is here. Unlike :func:`bracketed_root` and
-    :func:`tangent_root` this family serves EVERY objective, because it works on the
-    folded quantity (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an
-    extremum — whose least is the answer either way.
+    The shared harness behind golden-section (31.7), Brent-parabolic (33.12), ternary
+    (33.6) and newton-optimise (33.13): ``algorithm`` selects the loop from
+    ``MINIMISER_ENGINES`` and is echoed in the result, everything around it is here.
+    Unlike :func:`bracketed_root` and :func:`tangent_root` this family works on the folded
+    quantity (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an extremum
+    — whose least is the answer either way, so its derivative-free engines serve EVERY
+    objective. The one exception is newton-optimise, which differentiates that fold and so
+    cannot take find-root's kinked ``|expr|``: see ``_OPTIMISE_ONLY``.
 
     Each candidate is materialised in ``mode`` at the working scale, bound into a fresh
     seeded store, and the program evaluated; the resulting Value is reduced to a float to
@@ -768,10 +918,21 @@ def minimise(
     within ``residual_tol`` of zero (reporting the closest it reached) — including when the
     time limit cut the search short before it could.
     """
+    if algorithm in _OPTIMISE_ONLY and objective is Objective.FIND_ROOT:
+        raise SolverError(
+            f"The {algorithm.value} algorithm only finds extrema (it steps to the zero of "
+            f"the objective's own slope), so objective 'find-root' is not supported: "
+            f"|expr| has a kink at the root, where the curvature the step divides by does "
+            f"not exist. Use newton-raphson or halley to follow derivatives to a root, or "
+            f"golden-section-search / brent-parabolic / ternary-search to minimise |expr|."
+        )
     loop = MINIMISER_ENGINES[algorithm]
     scale = _search_scale(node, mode, floor)
     x_tol, residual_tol = _tolerances(mode, scale)
     deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    # The stencil's step, in the active mode's own grid — only the derivative loop uses it,
+    # but the harness owns it because deriving it needs the mode and working scale.
+    h = finite_difference_step(mode, scale).to_float()
     # The smallest objective seen and the candidate/value that produced it. Tracking
     # the best across ALL evaluations (not just the final midpoint) keeps the answer
     # honest even if quantisation makes the very last point a hair worse.
@@ -798,7 +959,7 @@ def minimise(
             best_obj, best_solution, best_value = obj, candidate, raw
         return obj
 
-    iterations, timed_out = loop(lower, upper, evaluate_objective, x_tol, deadline)
+    iterations, timed_out = loop(lower, upper, evaluate_objective, x_tol, deadline, h)
 
     # Grid / float-snap polish around the best point (33.25) — the shared tail every
     # single-unknown engine runs, so a root that is exactly representable is not missed

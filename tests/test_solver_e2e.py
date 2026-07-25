@@ -565,6 +565,208 @@ def test_ternary_rejects_the_multiple_form():
     assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
 
 
+# --- newton-optimise: the gradient minimiser (33.13) --------------------------
+# The fourth member of the `minimise` family and the only one of them with a derivative:
+# rather than shrinking the interval it fits a parabola to the objective's local value,
+# slope and curvature and jumps to that parabola's vertex, x - g'/g''. It is therefore the
+# only engine in the family that CANNOT serve find-root — |expr| has a kink exactly at the
+# root — and the only one restricted to extrema.
+
+
+def test_newton_optimise_finds_a_minimum():
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via newton-optimise\n"
+        "the objective IS a parabola, so one jump to its vertex lands x = 3 exactly",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="newton-optimise",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "newton-optimise"
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-9)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_newton_optimise_finds_a_maximum():
+    program = _annotated(
+        "find-maximum of 5 - (x - 1)**2 over [-2, 4] via newton-optimise\n"
+        "the fold negates the expression, so the peak is the minimum it actually steps to",
+        "5 - (x - 1)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=-2,
+        upper=4,
+        objective="find-maximum",
+        algorithm="newton optimize",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-maximum"
+    assert payload["algorithm"] == "newton-optimise"  # the alias resolves to canonical
+    assert _num(payload["solution"]) == pytest.approx(1.0, abs=1e-9)
+    assert _num(payload["value"]) == pytest.approx(5.0, abs=1e-9)
+
+
+def test_newton_optimise_refuses_find_root():
+    # The one objective a derivative optimiser cannot take, and the reason it is the only
+    # restricted engine in its family: for find-root the folded objective is |expr|, which
+    # has a KINK at the very point being sought — no curvature there to divide by. The
+    # error names the engines built for a root instead.
+    program = _annotated(
+        "find-root of x**2 - 2 via newton-optimise — refused, it only finds EXTREMA\n"
+        "(|expr| is not differentiable at the root; use newton-raphson or halley)",
+        "x**2 - 2",
+    )
+    payload = _solve(program, variable="x", lower=0, upper=2, algorithm="newton-optimise")
+    assert payload["solution"] is None and payload["value"] is None
+    assert "only finds extrema" in payload["error"]
+    assert "kink" in payload["error"]
+    assert "newton-raphson" in payload["error"] and "halley" in payload["error"]
+
+
+def test_newton_optimise_beats_the_derivative_free_engines():
+    # What the derivative buys, on a non-quadratic where nobody gets the answer for free.
+    # The bracket shrinkers must pin a FLAT optimum by interval width, which round-off
+    # limits to about the square root of precision; newton-optimise instead drives the
+    # SLOPE to zero, which stays sharp there. So it wins on both counts at once — fewer
+    # iterations AND a closer answer. exp(x) - 3x has its minimum at ln 3.
+    program = _annotated(
+        "find-minimum of exp(x) - 3*x over [0, 3] — one objective, four engines\n"
+        "the true minimiser is ln(3) = 1.0986122886681098",
+        "exp(x) - 3*x",
+    )
+    common = {"variable": "x", "lower": 0, "upper": 3, "objective": "find-minimum"}
+    newton = _solve(program, algorithm="newton-optimise", **common)
+    brent = _solve(program, algorithm="brent-parabolic", **common)
+    golden = _solve(program, algorithm="golden-section-search", **common)
+    assert newton["error"] is None and brent["error"] is None and golden["error"] is None
+    truth = math.log(3)
+    newton_err = abs(_num(newton["solution"]) - truth)
+    assert newton_err < abs(_num(brent["solution"]) - truth)
+    assert newton_err < abs(_num(golden["solution"]) - truth)
+    assert newton["iterations"] < brent["iterations"] < golden["iterations"]
+
+
+def test_newton_optimise_stops_when_a_step_no_longer_improves():
+    # An extremum is FLAT, so no method can locate it better than ~sqrt(precision): near
+    # the minimum the objective stops distinguishing points and the stencil's slope is
+    # mostly round-off. The step-size test alone would then let the iteration wander until
+    # the 200-iteration cap, so the loop also stops the moment a step fails to improve the
+    # objective. Pinned here: the search settles in a handful of steps, not hundreds.
+    program = _annotated(
+        "find-minimum of exp(x) - 3*x over [0, 3] via newton-optimise\n"
+        "a smooth non-quadratic: converges in a few steps and does NOT run to the cap",
+        "exp(x) - 3*x",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=3,
+        objective="find-minimum",
+        algorithm="newton-optimise",
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(math.log(3), abs=1e-9)
+    assert payload["iterations"] < 20  # the cap is 200; wandering would reach it
+
+
+def test_newton_optimise_keeps_its_answer_inside_the_bracket():
+    # The stencil samples x +- 2h, which near an endpoint would fall OUTSIDE the caller's
+    # interval — and being real evaluations they would feed best-tracking, letting the
+    # engine return a point the caller never asked about. The minimum of `x` over [0, 5]
+    # sits exactly on the lower endpoint, the case that exposes it: the answer must be 0,
+    # never the -2e-05 an uncentred stencil would otherwise reach.
+    program = _annotated(
+        "find-minimum of x over [0, 5] via newton-optimise — the minimum IS the endpoint\n"
+        "the answer must stay inside [0, 5]; the derivative stencil must not leak past it",
+        "x",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        algorithm="newton-optimise",
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 0.0
+    assert _num(payload["solution"]) >= 0.0  # the point of the test: never below `lower`
+
+
+def test_newton_optimise_handles_a_domain_error_region():
+    # sqrt(x) is undefined below 0, so the left half of the bracket raises a domain error
+    # and folds to +inf. The seed scan steers to the good half and the maximum of
+    # sqrt(x) - x is found at x = 1/4, where the slope 1/(2*sqrt(x)) - 1 vanishes.
+    program = _annotated(
+        "find-maximum of sqrt(x) - x over [-1, 4] via newton-optimise\n"
+        "the left half is a domain error (+inf); expect x = 0.25, value 0.25",
+        "sqrt(x) - x",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=-1,
+        upper=4,
+        objective="find-maximum",
+        algorithm="newton-optimise",
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(0.25, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(0.25, abs=1e-6)
+
+
+def test_newton_optimise_finds_an_exact_minimum_on_the_fixed_point_grid():
+    # The grid polish applies to this engine as to every other single-unknown one, and the
+    # coarse per-mode stencil step keeps the SECOND difference (which divides by 12h**2)
+    # out of the quantisation noise that a scale-sized h would drown it in.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via newton-optimise in fixed-point\n"
+        "expect x = 3 exactly, an EXACT zero at the vertex (grid polish)",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program,
+        variable="x",
+        lower=0,
+        upper=5,
+        objective="find-minimum",
+        mode="fixed-point",
+        floor=9,
+        algorithm="newton-optimise",
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == 3.0
+    assert payload["exact"] is True
+
+
+def test_newton_optimise_rejects_the_multiple_form():
+    # Single-variable like the rest of its family; the multivariate gradient engine (BFGS)
+    # is not in this build, so the `variables` form still points at Nelder-Mead.
+    program = _annotated(
+        "newton-optimise asked to solve TWO unknowns — refused, it is single-variable\n"
+        "(the variables form needs algorithm='nelder-mead')",
+        "x + y",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 1], "y": [0, 1]},
+        objective="find-minimum",
+        algorithm="newton-optimise",
+    )
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "single variable" in payload["error"] and "nelder-mead" in payload["error"]
+
+
 # --- bisection: bracketed roots via a sign change (33.1) -----------------------
 # The robust single-variable ROOT finder, and the only engine that works on the raw
 # SIGNED expression rather than minimising |expr|: it scans the bracket for a cell

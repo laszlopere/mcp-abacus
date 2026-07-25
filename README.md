@@ -64,7 +64,9 @@ type; it calculates *using* that type.
   language (constants come from `name = expr` assignment lines). One unknown uses
   *golden-section search* (or *Brent parabolic* via `algorithm="brent-parabolic"`,
   usually faster on smooth extrema, or plain *ternary search* via
-  `algorithm="ternary-search"`; or, for a root, the sign-change bracketers
+  `algorithm="ternary-search"`, or — for an extremum only — *Newton* via
+  `algorithm="newton-optimise"`, which steps to the zero of the objective's own
+  slope and lands a quadratic in one step; or, for a root, the sign-change bracketers
   `algorithm="bisection"`, `"ridders"`, `"brent-dekker"`, `"chandrupatla"` and `"secant"`,
   or the bracket-free `algorithm="newton-raphson"` / `"halley"`, which follow the
   expression's own derivatives and so also reach a root that only *touches* zero); pass

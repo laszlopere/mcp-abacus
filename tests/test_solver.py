@@ -117,6 +117,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("golden-section-search") is Algorithm.GOLDEN_SECTION
     assert resolve_algorithm("brent-parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("ternary-search") is Algorithm.TERNARY
+    assert resolve_algorithm("newton-optimise") is Algorithm.NEWTON_OPTIMISE
     assert resolve_algorithm("brent-dekker") is Algorithm.BRENT_DEKKER
     assert resolve_algorithm("chandrupatla") is Algorithm.CHANDRUPATLA
     assert resolve_algorithm("secant") is Algorithm.SECANT
@@ -173,6 +174,15 @@ def test_newton_aliases_resolve():
     assert resolve_algorithm("newtons-method") is Algorithm.NEWTON_RAPHSON
     assert resolve_algorithm("newton raphson") is Algorithm.NEWTON_RAPHSON
     assert resolve_algorithm("raphson") is Algorithm.NEWTON_RAPHSON
+
+
+def test_newton_optimise_aliases_resolve():
+    # 33.13: the American spelling and the spaced forms. Every alias keeps the -optimise
+    # half, because a bare `newton` must go on naming the ROOT finder it always has.
+    assert resolve_algorithm("newton-optimize") is Algorithm.NEWTON_OPTIMISE
+    assert resolve_algorithm("newton optimise") is Algorithm.NEWTON_OPTIMISE
+    assert resolve_algorithm("newton optimize") is Algorithm.NEWTON_OPTIMISE
+    assert resolve_algorithm("newton") is Algorithm.NEWTON_RAPHSON  # unchanged by 33.13
 
 
 def test_halley_aliases_resolve():
