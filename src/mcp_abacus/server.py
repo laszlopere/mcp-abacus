@@ -32,6 +32,7 @@ from mcp_abacus.expr.value import (
 from mcp_abacus.fit import FitError, FitResult, fit_all
 from mcp_abacus.solver import (
     BRACKETED_ROOT_ENGINES,
+    MULTIVARIATE_ENGINES,
     TANGENT_ROOT_ENGINES,
     Algorithm,
     SolverError,
@@ -39,7 +40,7 @@ from mcp_abacus.solver import (
     autodetect_variable,
     bracketed_root,
     minimise,
-    nelder_mead,
+    minimise_multivariate,
     resolve_algorithm,
     resolve_objective,
     tangent_root,
@@ -968,8 +969,13 @@ def solver(
         for name, lo, hi in unknowns:
             validate_bracket(lo, hi)
             validate_unknown(node, name)
-        if resolved_algorithm is Algorithm.NELDER_MEAD:
-            result = nelder_mead(node, unknowns, selected, floor, resolved_objective)
+        if resolved_algorithm in MULTIVARIATE_ENGINES:
+            # A multivariate minimiser — nelder-mead or bfgs. One harness serves them all
+            # (33.14/33.13), picking the search core by algorithm, so a new multivariate
+            # engine needs no branch here. These are the engines the `variables` form needs.
+            result = minimise_multivariate(
+                node, unknowns, selected, floor, resolved_objective, resolved_algorithm
+            )
         elif resolved_algorithm in TANGENT_ROOT_ENGINES:
             # Find-root like the bracketers below, but bracket-free (33.4 / 33.8): these
             # follow finite-difference derivatives from a seeded point. One harness serves
@@ -1036,10 +1042,11 @@ def _resolve_unknowns(
             "variables (multiple); not both."
         )
     if has_multi:
-        if algorithm is not Algorithm.NELDER_MEAD:
+        if algorithm not in MULTIVARIATE_ENGINES:
             raise SolverError(
-                f"The {algorithm.value!r} algorithm solves a single variable; pass "
-                f"algorithm='nelder-mead' to solve for multiple unknowns."
+                f"The {algorithm.value!r} algorithm solves a single variable; pass a "
+                f"multivariate algorithm (nelder-mead or bfgs) to solve for multiple "
+                f"unknowns."
             )
         if not variables:
             raise SolverError("No unknowns given: 'variables' is empty.")
@@ -1063,7 +1070,7 @@ def _solver_reply(result: SolverResult, mode: Mode, min_fixed_point_precision: i
 
     Factored from `solver` so the same success shape has ONE builder: the tool
     returns it over the wire, and the verbose test trace renders it for an
-    engine-level `search()` / `nelder_mead()` call. `solutions` lists every unknown's
+    engine-level `minimise()` / `minimise_multivariate()` call. `solutions` lists every unknown's
     found value (one entry for golden-section, n for Nelder-Mead), each marked
     approximate with its bit-backed hex. The scalar `variable` / `solution` /
     `solution_hex_dump` echo that list ONLY when there is a single unknown (so the 1-D

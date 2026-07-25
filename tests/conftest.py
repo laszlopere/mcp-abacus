@@ -173,11 +173,12 @@ def _human_readable_trace(request, monkeypatch):
 
     # Engine seam: parse() records each node's source; the engine looks it up and
     # frames its outcome the same way the tool reply does (solution + "(approximate)",
-    # or the failure message — re-raised so pytest.raises tests still see it). Both
-    # engines are traced: search() (golden-section) and nelder_mead() (multivariate).
+    # or the failure message — re-raised so pytest.raises tests still see it). The two
+    # single-unknown/multivariate harnesses are traced: minimise() (the 1-D minimisers,
+    # golden-section and its siblings) and minimise_multivariate() (nelder-mead / bfgs).
     original_parse = parser_module.parse
-    original_search = solver_module.search
-    original_nelder_mead = solver_module.nelder_mead
+    original_search = solver_module.minimise
+    original_nelder_mead = solver_module.minimise_multivariate
 
     def _result_line(result):
         # One unknown -> just the value (the 1-D output, unchanged); several ->
@@ -218,18 +219,18 @@ def _human_readable_trace(request, monkeypatch):
 
     monkeypatch.setattr(mcp, "call_tool", traced_mcp_call)
     monkeypatch.setattr(ClientSession, "call_tool", traced_client_call)
-    # Patch parse/search/nelder_mead in every namespace holding the original (the
-    # source module, the expr package re-export, and the test module's own
+    # Patch parse/minimise/minimise_multivariate in every namespace holding the original
+    # (the source module, the expr package re-export, and the test module's own
     # from-import), so the call the test makes is the one intercepted. The server keeps
     # its OWN bound engines, so an in-process tool call records once, at the tool seam.
     for module in (parser_module, expr_package, request.module):
         if getattr(module, "parse", None) is original_parse:
             monkeypatch.setattr(module, "parse", traced_parse)
     for module in (solver_module, request.module):
-        if getattr(module, "search", None) is original_search:
-            monkeypatch.setattr(module, "search", traced_search)
-        if getattr(module, "nelder_mead", None) is original_nelder_mead:
-            monkeypatch.setattr(module, "nelder_mead", traced_nelder_mead)
+        if getattr(module, "minimise", None) is original_search:
+            monkeypatch.setattr(module, "minimise", traced_search)
+        if getattr(module, "minimise_multivariate", None) is original_nelder_mead:
+            monkeypatch.setattr(module, "minimise_multivariate", traced_nelder_mead)
 
     # Calculate seam: Node.evaluate frames the computed value the same way. Only the
     # PARSED ROOT (keyed by traced_parse) records — recursive child evaluates aren't

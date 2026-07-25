@@ -502,7 +502,7 @@ def _polish_best(
     there is no budget for extra probes.
 
     Nelder-Mead does NOT use this: its grid polish walks each axis of an n-dimensional
-    point and clamps to the box, so it keeps its own (see :func:`nelder_mead`).
+    point and clamps to the box, so it keeps its own (see :func:`minimise_multivariate`).
     """
     if best_solution is None or timed_out:
         return
@@ -1804,13 +1804,25 @@ def tangent_root(
     )
 
 
-# --- Nelder-Mead downhill simplex (33.14) -------------------------------------
-# The multivariate peer of golden-section: instead of shrinking a 1-D bracket it walks
-# a simplex of n+1 vertices over n unknowns, reflecting the worst vertex through the
-# centroid of the rest and expanding / contracting / shrinking from there. No
-# derivative, one program evaluation per trial point — the same evaluate-fold-compare
-# loop, just with a VECTOR bound into the store. Every trial point is clamped to the
-# per-axis brackets, so the search stays inside the box the caller gave.
+# --- The multivariate minimisers: one harness, N search cores (33.14 / 33.13) -
+# The n-dimensional peer of the `minimise` family: where those drive a scalar over a 1-D
+# bracket, these drive a VECTOR of n unknowns over a box (a per-axis [lower, upper]) toward
+# the LEAST of the folded objective (fold_objective(), 32.1) — |expr| for a find-root,
+# ±expr for an extremum. Each trial binds all n names into a fresh store, evaluates the
+# program, and reduces the result to a float; a DOMAIN error is penalised with +inf so the
+# search steers away, while a STRUCTURAL failure (a constant the program never set) still
+# propagates as an EvalError.
+#
+# Everything around the search — the candidate materialisation and best-tracking, the
+# scale / tolerance / deadline / step setup, the per-axis polish, the error paths and the
+# SolverResult — lives once, in :func:`minimise_multivariate`. An engine is therefore ONLY
+# its core: a `_walk_*` / `_descend_*` function driving the box, registered in
+# MULTIVARIATE_ENGINES. This is the same split 33.25 made for the bracketers, 33.6 for the
+# 1-D minimisers, and tangent_root for the derivative roots — now for the multivariate ones,
+# so Nelder-Mead (33.14, derivative-free) and BFGS (33.13, gradient) share one frame.
+#
+# Nelder-Mead walks a simplex and takes any objective; BFGS descends the gradient and, like
+# newton-optimise, cannot follow the kinked |expr| of a find-root — see _OPTIMISE_ONLY.
 
 _NM_REFLECT = 1.0  # α — reflect the worst vertex through the centroid
 _NM_EXPAND = 2.0  # γ — push further when reflection found a new best
@@ -1819,33 +1831,150 @@ _NM_SHRINK = 0.5  # σ — shrink every vertex toward the best when contraction 
 _NM_INIT_STEP = 0.4  # initial per-axis vertex offset, as a fraction of bracket width:
 # from the midpoint this lands at lower+0.9·width — a wide, in-box starting simplex.
 
+# The candidate evaluator a multivariate core is handed: returns the FOLDED objective at a
+# point (a list of n coordinates), +inf on a domain error, tracking the best IN-BOX point
+# seen as a side effect. The n-D twin of `_MinimiseEvaluate`.
+_MultivEvaluate = Callable[[list[float]], float]
 
-def nelder_mead(
+# A core: drive the box toward the objective's least, evaluating through the callable, and
+# return ``(iterations, timed_out)``. It owns its whole convergence; the best point reaches
+# the harness through the evaluator's side effect. ``lowers`` / ``uppers`` are the per-axis
+# bounds and ``h`` the finite-difference step (only a gradient core needs it; the simplex
+# core ignores it) — the n-D analogue of `_MinimiseLoop`'s ``(a, b, …, h)``.
+_MultivariateCore = Callable[
+    [_MultivEvaluate, list[float], list[float], float, float, float], tuple[int, bool]
+]
+
+
+def _walk_nelder_mead(
+    evaluate: _MultivEvaluate,
+    lowers: list[float],
+    uppers: list[float],
+    x_tol: float,
+    deadline: float,
+    h: float,  # unused: the simplex is derivative-free
+) -> tuple[int, bool]:
+    """Walk a downhill simplex of n+1 vertices over the box (33.14).
+
+    Reflect the worst vertex through the centroid of the rest and expand / contract / shrink
+    from there — no derivative, one program evaluation per trial point. The simplex starts
+    at the box midpoints plus one vertex offset along each axis, and every trial point is
+    clamped to the box, so the search stays inside it. Converges when the simplex collapses
+    below what the mode resolves (``x_tol``).
+    """
+    n = len(lowers)
+
+    def clamp(point: list[float]) -> list[float]:
+        return [min(max(point[i], lowers[i]), uppers[i]) for i in range(n)]
+
+    def along(centroid: list[float], coeff: float, target: list[float]) -> list[float]:
+        # The point `coeff` of the way from the centroid toward `target`, clamped to
+        # the box. Reflection/expansion/contraction are all this move at different
+        # coefficients (reflection toward the worst with a negative coeff).
+        return clamp([centroid[i] + coeff * (target[i] - centroid[i]) for i in range(n)])
+
+    # Initial simplex: the midpoints, plus one vertex per axis offset along that axis.
+    midpoint = [(lowers[i] + uppers[i]) / 2 for i in range(n)]
+    simplex = [list(midpoint)]
+    for i in range(n):
+        vertex = list(midpoint)
+        vertex[i] = midpoint[i] + _NM_INIT_STEP * (uppers[i] - lowers[i])
+        simplex.append(vertex)
+    fvals = [evaluate(v) for v in simplex]
+
+    iterations = 0
+    timed_out = False
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        order = sorted(range(n + 1), key=lambda k: fvals[k])  # best (least) first
+        simplex = [simplex[k] for k in order]
+        fvals = [fvals[k] for k in order]
+        size = max(max(v[i] for v in simplex) - min(v[i] for v in simplex) for i in range(n))
+        if size <= x_tol:  # the simplex has collapsed below what the mode resolves
+            break
+        centroid = [sum(simplex[k][i] for k in range(n)) / n for i in range(n)]
+        worst = simplex[n]
+        reflected = along(centroid, -_NM_REFLECT, worst)  # away from the worst vertex
+        fr = evaluate(reflected)
+        if fvals[0] <= fr < fvals[n - 1]:
+            simplex[n], fvals[n] = reflected, fr  # a middling reflection: take it
+        elif fr < fvals[0]:  # a new best — try stepping further out
+            expanded = along(centroid, _NM_EXPAND, reflected)
+            fe = evaluate(expanded)
+            if fe < fr:
+                simplex[n], fvals[n] = expanded, fe
+            else:
+                simplex[n], fvals[n] = reflected, fr
+        else:  # reflection no better than the second-worst — contract
+            if fr < fvals[n]:  # outside contraction (reflection beat the old worst)
+                contracted = along(centroid, _NM_CONTRACT, reflected)
+            else:  # inside contraction (toward the worst)
+                contracted = along(centroid, _NM_CONTRACT, worst)
+            fc = evaluate(contracted)
+            if fc < fvals[n]:
+                simplex[n], fvals[n] = contracted, fc
+            else:  # contraction failed too — shrink the whole simplex toward the best
+                best_vertex = simplex[0]
+                for k in range(1, n + 1):
+                    simplex[k] = along(best_vertex, _NM_SHRINK, simplex[k])
+                    fvals[k] = evaluate(simplex[k])
+        iterations += 1
+    return iterations, timed_out
+
+
+# Every multivariate minimiser this build has, by the Algorithm the caller names (32.3).
+# Membership doubles as the "is this a multivariate engine?" test the server dispatches on,
+# so registering an engine here is all it takes to expose it — and to admit the `variables`
+# form, which needs one of these.
+MULTIVARIATE_ENGINES: dict[Algorithm, _MultivariateCore] = {
+    Algorithm.NELDER_MEAD: _walk_nelder_mead,
+}
+
+
+def minimise_multivariate(
     node: Node,
     unknowns: list[tuple[str, float, float]],
     mode: Mode,
     floor: int,
     objective: Objective,
+    algorithm: Algorithm,
 ) -> SolverResult:
-    """Nelder-Mead simplex search for n unknowns over their brackets (33.14).
+    """Drive n unknowns to the objective's least over their box (33.14 / 33.13).
 
-    ``unknowns`` is the ordered ``(name, lower, upper)`` for each free variable; the
-    simplex starts at the per-axis midpoints (plus one vertex offset along each axis)
-    and walks downhill on the folded objective (fold_objective(), 32.1) — ``|expr|``
-    for find-root, ``±expr`` for an extremum — exactly the quantity golden-section
-    minimises, so every objective works here too. Each trial point binds all n names
-    into a fresh store, evaluates the program, and reduces the result to a float; a
-    point that raises a DOMAIN error is penalised with +inf so the simplex steers
-    away, while a STRUCTURAL failure (a constant the program never set) propagates as
-    an EvalError. Every trial point is clamped to its ``[lower, upper]``.
+    The shared harness behind Nelder-Mead (33.14) and BFGS (33.13): ``algorithm`` selects
+    the core from ``MULTIVARIATE_ENGINES`` and is echoed in the result, everything around it
+    is here — the multivariate peer of :func:`minimise`. ``unknowns`` is the ordered
+    ``(name, lower, upper)`` for each free variable. It works on the folded quantity
+    (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an extremum — whose
+    least is the answer either way, so a derivative-free core serves every objective; a
+    gradient core cannot take find-root's kinked ``|expr|`` (see ``_OPTIMISE_ONLY``).
 
-    Bounded, like golden-section, by ``_MAX_ITERATIONS`` and the hard 2-second
-    wall-clock (``_TIME_LIMIT_SECONDS``); on timeout it stops with the best vertex
-    reached so far. Returns a SolverResult whose ``solutions`` lists every unknown's
-    found value. Raises SolverError when the program evaluates nowhere in the box, or
-    when a find-root cannot drive |expr| within ``residual_tol`` of zero (reporting the
-    closest point reached) — including when the time limit cut the search short.
+    Each trial point binds all n names into a fresh store, evaluates the program, and reduces
+    the result to a float; a DOMAIN error is penalised with ``+inf`` so the search steers
+    away, while a STRUCTURAL failure (a constant the program never set) propagates as an
+    EvalError. The best objective across ALL evaluations is tracked — but only for points
+    INSIDE the box: a gradient core's stencil probes just past an edge (for the derivative
+    only) must never be RETURNED, the same "gate the record, not the evaluation" invariant
+    the tangent engines use. The clamped cores never leave the box, so the gate is inert for
+    them.
+
+    Bounded by ``_MAX_ITERATIONS`` and the hard 2-second wall-clock (``_TIME_LIMIT_SECONDS``);
+    on timeout it stops with the best point reached so far. The same per-axis grid / float
+    snap polish lands an exactly representable answer. Returns a SolverResult whose
+    ``solutions`` lists every unknown's found value. Raises SolverError for a find-root asked
+    of a gradient core, when the program evaluates nowhere in the box, or when a find-root
+    cannot drive |expr| within ``residual_tol`` of zero (reporting the closest point).
     """
+    if algorithm in _OPTIMISE_ONLY and objective is Objective.FIND_ROOT:
+        raise SolverError(
+            f"The {algorithm.value} algorithm only finds extrema (it descends the "
+            f"objective's own gradient), so objective 'find-root' is not supported: |expr| "
+            f"has a kink at the root, where the gradient is undefined. Use nelder-mead, "
+            f"which is derivative-free, to drive |expr| to zero over several unknowns."
+        )
+    core = MULTIVARIATE_ENGINES[algorithm]
     names = [name for name, _, _ in unknowns]
     lowers = [float(lo) for _, lo, _ in unknowns]
     uppers = [float(hi) for _, _, hi in unknowns]
@@ -1853,6 +1982,9 @@ def nelder_mead(
     scale = _search_scale(node, mode, floor)
     x_tol, residual_tol = _tolerances(mode, scale)
     deadline = time.monotonic() + _TIME_LIMIT_SECONDS
+    # The stencil's step, in the active mode's own grid — only a gradient core uses it, but
+    # the harness owns it because deriving it needs the mode and working scale.
+    h = finite_difference_step(mode, scale).to_float()
 
     best_obj = math.inf
     best_point: list[float] | None = None
@@ -1873,75 +2005,28 @@ def nelder_mead(
         except EvalError as exc:
             if isinstance(exc.__cause__, UndefinedVariableError):
                 raise  # a constant the program never set — structural, surface it
-            return math.inf  # a domain error at THIS point — steer the simplex away
+            return math.inf  # a domain error at THIS point — steer the search away
         obj = fold_objective(raw, objective).to_float()
+        # Record the best only for points INSIDE the box. A gradient core probes x +- h and
+        # x +- 2h to difference the objective, and near an edge those fall OUTSIDE; being
+        # real evaluations they would otherwise feed best-tracking and one could be RETURNED
+        # as a point the caller never asked about (cf. the tangent-engine leak fix). The
+        # clamped cores only ever pass in-box points, so this is inert for them.
         # accept_ties: snap polish replaces the best on a tie with the tidier rounding; the
-        # simplex loop (accept_ties=False) keeps its strict best. See search() for the why.
-        if (obj <= best_obj) if accept_ties else (obj < best_obj):
+        # search cores (accept_ties=False) keep their strict best. See search() for the why.
+        in_box = all(lowers[i] <= point[i] <= uppers[i] for i in range(n))
+        if in_box and ((obj <= best_obj) if accept_ties else (obj < best_obj)):
             best_obj = obj
             best_point, best_solution, best_value = list(point), candidates, raw
         return obj
 
-    def along(centroid: list[float], coeff: float, target: list[float]) -> list[float]:
-        # The point `coeff` of the way from the centroid toward `target`, clamped to
-        # the box. Reflection/expansion/contraction are all this move at different
-        # coefficients (reflection toward the worst with a negative coeff).
-        return clamp([centroid[i] + coeff * (target[i] - centroid[i]) for i in range(n)])
+    iterations, timed_out = core(evaluate_objective, lowers, uppers, x_tol, deadline, h)
 
-    # Initial simplex: the midpoints, plus one vertex per axis offset along that axis.
-    midpoint = [(lowers[i] + uppers[i]) / 2 for i in range(n)]
-    simplex = [list(midpoint)]
-    for i in range(n):
-        vertex = list(midpoint)
-        vertex[i] = midpoint[i] + _NM_INIT_STEP * (uppers[i] - lowers[i])
-        simplex.append(vertex)
-    fvals = [evaluate_objective(v) for v in simplex]
-
-    iterations = 0
-    timed_out = False
-    while iterations < _MAX_ITERATIONS:
-        if time.monotonic() >= deadline:
-            timed_out = True  # hard 2s cap reached — stop with the best seen so far
-            break
-        order = sorted(range(n + 1), key=lambda k: fvals[k])  # best (least) first
-        simplex = [simplex[k] for k in order]
-        fvals = [fvals[k] for k in order]
-        size = max(max(v[i] for v in simplex) - min(v[i] for v in simplex) for i in range(n))
-        if size <= x_tol:  # the simplex has collapsed below what the mode resolves
-            break
-        centroid = [sum(simplex[k][i] for k in range(n)) / n for i in range(n)]
-        worst = simplex[n]
-        reflected = along(centroid, -_NM_REFLECT, worst)  # away from the worst vertex
-        fr = evaluate_objective(reflected)
-        if fvals[0] <= fr < fvals[n - 1]:
-            simplex[n], fvals[n] = reflected, fr  # a middling reflection: take it
-        elif fr < fvals[0]:  # a new best — try stepping further out
-            expanded = along(centroid, _NM_EXPAND, reflected)
-            fe = evaluate_objective(expanded)
-            if fe < fr:
-                simplex[n], fvals[n] = expanded, fe
-            else:
-                simplex[n], fvals[n] = reflected, fr
-        else:  # reflection no better than the second-worst — contract
-            if fr < fvals[n]:  # outside contraction (reflection beat the old worst)
-                contracted = along(centroid, _NM_CONTRACT, reflected)
-            else:  # inside contraction (toward the worst)
-                contracted = along(centroid, _NM_CONTRACT, worst)
-            fc = evaluate_objective(contracted)
-            if fc < fvals[n]:
-                simplex[n], fvals[n] = contracted, fc
-            else:  # contraction failed too — shrink the whole simplex toward the best
-                best_vertex = simplex[0]
-                for k in range(1, n + 1):
-                    simplex[k] = along(best_vertex, _NM_SHRINK, simplex[k])
-                    fvals[k] = evaluate_objective(simplex[k])
-        iterations += 1
-
-    # Grid polish (fixed-point / rational), per axis: the simplex stops within a box
-    # narrower than one grid step, so the best vertex may sit one step off an EXACTLY
-    # representable root. Probe each axis's grid neighbours of the best point — 4·n
-    # probes, not the 3^n of a full neighbourhood — so a root on the grid is found
-    # exactly. Skipped on float (no grid) and on timeout (the hard cap is spent).
+    # Grid polish (fixed-point / rational), per axis: the search stops within a box narrower
+    # than one grid step, so the best point may sit one step off an EXACTLY representable
+    # root. Probe each axis's grid neighbours of the best point — 4·n probes, not the 3^n of
+    # a full neighbourhood — so a root on the grid is found exactly. Skipped on float (no
+    # grid) and on timeout (the hard cap is spent).
     if best_point is not None and mode is not Mode.FLOATING_POINT and not timed_out:
         step = 10.0**-scale
         centre = list(best_point)
@@ -1982,7 +2067,7 @@ def nelder_mead(
     return SolverResult(
         first_name,
         objective,
-        Algorithm.NELDER_MEAD.value,
+        algorithm.value,
         first_value,
         best_value,
         iterations,
