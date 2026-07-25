@@ -819,8 +819,10 @@ def solver(
                 "(single-variable, find-root only — follow the expression's own "
                 "derivatives instead of bracketing, so they also reach a root that only "
                 "TOUCHES zero; halley adds the curvature to newton's slope and converges "
-                "cubically for the same cost), or 'nelder-mead' "
-                "(required for the `variables` form)."
+                "cubically for the same cost), or — for the `variables` form — "
+                "'nelder-mead' (derivative-free simplex, any objective) or 'bfgs' "
+                "(quasi-Newton gradient descent, find-minimum / find-maximum only; far "
+                "fewer iterations than nelder-mead on a smooth bowl)."
             )
         ),
     ] = None,

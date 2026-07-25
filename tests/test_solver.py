@@ -124,6 +124,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("newton-raphson") is Algorithm.NEWTON_RAPHSON
     assert resolve_algorithm("halley") is Algorithm.HALLEY
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
+    assert resolve_algorithm("bfgs") is Algorithm.BFGS
 
 
 def test_algorithm_aliases_resolve():
@@ -133,6 +134,16 @@ def test_algorithm_aliases_resolve():
     assert resolve_algorithm("parabolic") is Algorithm.BRENT_PARABOLIC
     assert resolve_algorithm("simplex") is Algorithm.NELDER_MEAD
     assert resolve_algorithm("nelder mead") is Algorithm.NELDER_MEAD
+
+
+def test_bfgs_aliases_resolve():
+    # 33.13: the -method and full-name spellings. `quasi-newton` is deliberately NOT one of
+    # them — it names a family, and 33.17 (Broyden's, a quasi-Newton ROOT finder) will want
+    # it — so it must stay unassigned rather than silently mean bfgs.
+    assert resolve_algorithm("bfgs-method") is Algorithm.BFGS
+    assert resolve_algorithm("broyden-fletcher-goldfarb-shanno") is Algorithm.BFGS
+    with pytest.raises(SolverError):
+        resolve_algorithm("quasi-newton")
 
 
 def test_the_two_brents_stay_distinct():

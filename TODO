@@ -1036,7 +1036,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
     [ ] 33.10. Sturm sequences — real-root isolation/counting.
     [ ] 33.11. Companion-matrix eigenvalues — polynomial roots.
     [x] 33.12. Brent (parabolic) minimise — derivative-free optimise.
-    [ ] 33.13. Newton/BFGS — gradient optimise via symbolic deriv.
+    [x] 33.13. Newton/BFGS — gradient optimise via symbolic deriv.
     [x] 33.14. Nelder-Mead — derivative-free, multivariate-ready.
                Maintain a simplex of n+1 vertices over the variables and walk it
                downhill with reflect / expand / contract / shrink moves on the bare

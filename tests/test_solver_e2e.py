@@ -378,6 +378,230 @@ def test_nelder_mead_unset_constant_surfaces_as_an_eval_error():
     assert "undefined variable: a" in payload["error"]
 
 
+# --- BFGS: the multivariate gradient minimiser (33.13) ------------------------
+# The second engine for the `variables` form and Nelder-Mead's gradient-driven peer: it
+# builds a curvature model of the folded objective from gradients alone and line-searches
+# down it, so on a smooth bowl it converges in a handful of iterations where the simplex
+# takes dozens. Extrema only — like newton-optimise it cannot follow find-root's kinked
+# |expr| — and, being a gradient method, its stencil probes must not leak an answer past
+# the box.
+
+
+def test_bfgs_finds_a_two_variable_minimum():
+    program = _annotated(
+        "find-minimum of a 2-var paraboloid over x in [0, 5], y in [-4, 2] via BFGS\n"
+        "single minimum at (3, -1), value 0 — the gradient model runs almost straight to it",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [-4, 2]},
+        objective="find-minimum",
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "bfgs"
+    assert payload["solution"] is None  # multivariate: every unknown is in `solutions`
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(3.0, abs=1e-6)
+    assert found["y"] == pytest.approx(-1.0, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_bfgs_finds_a_two_variable_maximum():
+    program = _annotated(
+        "find-maximum of a 2-var dome over x in [-2, 4], y in [-5, 1] via BFGS\n"
+        "the fold negates the expression, so the peak (1, -2), value 5, is the min it descends to",
+        "5 - (x - 1)**2 - (y + 2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-2, 4], "y": [-5, 1]},
+        objective="find-maximum",
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-maximum"
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-6)
+    assert found["y"] == pytest.approx(-2.0, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(5.0, abs=1e-9)
+
+
+def test_bfgs_beats_nelder_mead_on_a_smooth_bowl():
+    # What the gradient buys, over the derivative-free simplex on the same problem. Both
+    # reach the minimum, but BFGS's curvature model runs near-straight downhill while the
+    # simplex reflects its way there — a large iteration gap that is the reason to offer it.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 + (y + 1)**2 — one bowl, two multivariate engines\n"
+        "BFGS descends the gradient; Nelder-Mead walks a simplex, needing far more steps",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    common = {"variables": {"x": [0, 5], "y": [-4, 2]}, "objective": "find-minimum"}
+    bfgs = _solve(program, algorithm="bfgs", **common)
+    nelder = _solve(program, algorithm="nelder-mead", **common)
+    assert bfgs["error"] is None and nelder["error"] is None
+    bfgs_pt = {e["variable"]: _num(e["solution"]) for e in bfgs["solutions"]}
+    nelder_pt = {e["variable"]: _num(e["solution"]) for e in nelder["solutions"]}
+    assert bfgs_pt["x"] == pytest.approx(nelder_pt["x"], abs=1e-3)
+    assert bfgs["iterations"] < nelder["iterations"]
+
+
+def test_bfgs_solves_the_rosenbrock_valley():
+    # The classic hard case for a first-order method: a curved, nearly-flat valley where
+    # steepest descent zig-zags for thousands of steps. The BFGS curvature model turns the
+    # valley straight and reaches the minimum at (1, 1) — evidence the inverse-Hessian
+    # update is doing real work, not just steepest descent in disguise.
+    program = _annotated(
+        "find-minimum of the Rosenbrock function (1-x)**2 + 100*(y - x**2)**2 via BFGS\n"
+        "a banana-shaped valley with its floor at (1, 1), value 0 — curvature is the whole game",
+        "(1 - x)**2 + 100*(y - x**2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-2, 2], "y": [-1, 3]},
+        objective="find-minimum",
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-4)
+    assert found["y"] == pytest.approx(1.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-8)
+
+
+def test_bfgs_refuses_find_root():
+    # The objective a gradient optimiser cannot take, as for its 1-D twin newton-optimise:
+    # for find-root the folded objective is |expr|, whose gradient does not exist at the
+    # root. The error points multivariate root-seekers at the derivative-free engine.
+    program = _annotated(
+        "find-root of x**2 + y**2 - 2 via BFGS — refused, it only finds EXTREMA\n"
+        "(|expr| is not differentiable at the root; use nelder-mead for a multivariate root)",
+        "x**2 + y**2 - 2",
+    )
+    payload = _solve(
+        program, variables={"x": [0, 2], "y": [0, 2]}, objective="find-root", algorithm="bfgs"
+    )
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "only finds extrema" in payload["error"]
+    assert "kink" in payload["error"]
+    assert "nelder-mead" in payload["error"]
+
+
+def test_bfgs_keeps_its_answer_inside_the_box():
+    # The gradient stencil probes each axis at +-h and +-2h, which near a box edge fall
+    # OUTSIDE the box; being real evaluations they must not be RETURNED (the multivariate
+    # twin of the tangent-engine leak fix). The unconstrained minimum of this paraboloid is
+    # at (-0.001, -0.001), just past the [0, 5]^2 corner, so the answer must clamp to (0, 0).
+    program = _annotated(
+        "find-minimum of (x + 0.001)**2 + (y + 0.001)**2 over [0, 5]^2 via BFGS\n"
+        "the true minimum is OUTSIDE the box; the gradient stencil must not leak it back",
+        "(x + 0.001)**2 + (y + 0.001)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [0, 5]},
+        objective="find-minimum",
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    for entry in payload["solutions"]:
+        assert 0.0 <= _num(entry["solution"]) <= 5.0  # never leaked past an edge
+        assert _num(entry["solution"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_bfgs_handles_a_domain_error_region():
+    # sqrt(x) is undefined below 0, so the left half of the x-range folds to +inf. The
+    # midpoint seed sits in the valid half and the minimum of sqrt(x) + (y - 2)**2 is found
+    # at the corner (0, 2), where sqrt bottoms out and the parabola is centred.
+    program = _annotated(
+        "find-minimum of sqrt(x) + (y - 2)**2 over x in [-1, 4], y in [0, 4] via BFGS\n"
+        "x < 0 is a domain error (+inf); expect (0, 2), value 0",
+        "sqrt(x) + (y - 2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-1, 4], "y": [0, 4]},
+        objective="find-minimum",
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(0.0, abs=1e-4)
+    assert found["y"] == pytest.approx(2.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_bfgs_solves_a_single_variable_minimum():
+    # Like nelder-mead, BFGS tolerates the single form (n = 1): the same gradient descent
+    # over one unknown, the scalar fields echoing the sole solutions entry.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via BFGS in the single-variable form\n"
+        "expect x = 3, value 0 — n = 1 is just the multivariate engine with one axis",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program, variable="x", lower=0, upper=5, objective="find-minimum", algorithm="bfgs"
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-6)
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_bfgs_alias_resolves_to_canonical():
+    program = _annotated(
+        "find-minimum via the 'bfgs-method' alias — resolves to canonical 'bfgs'",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [-4, 2]},
+        objective="find-minimum",
+        algorithm="bfgs-method",
+    )
+    assert payload["error"] is None
+    assert payload["algorithm"] == "bfgs"
+
+
+def test_bfgs_two_variable_minimum_snaps_to_integers():
+    # The per-axis grid polish applies to this engine as to nelder-mead: a fixed-point
+    # estimate landing within one grid step of the integer minimum is pinned to it exactly.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 + (y - 7)**2 over [0, 6] x [0, 12], fixed-point via BFGS\n"
+        "expect (3, 7) exactly, an EXACT zero at the vertex (grid polish)",
+        "(x - 3)**2 + (y - 7)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 6], "y": [0, 12]},
+        objective="find-minimum",
+        mode="fixed-point",
+        floor=6,
+        algorithm="bfgs",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == 3.0 and found["y"] == 7.0
+    assert payload["exact"] is True
+
+
+def test_bfgs_rejects_the_single_form_is_not_required():
+    # The `variables` form now accepts either multivariate engine; the refusal message for a
+    # single-variable engine names both, so a caller reaching for a multivariate solve is
+    # pointed at the whole set.
+    program = _annotated(
+        "golden-section asked for the variables form — refused, it is single-variable\n"
+        "(the message now names both multivariate engines: nelder-mead or bfgs)",
+        "x + y",
+    )
+    payload = _solve(
+        program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="golden-section-search"
+    )
+    assert payload["solution"] is None and payload["solutions"] is None
+    assert "nelder-mead or bfgs" in payload["error"]
+
+
 # --- Brent parabolic: the single-variable optimise alternative (33.12) --------
 
 

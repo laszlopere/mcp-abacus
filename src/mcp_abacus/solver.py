@@ -100,7 +100,9 @@ class Algorithm(Enum):
     NO sign change — they follow the expression's own derivatives to zero from a single seed
     point, Newton along the tangent LINE and Halley along a tangent hyperbola carrying the
     curvature too (cubic convergence, for the same evaluation budget); ``NELDER_MEAD`` is
-    the multivariate downhill simplex (33.14). The enum value is the string reported in the
+    the multivariate downhill simplex (33.14) and ``BFGS`` its gradient-driven peer (33.13),
+    a quasi-Newton method that builds a curvature model from gradients alone — both drive
+    the ``variables`` form over n unknowns. The enum value is the string reported in the
     reply's ``algorithm`` field (32.3).
     """
 
@@ -116,6 +118,7 @@ class Algorithm(Enum):
     NEWTON_RAPHSON = "newton-raphson"  # one unknown, follow the tangent to zero (root only)
     HALLEY = "halley"  # one unknown, tangent hyperbola — Newton plus curvature (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
+    BFGS = "bfgs"  # n unknowns, quasi-Newton gradient descent (extrema only)
 
 
 # Never-surfaced spellings accepted alongside the canonical find-* names (32.2): the
@@ -201,6 +204,11 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     "nelder mead": Algorithm.NELDER_MEAD,
     "simplex": Algorithm.NELDER_MEAD,
     "downhill-simplex": Algorithm.NELDER_MEAD,
+    # 33.13: the -method and full-name spellings. Deliberately NOT ``quasi-newton`` — that
+    # names a FAMILY, and 33.17 (Broyden's, a quasi-Newton ROOT finder) will want it; a bare
+    # ``bfgs`` is unambiguous where ``quasi-newton`` would have to be reassigned later.
+    "bfgs-method": Algorithm.BFGS,
+    "broyden-fletcher-goldfarb-shanno": Algorithm.BFGS,
 }
 
 
@@ -867,14 +875,15 @@ MINIMISER_ENGINES: dict[Algorithm, _MinimiseLoop] = {
     Algorithm.NEWTON_OPTIMISE: _loop_newton_optimise,
 }
 
-# The minimisers that serve EXTREMA only. Every other engine in this family takes any
-# objective, because the fold (32.1) turns a root hunt into just another minimisation of
-# |expr|. A DERIVATIVE engine cannot follow it there: |expr| has a KINK exactly at the root
-# it would be aiming for — the slope jumps sign across it and the curvature the step
-# divides by is meaningless — so newton-optimise refuses find-root and names the engines
-# built for it instead. The mirror image of the find-root-only guards in
+# The minimisers that serve EXTREMA only — across BOTH the 1-D (`minimise`) and the
+# multivariate (`minimise_multivariate`) families. Every other engine takes any objective,
+# because the fold (32.1) turns a root hunt into just another minimisation of |expr|. A
+# GRADIENT engine cannot follow it there: |expr| has a KINK exactly at the root it would be
+# aiming for — the slope jumps sign across it and the curvature the step relies on is
+# meaningless — so newton-optimise (1-D) and bfgs (n-D) refuse find-root and name the
+# engines built for it instead. The mirror image of the find-root-only guards in
 # :func:`bracketed_root` and :func:`tangent_root`.
-_OPTIMISE_ONLY: frozenset[Algorithm] = frozenset({Algorithm.NEWTON_OPTIMISE})
+_OPTIMISE_ONLY: frozenset[Algorithm] = frozenset({Algorithm.NEWTON_OPTIMISE, Algorithm.BFGS})
 
 
 def minimise(
@@ -1924,12 +1933,173 @@ def _walk_nelder_mead(
     return iterations, timed_out
 
 
+_BFGS_ARMIJO_C1 = 1e-4  # Armijo sufficient-decrease constant: accept a step whose objective
+# drop is at least this fraction of the drop the local slope predicts. Small, so the line
+# search rejects only clearly bad steps.
+_BFGS_BACKTRACK = 0.5  # line-search step shrink per rejected trial (halve the distance)
+_BFGS_MAX_BACKTRACKS = 40  # give up the line search after this many halvings — 0.5**40 is
+# already far below any grid, so a direction that has not decreased the objective by then is
+# exhausted (a constrained optimum, or the objective is flat along it).
+
+
+def _descend_bfgs(
+    evaluate: _MultivEvaluate,
+    lowers: list[float],
+    uppers: list[float],
+    x_tol: float,
+    deadline: float,
+    h: float,
+) -> tuple[int, bool]:
+    """Quasi-Newton gradient descent with a BFGS inverse-Hessian model (33.13).
+
+    The multivariate gradient minimiser: it descends the folded objective ``g`` along
+    ``p = -H·∇g``, where ``H`` approximates the inverse Hessian and is refined each step from
+    the observed change in gradient — so it captures the curvature that steers Newton's
+    method WITHOUT ever forming (or inverting) a Hessian. On a smooth bowl it turns the
+    zig-zag of steepest descent into a near-direct run to the minimum, reaching in a handful
+    of iterations what the derivative-free simplex (:func:`_walk_nelder_mead`) takes dozens
+    of reflections to close. Extrema only — the harness's ``_OPTIMISE_ONLY`` guard has
+    already refused find-root, whose ``|expr|`` fold is not differentiable at the root.
+
+    THE GRADIENT. Numerical, each partial from the same five-point central stencil the
+    tangent engines use (:func:`tangent_root`) at the shared per-mode step ``h``, perturbing
+    ONE axis at a time: ``∂ᵢg ~ (g(x-2hᵢ) - g(x+2hᵢ) + 8(g(x+hᵢ) - g(x-hᵢ)))/(12h)``, 4n
+    evaluations. ``None`` when any sample leaves the domain (``+inf``) — no gradient to
+    descend, so the run stops with the best point kept. A probe may land just outside the
+    box; that feeds the difference only, never the reported best (the harness gates
+    best-tracking to in-box points).
+
+    THE STEP. Start at the box midpoint with ``H`` the identity (so the first step is plain
+    steepest descent), then each iteration: form the descent direction ``p = -H·g``; if
+    round-off leaves it non-descending (``g·p >= 0``) reset ``H`` to the identity. A
+    backtracking line search (Armijo, ``_BFGS_ARMIJO_C1``) starts at the full quasi-Newton
+    step and halves it until the objective drops enough, each trial CLAMPED into the box so
+    the iterate stays feasible. The inverse-Hessian model is then updated by the BFGS rank-2
+    formula ``H <- (I - ρ s yᵀ) H (I - ρ y sᵀ) + ρ s sᵀ`` (``s`` the step, ``y`` the gradient
+    change, ``ρ = 1/(y·s)``), skipped when ``y·s <= 0`` would break its positive-definiteness;
+    on the first successful step ``H`` is rescaled by ``(y·s)/(y·y)`` (Nocedal-Wright), the
+    standard fix for the identity's arbitrary units.
+
+    THE STOPS. A gradient norm below ``x_tol`` (standing at a stationary point), a step
+    shorter than ``x_tol`` (converged), a line search that cannot decrease the objective
+    (direction exhausted / a constrained optimum), or a gradient that leaves the domain —
+    plus the harness's ``_MAX_ITERATIONS`` / ``deadline``. As with newton-optimise, an
+    extremum is FLAT, so it is the line-search / step-size stop, not the gradient norm, that
+    usually settles the run.
+    """
+    n = len(lowers)
+
+    def clamp(point: list[float]) -> list[float]:
+        return [min(max(point[i], lowers[i]), uppers[i]) for i in range(n)]
+
+    def gradient(x: list[float], gx: float) -> list[float] | None:
+        # Per-axis five-point central stencil (40.17), the same diff() uses. ``gx`` is unused
+        # (the central stencil never samples the point itself) but taken for symmetry with
+        # the tangent engines and to document that the value at x is already in hand.
+        grad = [0.0] * n
+        for i in range(n):
+            xm2, xm1, xp1, xp2 = (list(x) for _ in range(4))
+            xm2[i] -= 2 * h
+            xm1[i] -= h
+            xp1[i] += h
+            xp2[i] += 2 * h
+            gm2, gm1, gp1, gp2 = evaluate(xm2), evaluate(xm1), evaluate(xp1), evaluate(xp2)
+            if not all(map(math.isfinite, (gm2, gm1, gp1, gp2))):
+                return None  # a stencil sample left the domain — no gradient here
+            grad[i] = (gm2 - gp2 + 8 * (gp1 - gm1)) / (12 * h)
+        return grad
+
+    def dot(u: list[float], v: list[float]) -> float:
+        return sum(u[i] * v[i] for i in range(n))
+
+    # Seed at the box midpoint; H starts as the identity, so the first move is steepest
+    # descent until an update gives it curvature.
+    x = [(lowers[i] + uppers[i]) / 2 for i in range(n)]
+    gx = evaluate(x)
+    grad = gradient(x, gx)
+    identity = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    hessinv = [row[:] for row in identity]
+
+    iterations = 0
+    timed_out = False
+    first_update = True
+    while iterations < _MAX_ITERATIONS and grad is not None:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        if math.sqrt(dot(grad, grad)) <= x_tol:
+            break  # a flat gradient — standing at a stationary point
+        # Direction p = -H·grad; fall back to steepest descent if H has drifted non-descending.
+        direction = [-dot(hessinv[i], grad) for i in range(n)]
+        slope = dot(grad, direction)
+        if slope >= 0.0:
+            hessinv = [row[:] for row in identity]
+            direction = [-grad[i] for i in range(n)]
+            slope = dot(grad, direction)
+
+        # Backtracking Armijo line search, each trial clamped into the box.
+        alpha = 1.0
+        x_next: list[float] | None = None
+        g_next = gx
+        for _ in range(_BFGS_MAX_BACKTRACKS):
+            trial = clamp([x[i] + alpha * direction[i] for i in range(n)])
+            g_trial = evaluate(trial)
+            if g_trial <= gx + _BFGS_ARMIJO_C1 * alpha * slope:
+                x_next, g_next = trial, g_trial
+                break
+            alpha *= _BFGS_BACKTRACK
+        if x_next is None:
+            break  # no downhill step along this direction — exhausted / at the box edge
+
+        s = [x_next[i] - x[i] for i in range(n)]
+        grad_next = gradient(x_next, g_next)
+        converged = max(abs(si) for si in s) <= x_tol
+        if grad_next is None:
+            x, gx, grad = x_next, g_next, None  # accept the point; no gradient to go on
+            iterations += 1
+            break
+        y = [grad_next[i] - grad[i] for i in range(n)]
+        sy = dot(s, y)
+        if sy > 0.0:  # curvature condition holds — safe to refresh the inverse-Hessian model
+            if first_update:  # rescale the identity to the problem's units (Nocedal-Wright)
+                yy = dot(y, y)
+                if yy > 0.0:
+                    scale = sy / yy
+                    hessinv = [[scale if i == j else 0.0 for j in range(n)] for i in range(n)]
+                first_update = False
+            rho = 1.0 / sy
+            # H <- (I - ρ s yᵀ) H (I - ρ y sᵀ) + ρ s sᵀ, built term by term (n small).
+            left = [
+                [(1.0 if i == j else 0.0) - rho * s[i] * y[j] for j in range(n)] for i in range(n)
+            ]
+            temp = [
+                [sum(left[i][k] * hessinv[k][j] for k in range(n)) for j in range(n)]
+                for i in range(n)
+            ]
+            right = [
+                [(1.0 if i == j else 0.0) - rho * y[i] * s[j] for j in range(n)] for i in range(n)
+            ]
+            hessinv = [
+                [
+                    sum(temp[i][k] * right[k][j] for k in range(n)) + rho * s[i] * s[j]
+                    for j in range(n)
+                ]
+                for i in range(n)
+            ]
+        x, gx, grad = x_next, g_next, grad_next
+        iterations += 1
+        if converged:  # the last step moved less than the mode resolves
+            break
+    return iterations, timed_out
+
+
 # Every multivariate minimiser this build has, by the Algorithm the caller names (32.3).
 # Membership doubles as the "is this a multivariate engine?" test the server dispatches on,
 # so registering an engine here is all it takes to expose it — and to admit the `variables`
 # form, which needs one of these.
 MULTIVARIATE_ENGINES: dict[Algorithm, _MultivariateCore] = {
     Algorithm.NELDER_MEAD: _walk_nelder_mead,
+    Algorithm.BFGS: _descend_bfgs,
 }
 
 

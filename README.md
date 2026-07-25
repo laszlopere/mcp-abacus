@@ -71,8 +71,10 @@ type; it calculates *using* that type.
   or the bracket-free `algorithm="newton-raphson"` / `"halley"`, which follow the
   expression's own derivatives and so also reach a root that only *touches* zero); pass
   `variables`
-  (a name → `[lower, upper]` map) with `algorithm="nelder-mead"` to solve several
-  jointly with a *Nelder-Mead* simplex
+  (a name → `[lower, upper]` map) with a multivariate engine to solve several jointly —
+  `algorithm="nelder-mead"` for the derivative-free *Nelder-Mead* simplex (any objective),
+  or `algorithm="bfgs"` for quasi-Newton gradient descent (extrema only, far fewer
+  iterations on a smooth bowl)
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report
   each fitted equation with its error. Hand over the data and it estimates, for the
   straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`,
