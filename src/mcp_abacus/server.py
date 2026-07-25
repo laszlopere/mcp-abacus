@@ -789,8 +789,9 @@ def solver(
             description=(
                 "MULTIPLE-unknown form: dict mapping each unknown name to its "
                 '[lower, upper] bracket, e.g. {"x": [0, 5], "y": [-4, 2]}; '
-                "requires algorithm='nelder-mead'. Give EXACTLY ONE input form: "
-                "this, OR `variable`+`lower`+`upper` (never both, never neither)."
+                "requires a multivariate algorithm ('nelder-mead', 'powell' or 'bfgs'). "
+                "Give EXACTLY ONE input form: this, OR `variable`+`lower`+`upper` "
+                "(never both, never neither)."
             )
         ),
     ] = None,
@@ -820,7 +821,10 @@ def solver(
                 "derivatives instead of bracketing, so they also reach a root that only "
                 "TOUCHES zero; halley adds the curvature to newton's slope and converges "
                 "cubically for the same cost), or — for the `variables` form — "
-                "'nelder-mead' (derivative-free simplex, any objective) or 'bfgs' "
+                "'nelder-mead' (derivative-free simplex, any objective), 'powell' "
+                "(derivative-free too, any objective: a sweep of line minimisations "
+                "along directions it re-aims each pass, usually reaching a smooth "
+                "minimum in far fewer evaluations than the simplex) or 'bfgs' "
                 "(quasi-Newton gradient descent, find-minimum / find-maximum only; far "
                 "fewer iterations than nelder-mead on a smooth bowl)."
             )
@@ -867,8 +871,9 @@ def solver(
         exactly one free name; the solver then auto-detects it (e.g. `n` in
         `12*n - (450 + 3*n)`), needing only `lower` + `upper`.
       - MULTIPLE: `variables` — a dict mapping each unknown name to its `[lower, upper]`
-        bracket, e.g. `{"x": [0, 5], "y": [-4, 2]}`. This needs the Nelder-Mead engine
-        (`algorithm="nelder-mead"`), which searches all the unknowns jointly.
+        bracket, e.g. `{"x": [0, 5], "y": [-4, 2]}`. This needs a multivariate engine
+        (`algorithm="nelder-mead"`, `"powell"` or `"bfgs"`), which searches all the
+        unknowns jointly.
     Give exactly one of the two forms. Each unknown must OCCUR in the expression and
     must NOT be assigned by it; every OTHER name is a constant the program sets via an
     assignment line (e.g. `"r = 0.05\\np = 1000\\np * (1 + r)**n - 2000"` solving for
@@ -897,10 +902,15 @@ def solver(
     of the bracket, with the derivatives taken numerically and every step fenced back into
     `[lower, upper]`. Fastest of all on a smooth root, and the only engines that reach a
     root which merely TOUCHES zero without crossing, where the sign-change engines report
-    "no sign change"), or "nelder-mead" (multivariate, a bounds-clamped downhill simplex).
-    The nine single-variable engines solve only the SINGLE form; the `variables` form
-    requires "nelder-mead". (`golden`, `brent`, `bisect`, `ridder`, `brent-root`,
-    `newton`, `simplex` and a few other spellings are accepted too — note bare `brent`
+    "no sign change"), or one of the three MULTIVARIATE engines — "nelder-mead" (a
+    bounds-clamped downhill simplex), "powell" (derivative-free too: each iteration sweeps
+    a full bounded line minimisation along every one of n directions, and re-aims that
+    direction set at the sweep's own net displacement, so it follows a diagonal valley the
+    simplex can only feel out — usually the fewest evaluations of the three on a smooth
+    objective) or "bfgs" (quasi-Newton gradient descent, find-minimum / find-maximum only).
+    The single-variable engines solve only the SINGLE form; the `variables` form requires a
+    multivariate one. (`golden`, `brent`, `bisect`, `ridder`, `brent-root`, `newton`,
+    `simplex`, `powells` and a few other spellings are accepted too — note bare `brent`
     names the PARABOLIC MINIMISER, while Brent's root method is `brent-dekker`.)
 
     `mode` and `min_fixed_point_precision` behave as in `calculate` — the search runs
@@ -972,9 +982,10 @@ def solver(
             validate_bracket(lo, hi)
             validate_unknown(node, name)
         if resolved_algorithm in MULTIVARIATE_ENGINES:
-            # A multivariate minimiser — nelder-mead or bfgs. One harness serves them all
-            # (33.14/33.13), picking the search core by algorithm, so a new multivariate
-            # engine needs no branch here. These are the engines the `variables` form needs.
+            # A multivariate minimiser — nelder-mead, powell or bfgs. One harness serves
+            # them all (33.14/33.13/33.18), picking the search core by algorithm, so a new
+            # multivariate engine needs no branch here. These are the engines the
+            # `variables` form needs.
             result = minimise_multivariate(
                 node, unknowns, selected, floor, resolved_objective, resolved_algorithm
             )
@@ -1028,13 +1039,14 @@ def _resolve_unknowns(
 
     Exactly one form must be given: the scalar `variable` + `lower` + `upper` trio, or
     the `variables` dict of `name -> [lower, upper]`. The `variables` form is
-    multivariate and so requires the Nelder-Mead engine — golden-section drives a
-    single unknown only. In the single form `variable` may be OMITTED, in which case
-    the unknown is auto-detected from `node` as the expression's sole free name (43.3);
-    `lower` + `upper` are still required. Raises SolverError on a missing/double form,
-    a malformed `variables` entry, golden-section asked for multiple unknowns, or an
-    ambiguous/empty auto-detect. (Whether each bracket has width, and whether each name
-    occurs in the program, is checked later by validate_bracket / validate_unknown.)
+    multivariate and so requires one of the MULTIVARIATE_ENGINES (nelder-mead, powell,
+    bfgs) — golden-section drives a single unknown only. In the single form `variable`
+    may be OMITTED, in which case the unknown is auto-detected from `node` as the
+    expression's sole free name (43.3); `lower` + `upper` are still required. Raises
+    SolverError on a missing/double form, a malformed `variables` entry, a single-variable
+    engine asked for multiple unknowns, or an ambiguous/empty auto-detect. (Whether each
+    bracket has width, and whether each name occurs in the program, is checked later by
+    validate_bracket / validate_unknown.)
     """
     has_single = variable is not None or lower is not None or upper is not None
     has_multi = variables is not None
@@ -1047,8 +1059,8 @@ def _resolve_unknowns(
         if algorithm not in MULTIVARIATE_ENGINES:
             raise SolverError(
                 f"The {algorithm.value!r} algorithm solves a single variable; pass a "
-                f"multivariate algorithm (nelder-mead or bfgs) to solve for multiple "
-                f"unknowns."
+                f"multivariate algorithm (nelder-mead, powell or bfgs) to solve for "
+                f"multiple unknowns."
             )
         if not variables:
             raise SolverError("No unknowns given: 'variables' is empty.")

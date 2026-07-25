@@ -587,19 +587,261 @@ def test_bfgs_two_variable_minimum_snaps_to_integers():
 
 
 def test_bfgs_rejects_the_single_form_is_not_required():
-    # The `variables` form now accepts either multivariate engine; the refusal message for a
-    # single-variable engine names both, so a caller reaching for a multivariate solve is
-    # pointed at the whole set.
+    # The `variables` form accepts any multivariate engine; the refusal message for a
+    # single-variable engine names them all, so a caller reaching for a multivariate solve
+    # is pointed at the whole set.
     program = _annotated(
         "golden-section asked for the variables form — refused, it is single-variable\n"
-        "(the message now names both multivariate engines: nelder-mead or bfgs)",
+        "(the message names every multivariate engine: nelder-mead, powell or bfgs)",
         "x + y",
     )
     payload = _solve(
         program, variables={"x": [0, 1], "y": [0, 1]}, algorithm="golden-section-search"
     )
     assert payload["solution"] is None and payload["solutions"] is None
-    assert "nelder-mead or bfgs" in payload["error"]
+    assert "nelder-mead, powell or bfgs" in payload["error"]
+
+
+# --- Powell: the multivariate direction-set minimiser (33.18) -----------------
+# The third engine for the `variables` form: it reduces the n-dimensional search to a SWEEP
+# of one-dimensional ones, minimising along each of n directions in turn (each a bounded
+# brent-parabolic line search) and then re-aiming that direction set at the sweep's own net
+# displacement — which is what lets it run along a diagonal valley the coordinate axes alone
+# would have to zig-zag down. Derivative-free like nelder-mead, so unlike bfgs it takes
+# find-root too; and because each iteration is n whole line searches, its iteration count is
+# not comparable with the simplex's per-reflection one.
+
+
+def test_powell_finds_a_two_variable_minimum():
+    program = _annotated(
+        "find-minimum of a 2-var paraboloid over x in [0, 5], y in [-4, 2] via Powell\n"
+        "single minimum at (3, -1), value 0 — one line search per axis lands it",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [-4, 2]},
+        objective="find-minimum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-minimum"
+    assert payload["algorithm"] == "powell"
+    assert payload["solution"] is None  # multivariate: every unknown is in `solutions`
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(3.0, abs=1e-6)
+    assert found["y"] == pytest.approx(-1.0, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_powell_finds_a_two_variable_maximum():
+    program = _annotated(
+        "find-maximum of a 2-var dome over x in [-2, 4], y in [-5, 1] via Powell\n"
+        "the fold negates the expression, so the peak (1, -2), value 5, is the min it seeks",
+        "5 - (x - 1)**2 - (y + 2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-2, 4], "y": [-5, 1]},
+        objective="find-maximum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    assert payload["objective"] == "find-maximum"
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-6)
+    assert found["y"] == pytest.approx(-2.0, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(5.0, abs=1e-9)
+
+
+def test_powell_solves_a_multivariate_root():
+    # What Powell has and bfgs has not: being derivative-free it ORDERS objective values
+    # rather than differentiating them, so find-root's kinked |expr| is no obstacle. Here
+    # the root is a whole circle, and any point of it is a correct answer.
+    program = _annotated(
+        "find-root of x**2 + y**2 - 2 over x, y in [0, 2] via Powell\n"
+        "the roots form a circle of radius sqrt(2); |expr| must reach zero on it",
+        "x**2 + y**2 - 2",
+    )
+    payload = _solve(program, variables={"x": [0, 2], "y": [0, 2]}, algorithm="powell")
+    assert payload["error"] is None
+    assert payload["objective"] == "find-root"
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] ** 2 + found["y"] ** 2 == pytest.approx(2.0, abs=1e-6)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_powell_runs_down_a_diagonal_valley():
+    # The reason the direction set is re-aimed at all. This bowl is steep across the
+    # x + y = 3 line and shallow along it, so minimising x and y in turn creeps down in
+    # tiny alternating steps; the net-displacement direction adopted after a sweep points
+    # STRAIGHT along the valley floor, and a handful of sweeps is then enough.
+    program = _annotated(
+        "find-minimum of 1000*(x + y - 3)**2 + (x - y - 1)**2 over [-5, 5]^2 via Powell\n"
+        "a narrow diagonal valley with its floor at (2, 1), value 0 — axis-aligned steps crawl",
+        "1000*(x + y - 3)**2 + (x - y - 1)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-5, 5], "y": [-5, 5]},
+        objective="find-minimum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(2.0, abs=1e-5)
+    assert found["y"] == pytest.approx(1.0, abs=1e-5)
+    assert payload["iterations"] <= 8  # sweeps, each n line searches — not the simplex's count
+
+
+def test_powell_solves_the_rosenbrock_valley():
+    # The same curved, nearly-flat valley bfgs is put through, without a single derivative:
+    # evidence that the direction set really is adapting, since the coordinate axes alone
+    # cannot follow a bend.
+    program = _annotated(
+        "find-minimum of the Rosenbrock function (1-x)**2 + 100*(y - x**2)**2 via Powell\n"
+        "a banana-shaped valley with its floor at (1, 1), value 0",
+        "(1 - x)**2 + 100*(y - x**2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-2, 2], "y": [-1, 3]},
+        objective="find-minimum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(1.0, abs=1e-4)
+    assert found["y"] == pytest.approx(1.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-8)
+
+
+def test_powell_agrees_with_nelder_mead_on_the_same_bowl():
+    # Two derivative-free engines, one problem: they must land the same point. What differs
+    # is how they get there — a sweep of line searches against a walk of reflections.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 + (y + 1)**2 — one bowl, two derivative-free engines\n"
+        "Powell line-minimises along directions; Nelder-Mead reflects a simplex",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    common = {"variables": {"x": [0, 5], "y": [-4, 2]}, "objective": "find-minimum"}
+    powell = _solve(program, algorithm="powell", **common)
+    nelder = _solve(program, algorithm="nelder-mead", **common)
+    assert powell["error"] is None and nelder["error"] is None
+    powell_pt = {e["variable"]: _num(e["solution"]) for e in powell["solutions"]}
+    nelder_pt = {e["variable"]: _num(e["solution"]) for e in nelder["solutions"]}
+    assert powell_pt["x"] == pytest.approx(nelder_pt["x"], abs=1e-3)
+    assert powell_pt["y"] == pytest.approx(nelder_pt["y"], abs=1e-3)
+
+
+def test_powell_keeps_its_answer_inside_the_box():
+    # Every trial point comes from a line search over the segment where the direction meets
+    # the box, so the search cannot step outside it in the first place. The unconstrained
+    # minimum here sits just past the [0, 5]^2 corner, and the answer must clamp to (0, 0).
+    program = _annotated(
+        "find-minimum of (x + 0.001)**2 + (y + 0.001)**2 over [0, 5]^2 via Powell\n"
+        "the true minimum is OUTSIDE the box; the answer must sit on its corner",
+        "(x + 0.001)**2 + (y + 0.001)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [0, 5]},
+        objective="find-minimum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    for entry in payload["solutions"]:
+        assert 0.0 <= _num(entry["solution"]) <= 5.0
+        assert _num(entry["solution"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_powell_handles_a_domain_error_region():
+    # sqrt(x) is undefined below 0, so the left part of the x-range folds to +inf and a line
+    # search along x runs over a segment half of which is unevaluable. The minimum of
+    # sqrt(x) + (y - 2)**2 is at the corner (0, 2), where sqrt bottoms out.
+    program = _annotated(
+        "find-minimum of sqrt(x) + (y - 2)**2 over x in [-1, 4], y in [0, 4] via Powell\n"
+        "x < 0 is a domain error (+inf); expect (0, 2), value 0",
+        "sqrt(x) + (y - 2)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [-1, 4], "y": [0, 4]},
+        objective="find-minimum",
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == pytest.approx(0.0, abs=1e-4)
+    assert found["y"] == pytest.approx(2.0, abs=1e-4)
+    assert _num(payload["value"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_powell_solves_a_single_variable_minimum():
+    # n = 1 is the degenerate case: one direction, so a sweep is a single bounded line
+    # search — the multivariate engine collapsing to the 1-D minimiser it is built from.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 over [0, 5] via Powell in the single-variable form\n"
+        "expect x = 3, value 0",
+        "(x - 3)**2",
+    )
+    payload = _solve(
+        program, variable="x", lower=0, upper=5, objective="find-minimum", algorithm="powell"
+    )
+    assert payload["error"] is None
+    assert _num(payload["solution"]) == pytest.approx(3.0, abs=1e-6)
+    assert [entry["variable"] for entry in payload["solutions"]] == ["x"]
+
+
+def test_powell_two_variable_minimum_snaps_to_integers():
+    # The per-axis grid polish applies here as to the other multivariate engines: a
+    # fixed-point estimate landing within one grid step of the integer minimum is pinned
+    # to it exactly, and the reply is then EXACT rather than approximate.
+    program = _annotated(
+        "find-minimum of (x - 3)**2 + (y - 7)**2 over [0, 6] x [0, 12], fixed-point via Powell\n"
+        "expect (3, 7) exactly, an EXACT zero at the vertex (grid polish)",
+        "(x - 3)**2 + (y - 7)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 6], "y": [0, 12]},
+        objective="find-minimum",
+        mode="fixed-point",
+        floor=6,
+        algorithm="powell",
+    )
+    assert payload["error"] is None
+    found = {entry["variable"]: _num(entry["solution"]) for entry in payload["solutions"]}
+    assert found["x"] == 3.0 and found["y"] == 7.0
+    assert payload["exact"] is True
+
+
+def test_powell_reports_no_solution_naming_the_point():
+    program = _annotated(
+        "find-root of x**2 + y**2 + 1 over x, y in [-1, 1] via Powell\n"
+        "no solution: never zero; closest is 1 at the origin. The error names\n"
+        "the full multivariate point it reached",
+        "x**2 + y**2 + 1",
+    )
+    payload = _solve(program, variables={"x": [-1, 1], "y": [-1, 1]}, algorithm="powell")
+    assert payload["solution"] is None and payload["solutions"] is None
+    message = payload["error"]
+    assert "No solution" in message and "x =" in message and "y =" in message
+
+
+def test_powell_alias_resolves_to_canonical():
+    program = _annotated(
+        "find-minimum via the 'direction-set' alias — resolves to canonical 'powell'",
+        "(x - 3)**2 + (y + 1)**2",
+    )
+    payload = _solve(
+        program,
+        variables={"x": [0, 5], "y": [-4, 2]},
+        objective="find-minimum",
+        algorithm="direction-set",
+    )
+    assert payload["error"] is None
+    assert payload["algorithm"] == "powell"
 
 
 # --- Brent parabolic: the single-variable optimise alternative (33.12) --------

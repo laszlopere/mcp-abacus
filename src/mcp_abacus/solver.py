@@ -8,10 +8,13 @@ Built up item by item (TODO 31); the strategy vocabulary reworked in TODO 32. Th
 looks for; the `algorithm` argument names HOW it searches. The engines (TODO 33) fall
 into two families.
 
-The MINIMISERS drive the folded objective (fold_objective(), 32.1) to its least, so
-every objective works on any of them: golden-section search (31.7) and Brent's parabolic
-minimiser (33.12) shrink a 1-D bracket, Nelder-Mead (33.14) walks a simplex over n
-unknowns — multivariate, bounds-clamped to each bracket.
+The MINIMISERS drive the folded objective (fold_objective(), 32.1) to its least, so every
+objective works on any of them EXCEPT the two gradient ones (see `_OPTIMISE_ONLY`):
+golden-section search (31.7), Brent's parabolic minimiser (33.12) and ternary search (33.6)
+shrink a 1-D bracket while newton-optimise (33.13) steps to the zero of the objective's
+slope, and over n unknowns — multivariate, bounds-clamped to each bracket — Nelder-Mead
+(33.14) walks a simplex, Powell (33.18) sweeps line searches along an evolving direction
+set, and BFGS (33.13) descends a quasi-Newton gradient model.
 
 The BRACKETERS are find-root only: rather than minimising |expr| they hunt a SIGN CHANGE
 of the raw signed expression and shrink the straddling interval. Bisection (33.1) halves
@@ -100,10 +103,13 @@ class Algorithm(Enum):
     NO sign change — they follow the expression's own derivatives to zero from a single seed
     point, Newton along the tangent LINE and Halley along a tangent hyperbola carrying the
     curvature too (cubic convergence, for the same evaluation budget); ``NELDER_MEAD`` is
-    the multivariate downhill simplex (33.14) and ``BFGS`` its gradient-driven peer (33.13),
-    a quasi-Newton method that builds a curvature model from gradients alone — both drive
-    the ``variables`` form over n unknowns. The enum value is the string reported in the
-    reply's ``algorithm`` field (32.3).
+    the multivariate downhill simplex (33.14), ``BFGS`` its gradient-driven peer (33.13),
+    a quasi-Newton method that builds a curvature model from gradients alone, and
+    ``POWELL`` (33.18) the third, derivative-free like the simplex but working by MINIMISING
+    ALONG DIRECTIONS — a sweep of bounded line searches over a direction set it re-aims each
+    pass at the sweep's own net displacement — all three driving the ``variables`` form over
+    n unknowns. The enum value is the string reported in the reply's ``algorithm`` field
+    (32.3).
     """
 
     GOLDEN_SECTION = "golden-section-search"  # one unknown, shrink a bracket
@@ -118,6 +124,7 @@ class Algorithm(Enum):
     NEWTON_RAPHSON = "newton-raphson"  # one unknown, follow the tangent to zero (root only)
     HALLEY = "halley"  # one unknown, tangent hyperbola — Newton plus curvature (root only)
     NELDER_MEAD = "nelder-mead"  # n unknowns, walk a simplex downhill
+    POWELL = "powell"  # n unknowns, line-minimise along an evolving direction set
     BFGS = "bfgs"  # n unknowns, quasi-Newton gradient descent (extrema only)
 
 
@@ -209,6 +216,13 @@ _ALGORITHM_ALIASES: dict[str, Algorithm] = {
     # ``bfgs`` is unambiguous where ``quasi-newton`` would have to be reassigned later.
     "bfgs-method": Algorithm.BFGS,
     "broyden-fletcher-goldfarb-shanno": Algorithm.BFGS,
+    # 33.18: the possessive spellings, and Numerical Recipes' own name for the method.
+    # Deliberately NOT ``conjugate-directions`` — near enough to 33.19's conjugate GRADIENT
+    # to mislead a caller who means that one; ``powell`` itself is unambiguous.
+    "powells": Algorithm.POWELL,
+    "powell-method": Algorithm.POWELL,
+    "powells-method": Algorithm.POWELL,
+    "direction-set": Algorithm.POWELL,
 }
 
 
@@ -509,8 +523,9 @@ def _polish_best(
     Skipped when nothing evaluated, and on timeout: the hard cap is already spent, so
     there is no budget for extra probes.
 
-    Nelder-Mead does NOT use this: its grid polish walks each axis of an n-dimensional
-    point and clamps to the box, so it keeps its own (see :func:`minimise_multivariate`).
+    The multivariate engines do NOT use this: their grid polish walks each axis of an
+    n-dimensional point and clamps to the box, so that family keeps its own (see
+    :func:`minimise_multivariate`).
     """
     if best_solution is None or timed_out:
         return
@@ -552,8 +567,11 @@ def _polish_best(
 # and so could not share THAT harness. Ternary (33.6) was the engine whose arrival made a
 # third hand-rolled copy the alternative; it landed as just its ~20-line loop.
 #
-# Nelder-Mead (33.14) stays outside: it is multivariate, so its bracket, its polish and
-# its result are all n-dimensional and nothing here fits it.
+# The multivariate engines stay outside: their bracket, their polish and their result are
+# all n-dimensional and nothing here fits them. One of them does REUSE a loop from here
+# though — Powell (33.18) reduces its n-dimensional search to a sweep of 1-D line searches,
+# and each of those is `_loop_brent_parabolic` run over the segment where the line meets
+# the box. So a loop below serves both as a 1-D engine and as a component of an n-D one.
 
 # The candidate evaluator a minimiser loop is handed: returns the FOLDED objective at x.
 # A DOMAIN error there yields ``+inf`` — the point simply looks maximally bad, so the loop
@@ -1813,7 +1831,7 @@ def tangent_root(
     )
 
 
-# --- The multivariate minimisers: one harness, N search cores (33.14 / 33.13) -
+# --- The multivariate minimisers: one harness, N search cores (33.14 / 33.13 / 33.18) -
 # The n-dimensional peer of the `minimise` family: where those drive a scalar over a 1-D
 # bracket, these drive a VECTOR of n unknowns over a box (a per-axis [lower, upper]) toward
 # the LEAST of the folded objective (fold_objective(), 32.1) — |expr| for a find-root,
@@ -1828,10 +1846,12 @@ def tangent_root(
 # its core: a `_walk_*` / `_descend_*` function driving the box, registered in
 # MULTIVARIATE_ENGINES. This is the same split 33.25 made for the bracketers, 33.6 for the
 # 1-D minimisers, and tangent_root for the derivative roots — now for the multivariate ones,
-# so Nelder-Mead (33.14, derivative-free) and BFGS (33.13, gradient) share one frame.
+# so Nelder-Mead (33.14, derivative-free), BFGS (33.13, gradient) and Powell (33.18, a
+# direction set of 1-D line searches) share one frame.
 #
-# Nelder-Mead walks a simplex and takes any objective; BFGS descends the gradient and, like
-# newton-optimise, cannot follow the kinked |expr| of a find-root — see _OPTIMISE_ONLY.
+# Nelder-Mead walks a simplex and Powell sweeps line searches, so both take any objective;
+# BFGS descends the gradient and, like newton-optimise, cannot follow the kinked |expr| of a
+# find-root — see _OPTIMISE_ONLY.
 
 _NM_REFLECT = 1.0  # α — reflect the worst vertex through the centroid
 _NM_EXPAND = 2.0  # γ — push further when reflection found a new best
@@ -1848,8 +1868,9 @@ _MultivEvaluate = Callable[[list[float]], float]
 # A core: drive the box toward the objective's least, evaluating through the callable, and
 # return ``(iterations, timed_out)``. It owns its whole convergence; the best point reaches
 # the harness through the evaluator's side effect. ``lowers`` / ``uppers`` are the per-axis
-# bounds and ``h`` the finite-difference step (only a gradient core needs it; the simplex
-# core ignores it) — the n-D analogue of `_MinimiseLoop`'s ``(a, b, …, h)``.
+# bounds and ``h`` the finite-difference step (only a gradient core needs it; the
+# derivative-free cores ignore or merely forward it) — the n-D analogue of `_MinimiseLoop`'s
+# ``(a, b, …, h)``.
 _MultivariateCore = Callable[
     [_MultivEvaluate, list[float], list[float], float, float, float], tuple[int, bool]
 ]
@@ -1930,6 +1951,149 @@ def _walk_nelder_mead(
                     simplex[k] = along(best_vertex, _NM_SHRINK, simplex[k])
                     fvals[k] = evaluate(simplex[k])
         iterations += 1
+    return iterations, timed_out
+
+
+def _walk_powell(
+    evaluate: _MultivEvaluate,
+    lowers: list[float],
+    uppers: list[float],
+    x_tol: float,
+    deadline: float,
+    h: float,  # forwarded to the 1-D line minimiser, which is itself derivative-free
+) -> tuple[int, bool]:
+    """Sweep bounded line minimisations along an evolving direction set (33.18).
+
+    Powell's method — Numerical Recipes' "direction set" method: reduce the n-dimensional
+    problem to a sequence of ONE-dimensional ones. Hold n search directions, and each
+    iteration minimise along every one of them in turn, each a full bounded line search
+    (:func:`_loop_brent_parabolic`, the same parabolic minimiser the single-unknown
+    ``brent-parabolic`` engine offers, run over the segment where the line meets the box).
+    So the reported ``iterations`` here counts SWEEPS, each already worth n line searches —
+    not comparable with the simplex's per-reflection count.
+
+    Derivative-free, like :func:`_walk_nelder_mead` and unlike :func:`_descend_bfgs`: it
+    only ever ORDERS objective values, so it serves every objective, find-root's kinked
+    ``|expr|`` included. What it buys over the simplex is the direction set's re-aiming
+    (below), which follows a curved valley the simplex can only feel out vertex by vertex;
+    what it costs is evaluations, a whole line search where a reflection is one point.
+
+    THE LINE SEARCH. Each direction is normalised to unit length, so the line parameter
+    ``t`` is a distance in the box's own units and the harness's ``x_tol`` applies to it
+    unchanged. The feasible ``[t_lo, t_hi]`` is the interval where ``x + t·u`` stays inside
+    every axis's bracket, so the search is BOUNDED and every trial point in-box; ``t = 0``
+    (the current point) seeds the running best, so a line can only improve the objective.
+    A line whose feasible span is already below ``x_tol`` is skipped as degenerate.
+
+    THE DIRECTIONS. They start as the coordinate axes, which alone would leave the method
+    minimising one variable at a time — hopeless in a diagonal valley. So after each sweep
+    Powell considers replacing one of them with the sweep's NET displacement, the direction
+    the whole pass actually travelled, which on a quadratic builds up a mutually conjugate
+    set (and hence exact convergence in n sweeps). Replacing blindly would let the set
+    collapse toward linear dependence, so the classic test guards it: extrapolate one full
+    displacement beyond the sweep's end and adopt the new direction only if that point still
+    improves on the sweep's start AND the sweep's decrease was not dominated by a single
+    direction (the ``t < 0`` test). When adopted, it replaces the direction that gave the
+    largest single decrease — the one most nearly along it, and so the most redundant.
+
+    THE STOPS. A sweep whose net displacement is below ``x_tol`` on every axis (the point
+    stopped moving), plus the harness's ``_MAX_ITERATIONS`` and ``deadline`` — the latter
+    also surfacing from inside a line search, which can exhaust the wall clock on its own.
+    """
+    n = len(lowers)
+
+    def clamp(point: list[float]) -> list[float]:
+        return [min(max(point[i], lowers[i]), uppers[i]) for i in range(n)]
+
+    def feasible_span(point: list[float], unit: list[float]) -> tuple[float, float]:
+        # The t-range over which point + t*unit stays inside the box: each axis with a
+        # nonzero component fences t from both sides, and a unit direction has at least
+        # one, so both ends come out finite. Contains t = 0, the (in-box) point itself.
+        t_lo, t_hi = -math.inf, math.inf
+        for i in range(n):
+            if unit[i] == 0.0:
+                continue  # this axis never moves — it constrains nothing
+            lo = (lowers[i] - point[i]) / unit[i]
+            hi = (uppers[i] - point[i]) / unit[i]
+            if unit[i] < 0.0:
+                lo, hi = hi, lo  # a negative component flips which end is which
+            t_lo, t_hi = max(t_lo, lo), min(t_hi, hi)
+        return t_lo, t_hi
+
+    def line_minimise(
+        point: list[float], direction: list[float], base: float
+    ) -> tuple[list[float], float, bool]:
+        # Minimise along `direction` from `point` (whose objective is `base`), bounded by
+        # the box. Returns the new point, its objective, and whether the wall clock ran out.
+        norm = math.sqrt(sum(d * d for d in direction))
+        if norm == 0.0:
+            return point, base, False  # a direction that goes nowhere
+        unit = [d / norm for d in direction]
+        t_lo, t_hi = feasible_span(point, unit)
+        if t_hi - t_lo <= x_tol:
+            return point, base, False  # the line barely fits in the box — nothing to search
+        best_t, best_obj = 0.0, base
+
+        def probe(t: float) -> float:
+            nonlocal best_t, best_obj
+            trial = clamp([point[i] + t * unit[i] for i in range(n)])
+            value = evaluate(trial)
+            if value < best_obj:
+                best_t, best_obj = t, value
+            return value
+
+        _, line_timed_out = _loop_brent_parabolic(t_lo, t_hi, probe, x_tol, deadline, h)
+        return clamp([point[i] + best_t * unit[i] for i in range(n)]), best_obj, line_timed_out
+
+    # Seed at the box midpoint (as the other multivariate cores do) with the coordinate axes
+    # as the starting directions.
+    x = [(lowers[i] + uppers[i]) / 2 for i in range(n)]
+    fx = evaluate(x)
+    directions = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+
+    iterations = 0
+    timed_out = False
+    while iterations < _MAX_ITERATIONS:
+        if time.monotonic() >= deadline:
+            timed_out = True  # hard 2s cap reached — stop with the best seen so far
+            break
+        start, f_start = list(x), fx
+        biggest_drop, biggest_index = 0.0, 0  # the sweep's most productive direction
+        for index in range(n):
+            f_before = fx
+            x, fx, line_timed_out = line_minimise(x, directions[index], fx)
+            if f_before - fx > biggest_drop:
+                biggest_drop, biggest_index = f_before - fx, index
+            if line_timed_out:
+                timed_out = True
+                break
+        iterations += 1
+        if timed_out:
+            break
+        displacement = [x[i] - start[i] for i in range(n)]
+        if max(abs(d) for d in displacement) <= x_tol:
+            break  # the whole sweep moved less than the mode resolves — converged
+        # Powell's direction-replacement test. `extrapolated` is one further displacement
+        # beyond where the sweep landed: if the objective is still falling out there the net
+        # direction is worth keeping, and `t < 0` is the second half of the classic test —
+        # it fails when the sweep's decrease came overwhelmingly from ONE direction, the case
+        # where adopting the net direction would make the set near-dependent. (A +inf from a
+        # domain error, or the nan an inf difference can produce, simply fails both tests.)
+        extrapolated = clamp([x[i] + displacement[i] for i in range(n)])
+        f_extra = evaluate(extrapolated)
+        if f_extra < f_start:
+            t = 2.0 * (f_start - 2.0 * fx + f_extra) * (f_start - fx - biggest_drop) ** 2 - (
+                biggest_drop * (f_start - f_extra) ** 2
+            )
+            if t < 0.0:
+                x, fx, line_timed_out = line_minimise(x, displacement, fx)
+                # Drop the most redundant direction, keeping the set's order: the last
+                # direction fills the freed slot and the new one goes last.
+                directions[biggest_index] = directions[n - 1]
+                directions[n - 1] = displacement
+                if line_timed_out:
+                    timed_out = True
+                    break
     return iterations, timed_out
 
 
@@ -2099,6 +2263,7 @@ def _descend_bfgs(
 # form, which needs one of these.
 MULTIVARIATE_ENGINES: dict[Algorithm, _MultivariateCore] = {
     Algorithm.NELDER_MEAD: _walk_nelder_mead,
+    Algorithm.POWELL: _walk_powell,
     Algorithm.BFGS: _descend_bfgs,
 }
 
@@ -2111,12 +2276,12 @@ def minimise_multivariate(
     objective: Objective,
     algorithm: Algorithm,
 ) -> SolverResult:
-    """Drive n unknowns to the objective's least over their box (33.14 / 33.13).
+    """Drive n unknowns to the objective's least over their box (33.14 / 33.13 / 33.18).
 
-    The shared harness behind Nelder-Mead (33.14) and BFGS (33.13): ``algorithm`` selects
-    the core from ``MULTIVARIATE_ENGINES`` and is echoed in the result, everything around it
-    is here — the multivariate peer of :func:`minimise`. ``unknowns`` is the ordered
-    ``(name, lower, upper)`` for each free variable. It works on the folded quantity
+    The shared harness behind Nelder-Mead (33.14), BFGS (33.13) and Powell (33.18):
+    ``algorithm`` selects the core from ``MULTIVARIATE_ENGINES`` and is echoed in the result,
+    everything around it is here — the multivariate peer of :func:`minimise`. ``unknowns`` is
+    the ordered ``(name, lower, upper)`` for each free variable. It works on the folded quantity
     (fold_objective(), 32.1) — ``|expr|`` for find-root, ``±expr`` for an extremum — whose
     least is the answer either way, so a derivative-free core serves every objective; a
     gradient core cannot take find-root's kinked ``|expr|`` (see ``_OPTIMISE_ONLY``).
@@ -2141,8 +2306,9 @@ def minimise_multivariate(
         raise SolverError(
             f"The {algorithm.value} algorithm only finds extrema (it descends the "
             f"objective's own gradient), so objective 'find-root' is not supported: |expr| "
-            f"has a kink at the root, where the gradient is undefined. Use nelder-mead, "
-            f"which is derivative-free, to drive |expr| to zero over several unknowns."
+            f"has a kink at the root, where the gradient is undefined. Use nelder-mead or "
+            f"powell, which are derivative-free, to drive |expr| to zero over several "
+            f"unknowns."
         )
     core = MULTIVARIATE_ENGINES[algorithm]
     names = [name for name, _, _ in unknowns]

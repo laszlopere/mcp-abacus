@@ -124,6 +124,7 @@ def test_canonical_algorithms_resolve():
     assert resolve_algorithm("newton-raphson") is Algorithm.NEWTON_RAPHSON
     assert resolve_algorithm("halley") is Algorithm.HALLEY
     assert resolve_algorithm("nelder-mead") is Algorithm.NELDER_MEAD
+    assert resolve_algorithm("powell") is Algorithm.POWELL
     assert resolve_algorithm("bfgs") is Algorithm.BFGS
 
 
@@ -144,6 +145,18 @@ def test_bfgs_aliases_resolve():
     assert resolve_algorithm("broyden-fletcher-goldfarb-shanno") is Algorithm.BFGS
     with pytest.raises(SolverError):
         resolve_algorithm("quasi-newton")
+
+
+def test_powell_aliases_resolve():
+    # 33.18: the possessive spellings, plus Numerical Recipes' own name for the method.
+    # `conjugate-directions` is deliberately NOT one of them — it sits too close to 33.19's
+    # conjugate GRADIENT to resolve silently to this engine.
+    assert resolve_algorithm("powells") is Algorithm.POWELL
+    assert resolve_algorithm("powell-method") is Algorithm.POWELL
+    assert resolve_algorithm("powells-method") is Algorithm.POWELL
+    assert resolve_algorithm("direction-set") is Algorithm.POWELL
+    with pytest.raises(SolverError):
+        resolve_algorithm("conjugate-directions")
 
 
 def test_the_two_brents_stay_distinct():

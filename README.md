@@ -73,8 +73,9 @@ type; it calculates *using* that type.
   `variables`
   (a name → `[lower, upper]` map) with a multivariate engine to solve several jointly —
   `algorithm="nelder-mead"` for the derivative-free *Nelder-Mead* simplex (any objective),
-  or `algorithm="bfgs"` for quasi-Newton gradient descent (extrema only, far fewer
-  iterations on a smooth bowl)
+  `algorithm="powell"` for *Powell*'s direction set, derivative-free too and usually the
+  cheapest of the three on a smooth objective, or `algorithm="bfgs"` for quasi-Newton
+  gradient descent (extrema only, far fewer iterations on a smooth bowl)
 - **`curve_fit`** — fit known curve forms to paired `(x, y)` observations and report
   each fitted equation with its error. Hand over the data and it estimates, for the
   straight line, quadratic, cubic, power law `a*x**b`, exponential `a*exp(b*x)`,

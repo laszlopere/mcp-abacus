@@ -1052,7 +1052,7 @@ so the user-scoped `abacus` MCP registration picks up the new build.
                equations (a vector of residuals); the same prerequisite gates
                33.17 (Broyden's) and the other square-system root methods below.
     [ ] 33.17. Broyden's — multivariate root, quasi-Newton, no Jacobian.
-    [ ] 33.18. Powell's — derivative-free conjugate directions.
+    [x] 33.18. Powell's — derivative-free conjugate directions.
     [ ] 33.19. Conjugate gradient — large-scale gradient optimise.
     [ ] 33.20. L-BFGS(-B) — limited-memory quasi-Newton, bounds.
     [ ] 33.21. Gauss-Newton / Levenberg-Marquardt — nonlinear least squares.
