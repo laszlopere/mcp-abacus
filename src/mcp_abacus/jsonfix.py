@@ -28,7 +28,7 @@ from typing import Any
 
 from json_repair import loads as _repair_loads
 from mcp.shared.message import SessionMessage
-from mcp.types import PARSE_ERROR, ErrorData, JSONRPCError, JSONRPCMessage, JSONRPCRequest
+from mcp.types import PARSE_ERROR, ErrorData, JSONRPCError, JSONRPCRequest
 
 
 def repair_arguments(arguments: Any) -> Any:
@@ -76,7 +76,7 @@ def process_incoming(message: SessionMessage) -> Incoming:
     `arguments` are already an object, and non-`tools/call` traffic -- is
     forwarded untouched.
     """
-    root = message.message.root
+    root = message.message
     if not isinstance(root, JSONRPCRequest) or root.method != "tools/call":
         return Incoming(forward=message)
     params = root.params
@@ -86,7 +86,7 @@ def process_incoming(message: SessionMessage) -> Incoming:
     repaired = repair_arguments(params["arguments"])
     if isinstance(repaired, dict):
         new_root = root.model_copy(update={"params": {**params, "arguments": repaired}})
-        forwarded = SessionMessage(message=JSONRPCMessage(new_root), metadata=message.metadata)
+        forwarded = SessionMessage(message=new_root, metadata=message.metadata)
         return Incoming(forward=forwarded)
 
     return Incoming(reply=_parse_error_reply(root.id, params.get("name")))
@@ -105,4 +105,4 @@ def _parse_error_reply(request_id: Any, tool_name: Any) -> SessionMessage:
         id=request_id,
         error=ErrorData(code=PARSE_ERROR, message=message),
     )
-    return SessionMessage(message=JSONRPCMessage(error))
+    return SessionMessage(message=error)

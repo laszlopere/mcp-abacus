@@ -6,7 +6,7 @@
 The companion to test_fit.py's unit-level coverage: where that drives the module's
 engine directly, this exercises the WHOLE seam — a request dict goes in as the tool's
 arguments and the structured reply comes back, the same path a real client takes
-(dispatch -> validate -> fit -> render). The in-process FastMCP `mcp.call_tool` path
+(dispatch -> validate -> fit -> render). The in-process MCPServer `mcp.call_tool` path
 is used (no subprocess); test_e2e.py covers the tools over real stdio.
 """
 
@@ -31,7 +31,7 @@ def _fit(x, y, *, mode=None, floor=None):
     if floor is not None:
         arguments["min_fixed_point_precision"] = floor
     result = asyncio.run(mcp.call_tool("curve_fit", arguments))
-    blocks = result[0] if isinstance(result, tuple) else result
+    blocks = result.content
     return json.loads(blocks[0].text)
 
 

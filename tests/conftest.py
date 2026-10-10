@@ -60,7 +60,7 @@ def _human_readable_trace(request, monkeypatch):
 
     Records solver runs at THREE seams so it works wherever a test drives the
     solver: the over-the-wire tool (ClientSession.call_tool, as test_e2e drives a
-    server subprocess), the in-process tool (FastMCP mcp.call_tool, as
+    server subprocess), the in-process tool (MCPServer mcp.call_tool, as
     test_solver_e2e drives it), and the engine itself (solver.search, when a test
     calls it directly with a parsed node). `calculate` is framed the same Code /
     Result way for the calculate-driven e2e modules (test_functions_e2e at the
@@ -140,15 +140,15 @@ def _human_readable_trace(request, monkeypatch):
         finally:
             state["muted"] = False
         if name == "solver":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             _record(arguments, json.loads(blocks[0].text))
         elif name == "curve_fit":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             _record_fit(arguments, json.loads(blocks[0].text))
         elif name == "calculate" and request.module.__name__ == "test_functions_e2e":
             # The grouped function tests frame each `calculate` program the same way:
             # gated to that module so other calculate-driven tests stay unaffected.
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             _record_calculate(arguments, json.loads(blocks[0].text))
         return result
 
@@ -476,7 +476,7 @@ def _compact_solver_e2e_trace(request, monkeypatch):
     async def traced_call_tool(name, arguments=None, *args, **kwargs):
         result = await original_call_tool(name, arguments, *args, **kwargs)
         if name == "solver":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             rows.append((arguments or {}, json.loads(blocks[0].text)))
         return result
 
@@ -515,7 +515,7 @@ def _compact_functions_e2e_trace(request, monkeypatch):
     async def traced_call_tool(name, arguments=None, *args, **kwargs):
         result = await original_call_tool(name, arguments, *args, **kwargs)
         if name == "calculate":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             rows.append((arguments or {}, json.loads(blocks[0].text)))
         return result
 
@@ -554,7 +554,7 @@ def _compact_fit_e2e_trace(request, monkeypatch):
     async def traced_call_tool(name, arguments=None, *args, **kwargs):
         result = await original_call_tool(name, arguments, *args, **kwargs)
         if name == "curve_fit":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             rows.append((arguments or {}, json.loads(blocks[0].text)))
         return result
 
@@ -579,7 +579,7 @@ def _compact_functions_trace(request, monkeypatch):
     """For test_functions.py under -v: print each call as "expression [mode] = value".
 
     Most function tests drive the in-process `calculate` tool, so we record each
-    invocation at the FastMCP seam (mcp.call_tool) and print the tool's annotated
+    invocation at the MCPServer seam (mcp.call_tool) and print the tool's annotated
     result value (e.g. "16 (exact)") beside its expression — or the line-tagged
     message when the call refused. A few tests (the time() epoch-injection ones,
     28.1.2) cannot go through the tool because they pass a fixed now_ns, so they
@@ -608,7 +608,7 @@ def _compact_functions_trace(request, monkeypatch):
         finally:
             in_tool = False
         if name == "calculate":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             payload = json.loads(blocks[0].text)
             arguments = arguments or {}
             mode = arguments.get("mode")
@@ -663,7 +663,7 @@ def _compact_variables_trace(request, monkeypatch):
 
     Variable programs span several source lines, so the single-line "expression =
     value" table the other tool tests use would mangle them. Instead each
-    `calculate` invocation is recorded at the FastMCP seam (mcp.call_tool) and, at
+    `calculate` invocation is recorded at the MCPServer seam (mcp.call_tool) and, at
     teardown, printed as an INPUT block (the program's own lines, indented) under
     its mode, followed by the OUTPUT line — the annotated value, or the line-tagged
     message when the program refused.
@@ -677,7 +677,7 @@ def _compact_variables_trace(request, monkeypatch):
     async def traced_call_tool(name, arguments=None, *args, **kwargs):
         result = await original_call_tool(name, arguments, *args, **kwargs)
         if name == "calculate":
-            blocks = result[0] if isinstance(result, tuple) else result
+            blocks = result.content
             payload = json.loads(blocks[0].text)
             arguments = arguments or {}
             mode = arguments.get("mode", "fixed-point (default)")

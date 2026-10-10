@@ -36,10 +36,10 @@ async def _run_stdio_repaired() -> None:
 
         async with anyio.create_task_group() as tg, recv:
             tg.start_soon(_pump)
-            await mcp._mcp_server.run(
+            await mcp._lowlevel_server.run(
                 recv,
                 write_stream,
-                mcp._mcp_server.create_initialization_options(),
+                mcp._lowlevel_server.create_initialization_options(),
             )
             tg.cancel_scope.cancel()
 

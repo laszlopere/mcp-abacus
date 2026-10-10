@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 László Pere
 
-"""Prove the `info` tool is wired into the FastMCP app, not merely importable."""
+"""Prove the `info` tool is wired into the MCPServer app, not merely importable."""
 
 import asyncio
 import json
+
+import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from mcp_abacus.expr import reference
 from mcp_abacus.expr.value import Mode
@@ -12,15 +15,12 @@ from mcp_abacus.server import _resolve_mode_and_precision, mcp, reference_sectio
 
 
 def _content_blocks(call_tool_result):
-    # FastMCP may return either a sequence of content blocks or a
-    # (blocks, structured_output) tuple depending on SDK version.
-    if isinstance(call_tool_result, tuple):
-        return call_tool_result[0]
-    return call_tool_result
+    # MCPServer.call_tool returns a CallToolResult; its content blocks carry the reply.
+    return call_tool_result.content
 
 
 def _calc(call_tool_result):
-    # calculate returns a structured dict (25.1); FastMCP renders it as JSON text.
+    # calculate returns a structured dict (25.1); MCPServer renders it as JSON text.
     return json.loads(_content_blocks(call_tool_result)[0].text)
 
 
@@ -40,13 +40,13 @@ def test_tools_have_description_and_input_schema():
     tools = asyncio.run(mcp.list_tools())
     for tool in tools:
         assert tool.description
-        assert tool.inputSchema
-        assert tool.inputSchema.get("type") == "object"
+        assert tool.input_schema
+        assert tool.input_schema.get("type") == "object"
 
 
 def test_help_tool_takes_a_required_section_argument():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["help"].inputSchema
+    schema = tools["help"].input_schema
     assert "section" in schema["properties"]
     assert schema["required"] == ["section"]
 
@@ -61,7 +61,7 @@ def test_reference_resources_are_registered_on_the_app():
     # TODO 41.8: the help reference is also exposed as resources, so a non-tool client
     # (and Glama's introspection) finds something under resources/templates.
     resources = {str(r.uri) for r in asyncio.run(mcp.list_resources())}
-    templates = {t.uriTemplate for t in asyncio.run(mcp.list_resource_templates())}
+    templates = {t.uri_template for t in asyncio.run(mcp.list_resource_templates())}
     assert "abacus://reference" in resources
     assert "abacus://reference/{section}" in templates
 
@@ -74,7 +74,7 @@ def test_reference_section_resource_mirrors_the_help_tool():
 
 def test_calculate_tool_has_optional_mode_defaulting_to_fixed_point():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["calculate"].inputSchema
+    schema = tools["calculate"].input_schema
     assert "expression" in schema["properties"]
     assert schema["required"] == ["expression"]  # mode is optional
     assert schema["properties"]["mode"]["default"] == "fixed-point"
@@ -121,7 +121,7 @@ def test_calculate_unknown_mode_lists_valid_modes():
 
 def test_calculate_min_fixed_point_precision_is_optional_in_the_schema():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["calculate"].inputSchema
+    schema = tools["calculate"].input_schema
     assert "min_fixed_point_precision" in schema["properties"]
     assert schema["required"] == ["expression"]  # the floor is optional
 
@@ -160,7 +160,7 @@ def test_unknown_mode_far_miss_gets_no_suggestion():
 
 def test_calculate_inexact_handling_is_optional_defaulting_to_continue():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["calculate"].inputSchema
+    schema = tools["calculate"].input_schema
     assert schema["properties"]["inexact_handling"]["default"] == "continue-and-report"
     assert schema["required"] == ["expression"]  # the policy is optional
 
@@ -204,7 +204,7 @@ def test_calculate_unknown_inexact_handling_lists_valid_values():
 
 def test_solver_tool_signature_exposes_both_unknown_forms():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["solver"].inputSchema
+    schema = tools["solver"].input_schema
     properties = schema["properties"]
     for name in (
         "expression",
@@ -445,7 +445,7 @@ def test_tool_cross_references_are_bidirectional():
 
 def test_analyze_tool_has_optional_mode_and_floor_defaulting_to_fixed_point():
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
-    schema = tools["analyze"].inputSchema
+    schema = tools["analyze"].input_schema
     assert schema["required"] == ["expression"]  # mode and floor are optional
     assert schema["properties"]["mode"]["default"] == "fixed-point"
     assert "min_fixed_point_precision" in schema["properties"]
@@ -549,3 +549,20 @@ def test_analyze_reply_unchanged_by_values():
     # analyze is untouched: it returns only `tree`/`error`, never a `values` array.
     result = _calc(asyncio.run(mcp.call_tool("analyze", {"expression": "1 + 2"})))
     assert set(result) == {"tree", "error"}
+
+
+def test_an_escaped_tool_exception_keeps_its_message():
+    # The SDK reports an exception escaping a tool body only as "Error executing
+    # tool <name>"; the app restores the exception's own text for the model.
+    from mcp_abacus.server import _AbacusMCPServer
+
+    app = _AbacusMCPServer("probe")
+
+    @app.tool()
+    def boom() -> str:
+        raise ValueError("the reason")
+
+    with pytest.raises(ToolError) as excinfo:
+        asyncio.run(app.call_tool("boom", {}))
+    assert str(excinfo.value) == "Error executing tool boom: the reason"
+    assert isinstance(excinfo.value.__cause__, ValueError)

@@ -268,7 +268,7 @@ def test_lexer_rejects_imaginary_on_hex():
 
 def _call(tool, **args):
     res = asyncio.run(mcp.call_tool(tool, args))
-    blocks = res[0] if isinstance(res, tuple) else res
+    blocks = res.content
     return json.loads(blocks[0].text)
 
 

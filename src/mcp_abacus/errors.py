@@ -4,12 +4,12 @@
 """Reshape SDK argument-validation errors into actionable text (TODO 43.2).
 
 When a tool call's arguments parse as JSON but fail the tool's schema (a missing
-field, a wrong type), FastMCP raises a pydantic ValidationError whose default
+field, a wrong type), MCPServer raises a pydantic ValidationError whose default
 string carries a multi-line preamble and a `errors.pydantic.dev` URL -- noise an
 LLM cannot act on. `format_validation_error` rebuilds the message from the
 structured `.errors()` list into one line that names each offending argument and
 what it expected versus what it received, so the model self-corrects in one turn
-instead of looping. Server wiring (the FastMCP subclass that catches the error)
+instead of looping. Server wiring (the MCPServer subclass that catches the error)
 lives in server.py.
 """
 

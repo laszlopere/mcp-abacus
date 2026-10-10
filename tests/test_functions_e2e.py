@@ -8,7 +8,7 @@ function across modes and arguments, this drives the WHOLE `calculate` seam with
 multi-line PROGRAMS that answer several related functions at once. A program shares
 one scope, so a leading assignment feeds every following line, and each bare-
 expression line is echoed in the reply's `values` array — the same path a real
-client takes (dispatch -> parse -> evaluate -> render). The in-process FastMCP
+client takes (dispatch -> parse -> evaluate -> render). The in-process MCPServer
 `mcp.call_tool` path is used (no subprocess); test_e2e.py covers `calculate` over
 real stdio.
 
@@ -56,7 +56,7 @@ def _calc(program, *, mode=None, floor=None):
     if floor is not None:
         arguments["min_fixed_point_precision"] = floor
     result = asyncio.run(mcp.call_tool("calculate", arguments))
-    blocks = result[0] if isinstance(result, tuple) else result
+    blocks = result.content
     return json.loads(blocks[0].text)
 
 

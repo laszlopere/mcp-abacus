@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 László Pere
 
-"""FastMCP application for mcp-abacus. All tools register on this app."""
+"""MCPServer application for mcp-abacus. All tools register on this app."""
 
 import platform
-from collections.abc import Sequence as AbcSequence
 from importlib.metadata import version
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import ContentBlock
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, InputRequiredResult
 from pydantic import Field, ValidationError
 
 from mcp_abacus import __version__
@@ -50,30 +49,41 @@ from mcp_abacus.solver import (
 from mcp_abacus.suggest import did_you_mean
 
 
-class _AbacusFastMCP(FastMCP):
-    """FastMCP that reshapes argument-validation errors for the model (TODO 43.2).
+class _AbacusMCPServer(MCPServer):
+    """MCPServer that reshapes argument-validation errors for the model (TODO 43.2).
 
-    FastMCP wraps a failed pydantic argument validation as a ToolError whose
+    MCPServer wraps a failed pydantic argument validation as a ToolError whose
     `__cause__` is the ValidationError. We catch that one case and re-raise with
     a concise, field-naming message (errors.format_validation_error); the SDK
     still returns it as an `isError` result. Tool-body failures (their own
     Lex/Parse/Eval/Solver errors) are untouched -- those carry a different cause
     or none, so they fall through unchanged.
+
+    An exception that escapes a tool body is wrapped by the SDK as an
+    UnexpectedToolError reading only `Error executing tool <name>`; we restore the
+    exception's own text (`Error executing tool <name>: <message>`) so the model
+    still learns what went wrong.
     """
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> AbcSequence[ContentBlock] | dict[str, Any]:
+        self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
+    ) -> CallToolResult | InputRequiredResult:
         try:
-            return await super().call_tool(name, arguments)
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as exc:
+            cause = exc.__cause__
+            if cause is None or isinstance(cause, ToolError):
+                raise
+            raise ToolError(f"Error executing tool {name}: {cause}") from cause
         except ToolError as exc:
             if isinstance(exc.__cause__, ValidationError):
                 raise ToolError(format_validation_error(name, exc.__cause__)) from exc.__cause__
             raise
 
 
-mcp = _AbacusFastMCP(
+mcp = _AbacusMCPServer(
     "mcp-abacus",
+    version=__version__,
     instructions=(
         "A calculator for language models: type-faithful arithmetic you can trust "
         "and reason about. Pick a numeric type/mode and the WHOLE expression "

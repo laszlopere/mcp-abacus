@@ -38,7 +38,7 @@ def _calc(expression, mode=None, floor=None):
     if floor is not None:
         arguments["min_fixed_point_precision"] = floor
     result = asyncio.run(mcp.call_tool("calculate", arguments))
-    blocks = result[0] if isinstance(result, tuple) else result
+    blocks = result.content
     return json.loads(blocks[0].text)
 
 

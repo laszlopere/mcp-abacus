@@ -7,7 +7,7 @@ The companion to test_solver.py's unit-level coverage: where that drives the
 module's pure helpers directly, this exercises the WHOLE seam — a request dict
 goes in as the tool's arguments and the structured reply comes back, the same
 path a real client takes (dispatch -> validate -> parse -> search -> render). The
-in-process FastMCP `mcp.call_tool` path is used (no subprocess); test_e2e.py
+in-process MCPServer `mcp.call_tool` path is used (no subprocess); test_e2e.py
 covers the same tool over real stdio.
 
 Each program is framed with a `#` comment header describing WHAT it searches for
@@ -74,7 +74,7 @@ def _solve(
     if algorithm is not None:
         arguments["algorithm"] = algorithm
     result = asyncio.run(mcp.call_tool("solver", arguments))
-    blocks = result[0] if isinstance(result, tuple) else result
+    blocks = result.content
     return json.loads(blocks[0].text)
 
 

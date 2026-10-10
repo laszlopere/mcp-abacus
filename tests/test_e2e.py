@@ -3,7 +3,7 @@
 
 """End-to-end tests for the `calculate` tool (TODO 23).
 
-test_server.py drives the FastMCP app object in-process. These tests go one
+test_server.py drives the MCPServer app object in-process. These tests go one
 layer further out: they launch mcp-abacus as a real child process and speak the
 MCP protocol to it over stdio — the exact path a production client (Claude)
 takes. So they prove the tool survives the full initialize -> list_tools ->
@@ -24,7 +24,6 @@ from contextlib import asynccontextmanager
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from pydantic import AnyUrl
 
 # Launch the server with the interpreter already running the tests (the venv
 # that has mcp_abacus installed), via its console module entry point.
@@ -56,7 +55,7 @@ def _text(result):
 
 
 def _payload(result):
-    """calculate's structured dict (25.1), rendered by FastMCP as JSON text."""
+    """calculate's structured dict (25.1), rendered by MCPServer as JSON text."""
     return json.loads(_text(result))
 
 
@@ -261,13 +260,13 @@ def test_reference_is_exposed_as_resources_over_the_wire():
                 await session.initialize()
                 resources = await session.list_resources()
                 templates = await session.list_resource_templates()
-                index = await session.read_resource(AnyUrl("abacus://reference"))
-                types = await session.read_resource(AnyUrl("abacus://reference/types"))
+                index = await session.read_resource("abacus://reference")
+                types = await session.read_resource("abacus://reference/types")
                 return resources, templates, index, types
 
     resources, templates, index, types = asyncio.run(go())
     assert "abacus://reference" in [str(r.uri) for r in resources.resources]
-    assert "abacus://reference/{section}" in [t.uriTemplate for t in templates.resourceTemplates]
+    assert "abacus://reference/{section}" in [t.uri_template for t in templates.resource_templates]
     # The index lists every section; a section read returns that section's text.
     index_text = index.contents[0].text
     for section in ("types", "language", "functions", "solver", "fit"):
@@ -301,14 +300,14 @@ def test_calculate_is_advertised_with_optional_mode_over_the_wire():
             return await session.list_tools()
 
     tools = {t.name: t for t in asyncio.run(go()).tools}
-    schema = tools["calculate"].inputSchema
+    schema = tools["calculate"].input_schema
     assert schema["required"] == ["expression"]  # mode is optional...
     assert schema["properties"]["mode"]["default"] == "fixed-point"  # ...and defaults here
 
 
 def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
     # TODO 41.1: every tool parameter must carry its own inputSchema `description`
-    # (the per-parameter docs FastMCP builds from `Annotated[..., Field(...)]`), not
+    # (the per-parameter docs MCPServer builds from `Annotated[..., Field(...)]`), not
     # just the prose buried in the tool description — this is the schema coverage a
     # client (and Glama's grader) reads. Asserted end-to-end so a regression to bare
     # signature args, which silently drops the descriptions, fails here.
@@ -320,14 +319,14 @@ def test_every_tool_parameter_is_described_in_its_schema_over_the_wire():
     # `info` is nullary; the other five expose parameters that must all be described.
     expected_param_counts = {"analyze": 3, "calculate": 4, "help": 3, "solver": 9, "curve_fit": 4}
     for name, count in expected_param_counts.items():
-        properties = tools[name].inputSchema["properties"]
+        properties = tools[name].input_schema["properties"]
         assert len(properties) == count, f"{name}: param count changed to {len(properties)}"
         undocumented = [
             param for param, schema in properties.items() if not schema.get("description")
         ]
         assert not undocumented, f"{name} has parameters with no schema description: {undocumented}"
     # `info` takes no arguments, so it has nothing to document.
-    assert tools["info"].inputSchema.get("properties", {}) == {}
+    assert tools["info"].input_schema.get("properties", {}) == {}
 
 
 def test_calculate_description_points_to_its_sibling_tools_over_the_wire():
@@ -351,7 +350,7 @@ def test_solver_param_descriptions_encode_the_single_vs_multiple_coupling():
         async with _client() as session:
             return await session.list_tools()
 
-    props = {t.name: t for t in asyncio.run(go()).tools}["solver"].inputSchema["properties"]
+    props = {t.name: t for t in asyncio.run(go()).tools}["solver"].input_schema["properties"]
     variable_desc = props["variable"]["description"]
     variables_desc = props["variables"]["description"]
     # Each anchor names the OTHER form and states the exactly-one rule.
@@ -371,7 +370,7 @@ def test_help_section_is_advertised_as_an_enum_over_the_wire():
             return await session.list_tools()
 
     tools = {t.name: t for t in asyncio.run(go()).tools}
-    section = tools["help"].inputSchema["properties"]["section"]
+    section = tools["help"].input_schema["properties"]["section"]
     assert sorted(section["enum"]) == ["fit", "functions", "language", "solver", "types"]
 
 
@@ -380,7 +379,7 @@ def test_calculate_defaults_to_fixed_point_over_stdio():
     # but the famous 0.30000000000000004 in floating_point. Omitting `mode` must pick
     # the money-safe default all the way through the protocol.
     result = _call("calculate", {"expression": "0.1 + 0.2"})
-    assert result.isError is False
+    assert result.is_error is False
     assert _value(result) == "0.3"
 
 
@@ -575,7 +574,7 @@ def test_malformed_expression_returns_an_error_not_a_protocol_failure():
     result = _call("calculate", {"expression": "1 +"})
     # The tool reports user errors as ordinary text (a plain, self-contained
     # message), so the call itself succeeds at the protocol level.
-    assert result.isError is False
+    assert result.is_error is False
     assert _payload(result)["error"] == "expected a number, name, '(', or '[', got end of input"
 
 
